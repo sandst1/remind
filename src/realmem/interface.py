@@ -1,0 +1,434 @@
+"""
+MemoryInterface - The unified API for the memory system.
+
+This is the main entry point for applications integrating RealMem.
+It provides a simple interface for:
+- remember() - log experiences/interactions
+- recall() - retrieve relevant concepts
+- reflect() - let the LLM reason about its own memory
+"""
+
+from datetime import datetime
+from typing import Optional
+from pathlib import Path
+import logging
+import json
+
+from realmem.models import Episode, Concept, ConsolidationResult
+from realmem.store import MemoryStore, SQLiteMemoryStore
+from realmem.providers.base import LLMProvider, EmbeddingProvider
+from realmem.consolidation import Consolidator
+from realmem.retrieval import MemoryRetriever, ActivatedConcept
+
+logger = logging.getLogger(__name__)
+
+
+class MemoryInterface:
+    """
+    The main interface to the memory system.
+    
+    Consolidation Modes:
+    -------------------
+    1. **Automatic (threshold-based)**: Set `auto_consolidate=True` (default).
+       Consolidation runs automatically after `consolidation_threshold` episodes.
+    
+    2. **Manual/Hook-based**: Set `auto_consolidate=False`.
+       Call `consolidate()` or `end_session()` explicitly from your agent hooks.
+    
+    3. **Hybrid**: Keep `auto_consolidate=True` as a safety net, but also call
+       `end_session()` at natural boundaries (end of conversation, task completion).
+    
+    Usage:
+        memory = MemoryInterface(
+            llm=AnthropicLLM(),
+            embedding=OpenAIEmbedding(),
+            auto_consolidate=True,       # Automatic after threshold
+            consolidation_threshold=10,  # Episodes before auto-consolidate
+        )
+        
+        # Log experiences
+        await memory.remember("User prefers Python for backend development")
+        await memory.remember("User mentioned they work on distributed systems")
+        
+        # Retrieve relevant context
+        context = await memory.recall("What programming languages does the user like?")
+        
+        # Hook: Call at end of conversation/task for explicit consolidation
+        await memory.end_session()
+        
+        # Or manually consolidate anytime
+        await memory.consolidate(force=True)
+    """
+    
+    def __init__(
+        self,
+        llm: LLMProvider,
+        embedding: EmbeddingProvider,
+        store: Optional[MemoryStore] = None,
+        db_path: str = "memory.db",
+        # Consolidation settings
+        consolidation_threshold: int = 10,  # episodes before auto-consolidation
+        auto_consolidate: bool = True,
+        # Retrieval settings
+        default_recall_k: int = 5,
+        spread_hops: int = 2,
+    ):
+        self.llm = llm
+        self.embedding = embedding
+        self.store = store or SQLiteMemoryStore(db_path)
+        
+        # Initialize components
+        self.consolidator = Consolidator(
+            llm=llm,
+            embedding=embedding,
+            store=self.store,
+        )
+        
+        self.retriever = MemoryRetriever(
+            embedding=embedding,
+            store=self.store,
+            spread_hops=spread_hops,
+        )
+        
+        # Settings
+        self.consolidation_threshold = consolidation_threshold
+        self.auto_consolidate = auto_consolidate
+        self.default_recall_k = default_recall_k
+        
+        # Episode buffer for tracking (this session only)
+        self._episode_buffer: list[str] = []
+        self._last_consolidation: Optional[datetime] = None
+    
+    async def remember(
+        self,
+        content: str,
+        metadata: Optional[dict] = None,
+    ) -> str:
+        """
+        Log an experience/interaction to be consolidated later.
+        
+        Args:
+            content: The interaction or experience to remember
+            metadata: Optional metadata about the episode
+            
+        Returns:
+            The episode ID
+        """
+        episode = Episode(
+            content=content,
+            metadata=metadata or {},
+        )
+        
+        episode_id = self.store.add_episode(episode)
+        self._episode_buffer.append(episode_id)
+        
+        logger.debug(f"Remembered episode {episode_id}: {content[:50]}...")
+        
+        # Auto-consolidate if threshold reached
+        if self.auto_consolidate and len(self._episode_buffer) >= self.consolidation_threshold:
+            logger.info(f"Auto-consolidation triggered ({len(self._episode_buffer)} episodes)")
+            await self.consolidate()
+            self._episode_buffer = []
+        
+        return episode_id
+    
+    async def recall(
+        self,
+        query: str,
+        k: Optional[int] = None,
+        context: Optional[str] = None,
+        raw: bool = False,
+    ) -> str | list[ActivatedConcept]:
+        """
+        Retrieve relevant memory for a query.
+        
+        Args:
+            query: What to search for
+            k: Number of concepts to return
+            context: Additional context for the search
+            raw: If True, return ActivatedConcept objects instead of formatted string
+            
+        Returns:
+            Formatted memory string for LLM injection, or list of ActivatedConcept if raw=True
+        """
+        k = k or self.default_recall_k
+        
+        activated = await self.retriever.retrieve(
+            query=query,
+            k=k,
+            context=context,
+        )
+        
+        if raw:
+            return activated
+        
+        return self.retriever.format_for_llm(activated)
+    
+    async def consolidate(self, force: bool = False) -> ConsolidationResult:
+        """
+        Run memory consolidation manually.
+        
+        Processes unconsolidated episodes into generalized concepts.
+        This is the "sleep" process where raw experiences become knowledge.
+        
+        Use this for:
+        - Manual consolidation triggers
+        - Agent hooks (task completion, scheduled jobs)
+        - Forcing consolidation regardless of episode count
+        
+        Args:
+            force: If True, consolidate even with few episodes (< 3)
+            
+        Returns:
+            ConsolidationResult with statistics
+        """
+        result = await self.consolidator.consolidate(force=force)
+        
+        if result.episodes_processed > 0:
+            self._last_consolidation = datetime.now()
+            self._episode_buffer = []  # Clear buffer after successful consolidation
+        
+        return result
+    
+    async def end_session(self) -> ConsolidationResult:
+        """
+        Hook for ending a session/conversation.
+        
+        Call this at natural boundaries in your agent:
+        - End of a conversation
+        - Task completion
+        - Before shutting down
+        - Scheduled maintenance
+        
+        This always triggers consolidation if there are pending episodes,
+        regardless of the threshold setting.
+        
+        Usage in agent hooks:
+            async def on_conversation_end(self):
+                await memory.end_session()
+            
+            async def on_task_complete(self, task):
+                await memory.remember(f"Completed task: {task.summary}")
+                await memory.end_session()
+        
+        Returns:
+            ConsolidationResult with statistics
+        """
+        pending = self.pending_episodes_count
+        
+        if pending == 0:
+            logger.debug("end_session called but no pending episodes")
+            return ConsolidationResult()
+        
+        logger.info(f"end_session: consolidating {pending} pending episodes")
+        return await self.consolidate(force=True)
+    
+    @property
+    def pending_episodes_count(self) -> int:
+        """Number of episodes waiting to be consolidated."""
+        return self.store.get_stats().get("unconsolidated_episodes", 0)
+    
+    @property
+    def should_consolidate(self) -> bool:
+        """
+        Check if consolidation should run based on current state.
+        
+        Useful for agents that want to check before deciding to consolidate:
+            if memory.should_consolidate:
+                await memory.consolidate()
+        """
+        return self.pending_episodes_count >= self.consolidation_threshold
+    
+    def get_pending_episodes(self, limit: int = 50) -> list[Episode]:
+        """
+        Get episodes that are pending consolidation.
+        
+        Useful for:
+        - Human review before consolidation
+        - Debugging what will be consolidated
+        - Custom filtering logic
+        """
+        return self.store.get_unconsolidated_episodes(limit=limit)
+    
+    async def reflect(self, prompt: str) -> str:
+        """
+        Let the LLM reason about its own memory.
+        
+        Useful for meta-cognitive operations like:
+        - "What do I know about this user?"
+        - "What are the main themes in my memory?"
+        - "What gaps exist in my understanding?"
+        
+        Args:
+            prompt: The reflection prompt
+            
+        Returns:
+            The LLM's reflection response
+        """
+        all_concepts = self.store.get_concepts_summary()
+        
+        if not all_concepts:
+            return "My memory is empty - no concepts have been formed yet."
+        
+        # Format concepts for the prompt
+        concept_text = self._format_concepts_for_reflection(all_concepts)
+        
+        reflection_prompt = f"""Examine your conceptual memory and respond to this prompt:
+
+{prompt}
+
+YOUR MEMORY:
+{concept_text}
+
+Respond thoughtfully, acknowledging what you know, what you're uncertain about,
+and what gaps might exist in your understanding."""
+        
+        return await self.llm.complete(
+            prompt=reflection_prompt,
+            system="You are reflecting on your own memory and knowledge. Be honest about uncertainty.",
+            temperature=0.5,
+        )
+    
+    def _format_concepts_for_reflection(self, concepts: list[dict]) -> str:
+        """Format concepts for reflection prompt."""
+        lines = []
+        for c in concepts:
+            line = f"• [{c['id']}] {c['summary']}"
+            if c.get('confidence'):
+                line += f" (confidence: {c['confidence']:.2f})"
+            lines.append(line)
+        return "\n".join(lines)
+    
+    # Direct access methods
+    
+    def get_concept(self, concept_id: str) -> Optional[Concept]:
+        """Get a concept by ID."""
+        return self.store.get_concept(concept_id)
+    
+    def get_all_concepts(self) -> list[Concept]:
+        """Get all concepts."""
+        return self.store.get_all_concepts()
+    
+    def get_recent_episodes(self, limit: int = 10) -> list[Episode]:
+        """Get recent episodes."""
+        return self.store.get_recent_episodes(limit=limit)
+    
+    def get_stats(self) -> dict:
+        """Get memory statistics including consolidation state."""
+        stats = self.store.get_stats()
+        stats["session_episode_buffer"] = len(self._episode_buffer)
+        stats["consolidation_threshold"] = self.consolidation_threshold
+        stats["auto_consolidate"] = self.auto_consolidate
+        stats["should_consolidate"] = self.should_consolidate
+        stats["last_consolidation"] = self._last_consolidation.isoformat() if self._last_consolidation else None
+        stats["llm_provider"] = self.llm.name
+        stats["embedding_provider"] = self.embedding.name
+        return stats
+    
+    # Import/Export
+    
+    def export_memory(self, path: Optional[str] = None) -> dict:
+        """
+        Export all memory data.
+        
+        Args:
+            path: If provided, save to this file path
+            
+        Returns:
+            The exported data dictionary
+        """
+        data = self.store.export_data()
+        data["exported_at"] = datetime.now().isoformat()
+        data["stats"] = self.get_stats()
+        
+        if path:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+            logger.info(f"Exported memory to {path}")
+        
+        return data
+    
+    def import_memory(self, path_or_data: str | dict) -> dict:
+        """
+        Import memory data.
+        
+        Args:
+            path_or_data: File path to JSON or data dictionary
+            
+        Returns:
+            Import statistics
+        """
+        if isinstance(path_or_data, str):
+            with open(path_or_data) as f:
+                data = json.load(f)
+        else:
+            data = path_or_data
+        
+        result = self.store.import_data(data)
+        logger.info(f"Imported {result['concepts_imported']} concepts, {result['episodes_imported']} episodes")
+        return result
+    
+    # Context manager support
+    
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # Consolidate pending episodes when exiting context
+        if self.pending_episodes_count > 0:
+            logger.info("Context exit: consolidating pending episodes")
+            await self.end_session()
+
+
+def create_memory(
+    llm_provider: str = "anthropic",
+    embedding_provider: str = "openai",
+    db_path: str = "memory.db",
+    **kwargs,
+) -> MemoryInterface:
+    """
+    Factory function to create a MemoryInterface with sensible defaults.
+    
+    Args:
+        llm_provider: "anthropic", "openai", or "ollama"
+        embedding_provider: "openai" or "ollama"
+        db_path: Path to SQLite database
+        **kwargs: Additional arguments passed to MemoryInterface
+        
+    Returns:
+        Configured MemoryInterface
+    """
+    # Import providers
+    from realmem.providers import (
+        AnthropicLLM, OpenAILLM, OllamaLLM,
+        OpenAIEmbedding, OllamaEmbedding,
+    )
+    
+    # Create LLM provider
+    llm_map = {
+        "anthropic": AnthropicLLM,
+        "openai": OpenAILLM,
+        "ollama": OllamaLLM,
+    }
+    if llm_provider not in llm_map:
+        raise ValueError(f"Unknown LLM provider: {llm_provider}. Choose from: {list(llm_map.keys())}")
+    
+    llm = llm_map[llm_provider]()
+    
+    # Create embedding provider
+    embed_map = {
+        "openai": OpenAIEmbedding,
+        "ollama": OllamaEmbedding,
+    }
+    if embedding_provider not in embed_map:
+        raise ValueError(f"Unknown embedding provider: {embedding_provider}. Choose from: {list(embed_map.keys())}")
+    
+    embedding = embed_map[embedding_provider]()
+    
+    return MemoryInterface(
+        llm=llm,
+        embedding=embedding,
+        db_path=db_path,
+        **kwargs,
+    )
+

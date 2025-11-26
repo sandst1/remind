@@ -1,0 +1,566 @@
+"""
+RealMem MCP Server - Memory system exposed via Model Context Protocol.
+
+Single server instance supporting multiple databases. Each client specifies
+its database via URL query parameter:
+
+    http://127.0.0.1:8765/sse?db=/path/to/memory.db
+
+Usage:
+    realmem-mcp --port 8765
+    realmem-mcp --host 0.0.0.0 --port 8765
+"""
+
+import asyncio
+import json
+import logging
+import uuid
+from contextvars import ContextVar
+from pathlib import Path
+from typing import Optional
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from realmem.interface import create_memory, MemoryInterface
+
+logger = logging.getLogger(__name__)
+
+# Context variable to track current database path per async context
+_current_db: ContextVar[str] = ContextVar('current_db', default='')
+
+# Session ID to database path mapping (for SSE sessions)
+_session_db_map: dict[str, str] = {}
+
+# Cache of MemoryInterface instances keyed by database path
+_memory_instances: dict[str, MemoryInterface] = {}
+_memory_locks: dict[str, asyncio.Lock] = {}
+_global_lock = asyncio.Lock()
+
+# Default providers - can be overridden via CLI args
+DEFAULT_LLM_PROVIDER = "openai"
+DEFAULT_EMBEDDING_PROVIDER = "openai"
+
+
+async def get_memory_for_db(db_path: str) -> MemoryInterface:
+    """Get or create a MemoryInterface for the given database path."""
+    # Normalize path
+    db_path = str(Path(db_path).resolve())
+    
+    # Get or create lock for this db
+    async with _global_lock:
+        if db_path not in _memory_locks:
+            _memory_locks[db_path] = asyncio.Lock()
+        lock = _memory_locks[db_path]
+    
+    # Get or create memory instance
+    async with lock:
+        if db_path not in _memory_instances:
+            logger.info(f"Creating MemoryInterface for database: {db_path}")
+            _memory_instances[db_path] = create_memory(
+                llm_provider=DEFAULT_LLM_PROVIDER,
+                embedding_provider=DEFAULT_EMBEDDING_PROVIDER,
+                db_path=db_path,
+                auto_consolidate=True,
+                consolidation_threshold=10,
+            )
+        return _memory_instances[db_path]
+
+
+def get_current_db() -> str:
+    """Get the current database path from context."""
+    db_path = _current_db.get()
+    if not db_path:
+        raise ValueError(
+            "No database path specified. Configure via URL query parameter: "
+            "?db=/path/to/memory.db"
+        )
+    return db_path
+
+
+async def get_memory() -> MemoryInterface:
+    """Get the MemoryInterface for the current context's database."""
+    return await get_memory_for_db(get_current_db())
+
+
+# ============================================================================
+# MCP Tool Implementations
+# ============================================================================
+
+async def tool_remember(content: str, metadata: Optional[str] = None) -> str:
+    """Store an experience or observation in memory."""
+    memory = await get_memory()
+    
+    meta = json.loads(metadata) if metadata else None
+    episode_id = await memory.remember(content, metadata=meta)
+    
+    stats = memory.get_stats()
+    pending = stats.get("unconsolidated_episodes", 0)
+    
+    result = f"Remembered as episode {episode_id}"
+    if pending >= 5:
+        result += f"\n\n({pending} episodes pending consolidation - consider running consolidate)"
+    
+    return result
+
+
+async def tool_recall(query: str, k: int = 5, context: Optional[str] = None) -> str:
+    """Retrieve relevant memories for a query."""
+    memory = await get_memory()
+    return await memory.recall(query, k=k, context=context)
+
+
+async def tool_consolidate(force: bool = False) -> str:
+    """Process pending episodes into generalized concepts."""
+    memory = await get_memory()
+    
+    stats = memory.get_stats()
+    pending = stats.get("unconsolidated_episodes", 0)
+    
+    if pending == 0:
+        return "No episodes pending consolidation."
+    
+    result = await memory.consolidate(force=force)
+    
+    lines = ["Consolidation complete:"]
+    lines.append(f"  Episodes processed: {result.episodes_processed}")
+    lines.append(f"  Concepts created: {result.concepts_created}")
+    lines.append(f"  Concepts updated: {result.concepts_updated}")
+    
+    if result.contradictions_found:
+        lines.append(f"  Contradictions found: {result.contradictions_found}")
+        for detail in result.contradiction_details[:3]:
+            lines.append(f"    - {detail}")
+    
+    return "\n".join(lines)
+
+
+async def tool_inspect(
+    concept_id: Optional[str] = None,
+    show_episodes: bool = False,
+    limit: int = 10,
+) -> str:
+    """Inspect concepts or episodes in memory."""
+    memory = await get_memory()
+    store = memory.store
+    
+    if show_episodes:
+        episodes = store.get_recent_episodes(limit=limit)
+        if not episodes:
+            return "No episodes in memory."
+        
+        lines = [f"Recent Episodes ({len(episodes)}):"]
+        for ep in episodes:
+            status = "✓" if ep.consolidated else "pending"
+            content = ep.content[:80] + "..." if len(ep.content) > 80 else ep.content
+            lines.append(f"  [{ep.id}] ({status}) {content}")
+        return "\n".join(lines)
+    
+    if concept_id:
+        concept = store.get_concept(concept_id)
+        if not concept:
+            return f"Concept {concept_id} not found."
+        
+        lines = [f"Concept: {concept.id}"]
+        lines.append(f"  Summary: {concept.summary}")
+        lines.append(f"  Confidence: {concept.confidence:.2f}")
+        lines.append(f"  Instances: {concept.instance_count}")
+        lines.append(f"  Created: {concept.created_at.strftime('%Y-%m-%d %H:%M')}")
+        lines.append(f"  Updated: {concept.updated_at.strftime('%Y-%m-%d %H:%M')}")
+        
+        if concept.conditions:
+            lines.append(f"  Conditions: {concept.conditions}")
+        if concept.exceptions:
+            lines.append(f"  Exceptions: {', '.join(concept.exceptions[:5])}")
+        if concept.tags:
+            lines.append(f"  Tags: {', '.join(concept.tags)}")
+        
+        if concept.relations:
+            lines.append(f"  Relations ({len(concept.relations)}):")
+            for rel in concept.relations[:10]:
+                target = store.get_concept(rel.target_id)
+                target_summary = target.summary[:50] + "..." if target else "[unknown]"
+                lines.append(f"    {rel.type.value} → [{rel.target_id}] {target_summary}")
+        
+        return "\n".join(lines)
+    
+    # List all concepts
+    concepts = store.get_all_concepts()
+    if not concepts:
+        return "No concepts in memory. Run consolidate after adding episodes."
+    
+    lines = [f"All Concepts ({len(concepts)}):"]
+    for c in concepts[:limit]:
+        summary = c.summary[:60] + "..." if len(c.summary) > 60 else c.summary
+        tags = f" [{', '.join(c.tags[:3])}]" if c.tags else ""
+        lines.append(f"  [{c.id}] (conf: {c.confidence:.2f}, n={c.instance_count}){tags}")
+        lines.append(f"      {summary}")
+    
+    if len(concepts) > limit:
+        lines.append(f"  ... and {len(concepts) - limit} more")
+    
+    return "\n".join(lines)
+
+
+async def tool_stats() -> str:
+    """Get memory statistics."""
+    memory = await get_memory()
+    db_path = get_current_db()
+    
+    s = memory.get_stats()
+    
+    lines = ["Memory Statistics:"]
+    lines.append(f"  Concepts: {s['concepts']}")
+    lines.append(f"  Episodes: {s['episodes']}")
+    lines.append(f"  Relations: {s['relations']}")
+    lines.append("")
+    lines.append("Consolidation:")
+    lines.append(f"  Pending episodes: {s.get('unconsolidated_episodes', 0)}")
+    lines.append(f"  Threshold: {s.get('consolidation_threshold', 10)}")
+    lines.append(f"  Auto-consolidate: {s.get('auto_consolidate', True)}")
+    lines.append(f"  Should consolidate: {s.get('should_consolidate', False)}")
+    
+    if s.get('relation_types'):
+        lines.append("")
+        lines.append("Relation Types:")
+        for rel_type, count in s['relation_types'].items():
+            lines.append(f"  {rel_type}: {count}")
+    
+    lines.append("")
+    lines.append(f"Database: {db_path}")
+    
+    return "\n".join(lines)
+
+
+async def tool_reflect(prompt: str) -> str:
+    """Let the LLM reason about its own memory."""
+    memory = await get_memory()
+    return await memory.reflect(prompt)
+
+
+# ============================================================================
+# FastMCP Server Setup
+# ============================================================================
+
+def create_mcp_server():
+    """Create and configure the FastMCP server."""
+    from fastmcp import FastMCP
+    
+    mcp = FastMCP(
+        "RealMem",
+        instructions="Generalization-capable memory layer for LLMs with episodic buffers, "
+                     "semantic concept graphs, and spreading activation retrieval.",
+    )
+    
+    @mcp.tool()
+    async def remember(
+        content: str,
+        metadata: Optional[str] = None,
+    ) -> str:
+        """Store an experience or observation in memory.
+        
+        Use this to log important information that should be remembered across sessions:
+        - User preferences and opinions
+        - Technical context about projects
+        - Corrections or clarifications
+        - Patterns and decisions
+        
+        Args:
+            content: The experience/observation to remember (clear, standalone statement)
+            metadata: Optional JSON string with additional metadata
+        
+        Returns:
+            Confirmation with episode ID
+        """
+        return await tool_remember(content, metadata)
+    
+    @mcp.tool()
+    async def recall(
+        query: str,
+        k: int = 5,
+        context: Optional[str] = None,
+    ) -> str:
+        """Retrieve relevant memories for a query.
+        
+        Uses semantic search with spreading activation through the concept graph.
+        Related concepts activate together, providing rich associative retrieval.
+        
+        Args:
+            query: What to search for in memory
+            k: Number of concepts to retrieve (default: 5)
+            context: Optional additional context to improve retrieval
+        
+        Returns:
+            Formatted memory context for injection into prompts
+        """
+        return await tool_recall(query, k, context)
+    
+    @mcp.tool()
+    async def consolidate(force: bool = False) -> str:
+        """Process pending episodes into generalized concepts.
+        
+        Consolidation is the "sleep" process where raw experiences are analyzed
+        and transformed into abstract, generalized knowledge. The LLM:
+        1. Identifies patterns across episodes
+        2. Creates new generalized concepts
+        3. Updates existing concepts with new evidence
+        4. Establishes relations between concepts
+        5. Flags contradictions
+        
+        Args:
+            force: If True, consolidate even with few pending episodes
+        
+        Returns:
+            Summary of consolidation results
+        """
+        return await tool_consolidate(force)
+    
+    @mcp.tool()
+    async def inspect(
+        concept_id: Optional[str] = None,
+        show_episodes: bool = False,
+        limit: int = 10,
+    ) -> str:
+        """Inspect concepts or episodes in memory.
+        
+        Use this to examine what's stored in memory:
+        - List all concepts (no concept_id)
+        - View a specific concept (with concept_id)
+        - View recent episodes (show_episodes=True)
+        
+        Args:
+            concept_id: Optional ID of a specific concept to inspect
+            show_episodes: If True, show recent episodes instead of concepts
+            limit: Maximum number of items to show
+        
+        Returns:
+            Formatted view of concepts or episodes
+        """
+        return await tool_inspect(concept_id, show_episodes, limit)
+    
+    @mcp.tool()
+    async def stats() -> str:
+        """Get memory statistics.
+        
+        Shows overview of memory contents including:
+        - Number of concepts and episodes
+        - Consolidation status
+        - Relation type distribution
+        
+        Returns:
+            Formatted statistics summary
+        """
+        return await tool_stats()
+    
+    @mcp.tool()
+    async def reflect(prompt: str) -> str:
+        """Let the LLM reason about its own memory.
+        
+        Use this for meta-cognitive analysis:
+        - "What do I know about this user?"
+        - "What are the main themes in my memory?"
+        - "What gaps exist in my understanding?"
+        - "Are there any contradictions?"
+        
+        Args:
+            prompt: The reflection prompt/question
+        
+        Returns:
+            LLM's reflection response based on memory contents
+        """
+        return await tool_reflect(prompt)
+    
+    return mcp
+
+
+def run_server(host: str = "127.0.0.1", port: int = 8765):
+    """Run the MCP server with SSE transport."""
+    import uvicorn
+    
+    mcp = create_mcp_server()
+    
+    # Get the underlying SSE app from FastMCP
+    sse_app = mcp.sse_app()
+    
+    # Create custom ASGI middleware to inject db context
+    async def app(scope, receive, send):
+        if scope['type'] == 'lifespan':
+            # Handle lifespan
+            while True:
+                message = await receive()
+                if message['type'] == 'lifespan.startup':
+                    logger.info(f"RealMem MCP server starting on {host}:{port}")
+                    await send({'type': 'lifespan.startup.complete'})
+                elif message['type'] == 'lifespan.shutdown':
+                    logger.info("RealMem MCP server shutting down")
+                    # Clean up session map
+                    _session_db_map.clear()
+                    await send({'type': 'lifespan.shutdown.complete'})
+                    return
+        
+        elif scope['type'] == 'http':
+            path = scope.get('path', '')
+            method = scope.get('method', 'GET')
+            query_string = scope.get('query_string', b'').decode()
+            params = parse_qs(query_string)
+            
+            # Extract db from query params
+            db_list = params.get('db', [])
+            session_list = params.get('session_id', [])
+            
+            db_path = None
+            
+            # Case 1: db param provided directly (initial SSE connection)
+            if db_list:
+                db_path = str(Path(db_list[0]).resolve())
+                logger.info(f"Request with db param: {db_path}")
+            
+            # Case 2: session_id provided, look up db from session map
+            elif session_list:
+                session_id = session_list[0]
+                db_path = _session_db_map.get(session_id)
+                if db_path:
+                    logger.debug(f"Found db for session {session_id}: {db_path}")
+                else:
+                    logger.warning(f"No db found for session {session_id}")
+            
+            # Case 3: No db or session - check if this is a message POST
+            # Try to extract session from the request body or other means
+            if not db_path:
+                # For SSE endpoint without db param, return error
+                if path == '/sse' and method == 'GET':
+                    await send({
+                        'type': 'http.response.start',
+                        'status': 400,
+                        'headers': [(b'content-type', b'text/plain')],
+                    })
+                    await send({
+                        'type': 'http.response.body',
+                        'body': b'Missing required query parameter: db\n\nExample: /sse?db=/path/to/memory.db',
+                    })
+                    return
+                
+                # For /messages endpoint, we need the session_id
+                # FastMCP typically includes it in query params
+                # If we still don't have db_path, check if there's only one db in use
+                if len(_session_db_map) == 1:
+                    # Only one session/db, use it
+                    db_path = list(_session_db_map.values())[0]
+                    logger.debug(f"Using only available db: {db_path}")
+                elif len(_memory_instances) == 1:
+                    # Only one memory instance, use it
+                    db_path = list(_memory_instances.keys())[0]
+                    logger.debug(f"Using only available memory instance: {db_path}")
+                else:
+                    # Can't determine which db to use
+                    logger.error(f"Cannot determine db for request: {method} {path}")
+                    await send({
+                        'type': 'http.response.start',
+                        'status': 400,
+                        'headers': [(b'content-type', b'text/plain')],
+                    })
+                    await send({
+                        'type': 'http.response.body',
+                        'body': b'Cannot determine database. Include db parameter or session_id.',
+                    })
+                    return
+            
+            # Set context and forward to FastMCP
+            token = _current_db.set(db_path)
+            try:
+                # Pre-initialize memory
+                await get_memory_for_db(db_path)
+                
+                # Intercept SSE response to capture session ID and map it to db
+                if path == '/sse' and method == 'GET':
+                    # Wrap send to capture session info from response
+                    original_send = send
+                    captured_session_id = None
+                    
+                    async def intercepting_send(message):
+                        nonlocal captured_session_id
+                        if message['type'] == 'http.response.body':
+                            body = message.get('body', b'')
+                            if body:
+                                # SSE events are formatted as "event: ...\ndata: ...\n\n"
+                                # Look for session_id in the endpoint event
+                                body_str = body.decode('utf-8', errors='ignore')
+                                if 'endpoint' in body_str and 'session_id=' in body_str:
+                                    # Extract session_id from the endpoint URL
+                                    import re
+                                    match = re.search(r'session_id=([a-f0-9-]+)', body_str)
+                                    if match:
+                                        captured_session_id = match.group(1)
+                                        _session_db_map[captured_session_id] = db_path
+                                        logger.info(f"Mapped session {captured_session_id} to db {db_path}")
+                        await original_send(message)
+                    
+                    await sse_app(scope, receive, intercepting_send)
+                else:
+                    # Regular request, just forward
+                    await sse_app(scope, receive, send)
+            finally:
+                _current_db.reset(token)
+    
+    print(f"Starting RealMem MCP server on {host}:{port}")
+    print(f"Connect with: http://{host}:{port}/sse?db=/path/to/memory.db")
+    
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+def main():
+    """CLI entry point for the MCP server."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="RealMem MCP Server - Memory system via Model Context Protocol"
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port to listen on (default: 8765)"
+    )
+    parser.add_argument(
+        "--llm",
+        default="openai",
+        choices=["anthropic", "openai", "ollama"],
+        help="LLM provider for consolidation/reflection (default: openai)"
+    )
+    parser.add_argument(
+        "--embedding",
+        default="openai",
+        choices=["openai", "ollama"],
+        help="Embedding provider for retrieval (default: openai)"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging"
+    )
+    
+    args = parser.parse_args()
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    
+    # Set providers
+    global DEFAULT_LLM_PROVIDER, DEFAULT_EMBEDDING_PROVIDER
+    DEFAULT_LLM_PROVIDER = args.llm
+    DEFAULT_EMBEDDING_PROVIDER = args.embedding
+    
+    run_server(host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

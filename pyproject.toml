@@ -1,0 +1,34 @@
+[project]
+name = "realmem"
+version = "0.1.0"
+description = "Generalization-capable memory layer for LLMs with episodic buffers, semantic graphs, and spreading activation retrieval"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.39.0",
+    "openai>=1.52.0",
+    "httpx>=0.27.0",
+    "numpy>=1.26.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+    "fastmcp>=0.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[project.scripts]
+realmem = "realmem.cli:main"
+realmem-mcp = "realmem.mcp_server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/realmem"]
+
