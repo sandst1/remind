@@ -39,9 +39,10 @@ _memory_instances: dict[str, MemoryInterface] = {}
 _memory_locks: dict[str, asyncio.Lock] = {}
 _global_lock = asyncio.Lock()
 
-# Default providers - can be overridden via CLI args
-DEFAULT_LLM_PROVIDER = "openai"
-DEFAULT_EMBEDDING_PROVIDER = "openai"
+# Default providers - can be overridden via CLI args or env vars
+import os
+DEFAULT_LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai")
+DEFAULT_EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "openai")
 
 
 async def get_memory_for_db(db_path: str) -> MemoryInterface:
@@ -530,15 +531,15 @@ def main():
     )
     parser.add_argument(
         "--llm",
-        default="openai",
-        choices=["anthropic", "openai", "ollama"],
-        help="LLM provider for consolidation/reflection (default: openai)"
+        default=None,
+        choices=["anthropic", "openai", "azure_openai", "ollama"],
+        help="LLM provider for consolidation/reflection"
     )
     parser.add_argument(
         "--embedding",
-        default="openai",
-        choices=["openai", "ollama"],
-        help="Embedding provider for retrieval (default: openai)"
+        default=None,
+        choices=["openai", "azure_openai", "ollama"],
+        help="Embedding provider for retrieval"
     )
     parser.add_argument(
         "--debug",
@@ -554,10 +555,12 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     
-    # Set providers
+    # Set providers (CLI args > Env vars > Default)
     global DEFAULT_LLM_PROVIDER, DEFAULT_EMBEDDING_PROVIDER
-    DEFAULT_LLM_PROVIDER = args.llm
-    DEFAULT_EMBEDDING_PROVIDER = args.embedding
+    if args.llm:
+        DEFAULT_LLM_PROVIDER = args.llm
+    if args.embedding:
+        DEFAULT_EMBEDDING_PROVIDER = args.embedding
     
     run_server(host=args.host, port=args.port)
 

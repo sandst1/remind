@@ -48,11 +48,17 @@ def run_async(coro):
 
 @click.group()
 @click.option("--db", default="memory.db", help="Path to memory database")
-@click.option("--llm", default="openai", type=click.Choice(["anthropic", "openai", "ollama"]))
-@click.option("--embedding", default="openai", type=click.Choice(["openai", "ollama"]))
+@click.option("--llm", default=None, type=click.Choice(["anthropic", "openai", "azure_openai", "ollama"]))
+@click.option("--embedding", default=None, type=click.Choice(["openai", "azure_openai", "ollama"]))
 @click.pass_context
 def main(ctx, db: str, llm: str, embedding: str):
     """RealMem - Generalization-capable memory for LLMs."""
+    import os
+    
+    # Resolve providers (CLI > Env var > Default)
+    llm = llm or os.environ.get("LLM_PROVIDER", "openai")
+    embedding = embedding or os.environ.get("EMBEDDING_PROVIDER", "openai")
+    
     ctx.ensure_object(dict)
     ctx.obj["db"] = db
     ctx.obj["llm"] = llm

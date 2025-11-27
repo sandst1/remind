@@ -381,8 +381,8 @@ and what gaps might exist in your understanding."""
 
 
 def create_memory(
-    llm_provider: str = "anthropic",
-    embedding_provider: str = "openai",
+    llm_provider: Optional[str] = None,
+    embedding_provider: Optional[str] = None,
     db_path: str = "memory.db",
     **kwargs,
 ) -> MemoryInterface:
@@ -390,24 +390,31 @@ def create_memory(
     Factory function to create a MemoryInterface with sensible defaults.
     
     Args:
-        llm_provider: "anthropic", "openai", or "ollama"
-        embedding_provider: "openai" or "ollama"
+        llm_provider: "anthropic", "openai", "azure_openai", or "ollama"
+        embedding_provider: "openai", "azure_openai", or "ollama"
         db_path: Path to SQLite database
         **kwargs: Additional arguments passed to MemoryInterface
         
     Returns:
         Configured MemoryInterface
     """
+    import os
+    
+    # Resolve providers from env vars if not provided
+    llm_provider = llm_provider or os.environ.get("LLM_PROVIDER", "anthropic")
+    embedding_provider = embedding_provider or os.environ.get("EMBEDDING_PROVIDER", "openai")
+    
     # Import providers
     from realmem.providers import (
-        AnthropicLLM, OpenAILLM, OllamaLLM,
-        OpenAIEmbedding, OllamaEmbedding,
+        AnthropicLLM, OpenAILLM, OllamaLLM, AzureOpenAILLM,
+        OpenAIEmbedding, OllamaEmbedding, AzureOpenAIEmbedding,
     )
     
     # Create LLM provider
     llm_map = {
         "anthropic": AnthropicLLM,
         "openai": OpenAILLM,
+        "azure_openai": AzureOpenAILLM,
         "ollama": OllamaLLM,
     }
     if llm_provider not in llm_map:
@@ -418,6 +425,7 @@ def create_memory(
     # Create embedding provider
     embed_map = {
         "openai": OpenAIEmbedding,
+        "azure_openai": AzureOpenAIEmbedding,
         "ollama": OllamaEmbedding,
     }
     if embedding_provider not in embed_map:
