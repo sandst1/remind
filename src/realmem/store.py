@@ -92,6 +92,16 @@ class MemoryStore(ABC):
         """Get most recent episodes."""
         ...
     
+    @abstractmethod
+    def get_episodes_by_date_range(
+        self, 
+        start_date: Optional[str] = None, 
+        end_date: Optional[str] = None,
+        limit: int = 100
+    ) -> list[Episode]:
+        """Get episodes within a date range."""
+        ...
+    
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -539,6 +549,44 @@ class SQLiteMemoryStore(MemoryStore):
                 """,
                 (limit,)
             ).fetchall()
+            
+            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
+        finally:
+            conn.close()
+    
+    def get_episodes_by_date_range(
+        self, 
+        start_date: Optional[str] = None, 
+        end_date: Optional[str] = None,
+        limit: int = 100
+    ) -> list[Episode]:
+        """Get episodes within a date range.
+        
+        Args:
+            start_date: ISO format datetime string (inclusive), e.g., "2024-01-01" or "2024-01-01T10:00:00"
+            end_date: ISO format datetime string (inclusive), e.g., "2024-12-31" or "2024-12-31T23:59:59"
+            limit: Maximum number of episodes to return
+            
+        Returns:
+            List of episodes sorted by timestamp (newest first)
+        """
+        conn = self._get_conn()
+        try:
+            query = "SELECT data FROM episodes WHERE 1=1"
+            params = []
+            
+            if start_date:
+                query += " AND timestamp >= ?"
+                params.append(start_date)
+            
+            if end_date:
+                query += " AND timestamp <= ?"
+                params.append(end_date)
+            
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+            
+            rows = conn.execute(query, params).fetchall()
             
             return [Episode.from_dict(json.loads(row["data"])) for row in rows]
         finally:

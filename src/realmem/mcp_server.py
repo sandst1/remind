@@ -142,21 +142,41 @@ async def tool_inspect(
     concept_id: Optional[str] = None,
     show_episodes: bool = False,
     limit: int = 10,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> str:
     """Inspect concepts or episodes in memory."""
     memory = await get_memory()
     store = memory.store
     
     if show_episodes:
-        episodes = store.get_recent_episodes(limit=limit)
-        if not episodes:
-            return "No episodes in memory."
+        # Get episodes - either by date range or recent
+        if start_date or end_date:
+            episodes = store.get_episodes_by_date_range(
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit
+            )
+            date_info = []
+            if start_date:
+                date_info.append(f"from {start_date}")
+            if end_date:
+                date_info.append(f"to {end_date}")
+            header = f"Episodes {' '.join(date_info)} ({len(episodes)}):" if date_info else f"Episodes ({len(episodes)}):"
+        else:
+            episodes = store.get_recent_episodes(limit=limit)
+            header = f"Recent Episodes ({len(episodes)}):"
         
-        lines = [f"Recent Episodes ({len(episodes)}):"]
+        if not episodes:
+            return "No episodes found."
+        
+        lines = [header]
         for ep in episodes:
             status = "✓" if ep.consolidated else "pending"
             content = ep.content[:80] + "..." if len(ep.content) > 80 else ep.content
-            lines.append(f"  [{ep.id}] ({status}) {content}")
+            timestamp = ep.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            lines.append(f"  [{ep.id}] {timestamp} ({status})")
+            lines.append(f"      {content}")
         return "\n".join(lines)
     
     if concept_id:
@@ -323,6 +343,8 @@ def create_mcp_server():
         concept_id: Optional[str] = None,
         show_episodes: bool = False,
         limit: int = 10,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> str:
         """Inspect concepts or episodes in memory.
         
@@ -330,16 +352,25 @@ def create_mcp_server():
         - List all concepts (no concept_id)
         - View a specific concept (with concept_id)
         - View recent episodes (show_episodes=True)
+        - Filter episodes by date range (show_episodes=True with start_date/end_date)
         
         Args:
             concept_id: Optional ID of a specific concept to inspect
-            show_episodes: If True, show recent episodes instead of concepts
+            show_episodes: If True, show episodes instead of concepts
             limit: Maximum number of items to show
+            start_date: Optional ISO format date/datetime (e.g., "2024-01-01" or "2024-01-01T10:00:00") - inclusive start
+            end_date: Optional ISO format date/datetime (e.g., "2024-12-31" or "2024-12-31T23:59:59") - inclusive end
         
         Returns:
             Formatted view of concepts or episodes
+        
+        Examples:
+            - inspect(show_episodes=True) - show recent episodes
+            - inspect(show_episodes=True, start_date="2024-01-01") - episodes from Jan 1, 2024 onwards
+            - inspect(show_episodes=True, start_date="2024-01-01", end_date="2024-01-31") - January 2024 episodes
+            - inspect(show_episodes=True, end_date="2024-06-30") - episodes up to June 30, 2024
         """
-        return await tool_inspect(concept_id, show_episodes, limit)
+        return await tool_inspect(concept_id, show_episodes, limit, start_date, end_date)
     
     @mcp.tool()
     async def stats() -> str:
@@ -377,13 +408,18 @@ def create_mcp_server():
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8765):
-    """Run the MCP server with SSE transport."""
+    """Run the MCP server with HTTP transport."""
     import uvicorn
+    from fastmcp.server.http import create_sse_app
     
     mcp = create_mcp_server()
     
-    # Get the underlying SSE app from FastMCP
-    sse_app = mcp.sse_app()
+    # Create the SSE app with FastMCP
+    sse_app = create_sse_app(
+        server=mcp,
+        sse_path="/sse",
+        message_path="/messages",
+    )
     
     # Create custom ASGI middleware to inject db context
     async def app(scope, receive, send):
@@ -430,7 +466,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8765):
             # Case 3: No db or session - check if this is a message POST
             # Try to extract session from the request body or other means
             if not db_path:
-                # For SSE endpoint without db param, return error
+                # For MCP SSE endpoint without db param, return error
                 if path == '/sse' and method == 'GET':
                     await send({
                         'type': 'http.response.start',
@@ -474,7 +510,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8765):
                 # Pre-initialize memory
                 await get_memory_for_db(db_path)
                 
-                # Intercept SSE response to capture session ID and map it to db
+                # Intercept HTTP response to capture session ID and map it to db
                 if path == '/sse' and method == 'GET':
                     # Wrap send to capture session info from response
                     original_send = send
@@ -485,8 +521,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8765):
                         if message['type'] == 'http.response.body':
                             body = message.get('body', b'')
                             if body:
-                                # SSE events are formatted as "event: ...\ndata: ...\n\n"
-                                # Look for session_id in the endpoint event
+                                # Look for session_id in the response
                                 body_str = body.decode('utf-8', errors='ignore')
                                 if 'endpoint' in body_str and 'session_id=' in body_str:
                                     # Extract session_id from the endpoint URL
