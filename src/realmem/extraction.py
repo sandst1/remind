@@ -6,7 +6,9 @@ Uses LLM to extract structured information from raw episodic memories:
 - Entity mentions (files, functions, people, concepts, etc.)
 """
 
+import json
 import logging
+import re
 from typing import Optional
 
 from realmem.models import (
@@ -18,6 +20,77 @@ from realmem.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
+# Maximum characters of episode content to send for extraction
+MAX_CONTENT_LENGTH = 2000
+
+
+def try_fix_json(text: str) -> Optional[dict]:
+    """Try to fix and parse malformed JSON."""
+    # First try direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # Remove markdown code blocks
+    text = re.sub(r'^```(?:json)?\s*', '', text.strip())
+    text = re.sub(r'\s*```$', '', text)
+    
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # Try to find JSON object in the text
+    match = re.search(r'\{[\s\S]*\}', text)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+    
+    # Try to fix truncated JSON by closing open structures
+    fixed = text.rstrip()
+    
+    # Count brackets to see what's missing
+    open_braces = fixed.count('{') - fixed.count('}')
+    open_brackets = fixed.count('[') - fixed.count(']')
+    
+    # If we're inside a string, try to close it
+    if fixed.count('"') % 2 == 1:
+        fixed += '"'
+    
+    # Close arrays first, then objects
+    fixed += ']' * open_brackets
+    fixed += '}' * open_braces
+    
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+    
+    # Last resort: try to extract just type and entities array
+    type_match = re.search(r'"type"\s*:\s*"(\w+)"', text)
+    entities_match = re.search(r'"entities"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+    
+    if type_match:
+        result = {"type": type_match.group(1), "entities": []}
+        
+        if entities_match:
+            # Try to parse entities - extract individual entity objects
+            entity_pattern = r'\{[^}]+\}'
+            entity_strs = re.findall(entity_pattern, entities_match.group(1))
+            for es in entity_strs:
+                try:
+                    entity = json.loads(es)
+                    result["entities"].append(entity)
+                except json.JSONDecodeError:
+                    pass
+        
+        return result
+    
+    return None
+
 
 EXTRACTION_SYSTEM_PROMPT = """You are an information extraction system. Your job is to:
 
@@ -26,43 +99,24 @@ EXTRACTION_SYSTEM_PROMPT = """You are an information extraction system. Your job
 
 Be conservative - only extract entities that are clearly mentioned.
 Prefer specific entity types (file, function) over generic ones (concept).
-"""
+Keep entity names SHORT (under 30 characters).
+Respond with ONLY valid JSON, no explanations."""
 
 
-EXTRACTION_PROMPT_TEMPLATE = """Analyze this memory/episode and extract structured information:
+EXTRACTION_PROMPT_TEMPLATE = """Classify and extract from this text:
 
----
 {content}
----
 
-Return JSON with:
-1. "type": The type of this memory. One of:
-   - "observation" - Something noticed, learned, or discovered
-   - "decision" - A choice or decision that was made
-   - "question" - An open question, uncertainty, or thing to investigate
-   - "meta" - Meta-cognition about thinking patterns or processes
-   - "preference" - A preference, value, opinion, or personal stance
-
-2. "entities": Array of entities mentioned. Each entity has:
-   - "type": One of: file, function, class, module, concept, person, project, tool, other
-   - "id": Unique identifier like "file:src/auth.ts" or "person:alice" or "concept:caching"
-   - "name": Human-readable display name
-
-Examples of entity extraction:
-- "Fixed a bug in auth.ts" → {{"type": "file", "id": "file:auth.ts", "name": "auth.ts"}}
-- "Alice prefers Python" → {{"type": "person", "id": "person:alice", "name": "Alice"}}
-- "Using Redis for caching" → {{"type": "tool", "id": "tool:redis", "name": "Redis"}}
-- "The rate limiting approach works well" → {{"type": "concept", "id": "concept:rate-limiting", "name": "rate limiting"}}
-
-Respond with JSON only:
+Return JSON:
 {{
   "type": "observation|decision|question|meta|preference",
-  "entities": [
-    {{"type": "...", "id": "...", "name": "..."}}
-  ]
+  "entities": [{{"type": "file|function|class|person|concept|tool|project", "id": "type:name", "name": "short name"}}]
 }}
 
-If no entities are mentioned, return an empty array for "entities"."""
+Types: observation=noticed/learned, decision=choice made, question=uncertainty, meta=about thinking, preference=opinion/value
+Entity examples: {{"type":"file","id":"file:auth.ts","name":"auth.ts"}}, {{"type":"person","id":"person:alice","name":"Alice"}}
+
+Keep entity names under 30 chars. Empty entities array if none found."""
 
 
 class EntityExtractor:
@@ -91,6 +145,10 @@ class EntityExtractor:
         Returns:
             ExtractionResult with episode_type and entities
         """
+        # Truncate long content to avoid token limits
+        if len(content) > MAX_CONTENT_LENGTH:
+            content = content[:MAX_CONTENT_LENGTH] + "...[truncated]"
+        
         prompt = EXTRACTION_PROMPT_TEMPLATE.format(content=content)
         
         try:
@@ -102,6 +160,27 @@ class EntityExtractor:
             )
             
             return ExtractionResult.from_dict(result)
+            
+        except json.JSONDecodeError as e:
+            # Try to fix malformed JSON
+            logger.debug(f"JSON decode error, attempting recovery: {e}")
+            try:
+                # Get raw response and try to fix it
+                raw_response = await self.llm.complete(
+                    prompt=prompt,
+                    system=EXTRACTION_SYSTEM_PROMPT,
+                    temperature=0.1,
+                    max_tokens=512,
+                )
+                fixed = try_fix_json(raw_response)
+                if fixed:
+                    logger.debug("JSON recovery successful")
+                    return ExtractionResult.from_dict(fixed)
+            except Exception:
+                pass
+            
+            logger.warning(f"Extraction failed (JSON): {e}")
+            return ExtractionResult(episode_type=EpisodeType.OBSERVATION, entities=[])
             
         except Exception as e:
             logger.warning(f"Extraction failed: {e}")
