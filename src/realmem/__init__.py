@@ -36,6 +36,12 @@ from realmem.models import (
     Relation,
     RelationType,
     ConsolidationResult,
+    # v2 models
+    Entity,
+    EntityType,
+    EpisodeType,
+    ExtractionResult,
+    BackfillResult,
 )
 
 # Storage
@@ -79,6 +85,12 @@ __all__ = [
     "Relation",
     "RelationType",
     "ConsolidationResult",
+    # v2 models
+    "Entity",
+    "EntityType",
+    "EpisodeType",
+    "ExtractionResult",
+    "BackfillResult",
     # Storage
     "MemoryStore",
     "SQLiteMemoryStore",

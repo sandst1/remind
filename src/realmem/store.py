@@ -4,10 +4,16 @@ from abc import ABC, abstractmethod
 from typing import Optional
 import sqlite3
 import json
+import logging
 import numpy as np
 from pathlib import Path
 
-from realmem.models import Concept, Episode, Relation, RelationType
+from realmem.models import (
+    Concept, Episode, Relation, RelationType,
+    Entity, EntityType, EpisodeType,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryStore(ABC):
@@ -102,6 +108,53 @@ class MemoryStore(ABC):
         """Get episodes within a date range."""
         ...
     
+    # Entity operations
+    @abstractmethod
+    def add_entity(self, entity: Entity) -> str:
+        """Add an entity and return its ID. Updates if exists."""
+        ...
+    
+    @abstractmethod
+    def get_entity(self, id: str) -> Optional[Entity]:
+        """Get an entity by ID."""
+        ...
+    
+    @abstractmethod
+    def get_entities_by_type(self, entity_type: EntityType) -> list[Entity]:
+        """Get all entities of a given type."""
+        ...
+    
+    @abstractmethod
+    def get_all_entities(self) -> list[Entity]:
+        """Get all entities."""
+        ...
+    
+    # Mention operations (episode <-> entity)
+    @abstractmethod
+    def add_mention(self, episode_id: str, entity_id: str) -> None:
+        """Create a mention link between episode and entity."""
+        ...
+    
+    @abstractmethod
+    def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
+        """Get all episodes that mention an entity."""
+        ...
+    
+    @abstractmethod
+    def get_entities_mentioned_in(self, episode_id: str) -> list[Entity]:
+        """Get all entities mentioned in an episode."""
+        ...
+    
+    @abstractmethod
+    def get_unextracted_episodes(self, limit: int = 100) -> list[Episode]:
+        """Get episodes that haven't had entity extraction performed."""
+        ...
+    
+    @abstractmethod
+    def get_episodes_by_type(self, episode_type: EpisodeType, limit: int = 50) -> list[Episode]:
+        """Get episodes of a specific type."""
+        ...
+    
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -143,7 +196,7 @@ class SQLiteMemoryStore(MemoryStore):
         return conn
     
     def _init_db(self):
-        """Initialize database schema."""
+        """Initialize database schema with migration support."""
         conn = self._get_conn()
         try:
             # Concepts table - stores full concept data as JSON
@@ -183,16 +236,71 @@ class SQLiteMemoryStore(MemoryStore):
                 )
             """)
             
-            # Indexes for faster queries
+            # === NEW TABLES (v2 schema) ===
+            
+            # Entities table - external referents (files, functions, people, etc.)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS entities (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    display_name TEXT,
+                    data JSON,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Mentions table - links episodes to entities
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS mentions (
+                    episode_id TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (episode_id, entity_id),
+                    FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE,
+                    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+                )
+            """)
+            
+            # === INDEXES ===
+            
+            # Episode indexes
             conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_consolidated ON episodes(consolidated)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp)")
+            
+            # Relation indexes
             conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(type)")
             
+            # Entity indexes
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)")
+            
+            # Mention indexes
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mentions_episode ON mentions(episode_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mentions_entity ON mentions(entity_id)")
+            
             conn.commit()
+            
+            # Run migrations for existing databases
+            self._run_migrations(conn)
+            
         finally:
             conn.close()
+    
+    def _run_migrations(self, conn: sqlite3.Connection):
+        """Run schema migrations for backwards compatibility."""
+        # Check if episodes table has the entities_extracted indicator in data
+        # This is handled via JSON in the data column, so no schema migration needed
+        # The Episode.from_dict() handles missing fields with defaults
+        
+        # Log migration status
+        try:
+            entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+            mention_count = conn.execute("SELECT COUNT(*) FROM mentions").fetchone()[0]
+            logger.debug(f"Schema v2: {entity_count} entities, {mention_count} mentions")
+        except sqlite3.OperationalError:
+            # Tables don't exist yet (shouldn't happen, but handle gracefully)
+            logger.warning("Entity tables not found, will be created on next init")
     
     # Concept operations
     
@@ -592,6 +700,185 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
     
+    def get_unextracted_episodes(self, limit: int = 100) -> list[Episode]:
+        """Get episodes that haven't had entity extraction performed."""
+        conn = self._get_conn()
+        try:
+            # Check entities_extracted flag in JSON data
+            rows = conn.execute(
+                """
+                SELECT data FROM episodes 
+                WHERE json_extract(data, '$.entities_extracted') IS NULL 
+                   OR json_extract(data, '$.entities_extracted') = 0
+                   OR json_extract(data, '$.entities_extracted') = 'false'
+                ORDER BY timestamp ASC 
+                LIMIT ?
+                """,
+                (limit,)
+            ).fetchall()
+            
+            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
+        finally:
+            conn.close()
+    
+    def get_episodes_by_type(self, episode_type: EpisodeType, limit: int = 50) -> list[Episode]:
+        """Get episodes of a specific type."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT data FROM episodes 
+                WHERE json_extract(data, '$.episode_type') = ?
+                ORDER BY timestamp DESC 
+                LIMIT ?
+                """,
+                (episode_type.value, limit)
+            ).fetchall()
+            
+            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
+        finally:
+            conn.close()
+    
+    # Entity operations
+    
+    def add_entity(self, entity: Entity) -> str:
+        """Add an entity and return its ID. Updates if exists."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO entities (id, type, display_name, data, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    entity.id,
+                    entity.type.value,
+                    entity.display_name,
+                    json.dumps(entity.to_dict()),
+                    entity.created_at.isoformat(),
+                )
+            )
+            conn.commit()
+            return entity.id
+        finally:
+            conn.close()
+    
+    def get_entity(self, id: str) -> Optional[Entity]:
+        """Get an entity by ID."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT data FROM entities WHERE id = ?",
+                (id,)
+            ).fetchone()
+            
+            if not row:
+                return None
+            
+            return Entity.from_dict(json.loads(row["data"]))
+        finally:
+            conn.close()
+    
+    def get_entities_by_type(self, entity_type: EntityType) -> list[Entity]:
+        """Get all entities of a given type."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT data FROM entities WHERE type = ? ORDER BY created_at DESC",
+                (entity_type.value,)
+            ).fetchall()
+            
+            return [Entity.from_dict(json.loads(row["data"])) for row in rows]
+        finally:
+            conn.close()
+    
+    def get_all_entities(self) -> list[Entity]:
+        """Get all entities."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT data FROM entities ORDER BY type, created_at DESC"
+            ).fetchall()
+            
+            return [Entity.from_dict(json.loads(row["data"])) for row in rows]
+        finally:
+            conn.close()
+    
+    # Mention operations
+    
+    def add_mention(self, episode_id: str, entity_id: str) -> None:
+        """Create a mention link between episode and entity."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO mentions (episode_id, entity_id)
+                VALUES (?, ?)
+                """,
+                (episode_id, entity_id)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    
+    def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
+        """Get all episodes that mention an entity."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT e.data FROM episodes e
+                JOIN mentions m ON e.id = m.episode_id
+                WHERE m.entity_id = ?
+                ORDER BY e.timestamp DESC
+                LIMIT ?
+                """,
+                (entity_id, limit)
+            ).fetchall()
+            
+            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
+        finally:
+            conn.close()
+    
+    def get_entities_mentioned_in(self, episode_id: str) -> list[Entity]:
+        """Get all entities mentioned in an episode."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT ent.data FROM entities ent
+                JOIN mentions m ON ent.id = m.entity_id
+                WHERE m.episode_id = ?
+                ORDER BY ent.type, ent.display_name
+                """,
+                (episode_id,)
+            ).fetchall()
+            
+            return [Entity.from_dict(json.loads(row["data"])) for row in rows]
+        finally:
+            conn.close()
+    
+    def get_entity_mention_counts(self) -> list[tuple[Entity, int]]:
+        """Get all entities with their mention counts, sorted by count desc."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT ent.data, COUNT(m.episode_id) as mention_count
+                FROM entities ent
+                LEFT JOIN mentions m ON ent.id = m.entity_id
+                GROUP BY ent.id
+                ORDER BY mention_count DESC, ent.type
+                """
+            ).fetchall()
+            
+            return [
+                (Entity.from_dict(json.loads(row["data"])), row["mention_count"])
+                for row in rows
+            ]
+        finally:
+            conn.close()
+    
     # Statistics
     
     def get_stats(self) -> dict:
@@ -610,27 +897,80 @@ class SQLiteMemoryStore(MemoryStore):
                 "SELECT type, COUNT(*) as count FROM relations GROUP BY type"
             ).fetchall()
             
+            # Entity/mention stats (v2 schema)
+            entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+            mention_count = conn.execute("SELECT COUNT(*) FROM mentions").fetchone()[0]
+            
+            # Episode type distribution
+            episode_types = conn.execute(
+                """
+                SELECT json_extract(data, '$.episode_type') as type, COUNT(*) as count 
+                FROM episodes 
+                GROUP BY json_extract(data, '$.episode_type')
+                """
+            ).fetchall()
+            
+            # Entity type distribution
+            entity_types = conn.execute(
+                "SELECT type, COUNT(*) as count FROM entities GROUP BY type"
+            ).fetchall()
+            
+            # Count unextracted episodes
+            unextracted_count = conn.execute(
+                """
+                SELECT COUNT(*) FROM episodes 
+                WHERE json_extract(data, '$.entities_extracted') IS NULL 
+                   OR json_extract(data, '$.entities_extracted') = 0
+                   OR json_extract(data, '$.entities_extracted') = 'false'
+                """
+            ).fetchone()[0]
+            
             return {
                 "concepts": concept_count,
                 "episodes": episode_count,
                 "unconsolidated_episodes": unconsolidated_count,
+                "unextracted_episodes": unextracted_count,
                 "relations": relation_count,
                 "relation_types": {row["type"]: row["count"] for row in relation_types},
+                "entities": entity_count,
+                "mentions": mention_count,
+                "entity_types": {row["type"]: row["count"] for row in entity_types},
+                "episode_types": {
+                    (row["type"] or "observation"): row["count"] 
+                    for row in episode_types
+                },
             }
         finally:
             conn.close()
     
     def export_data(self) -> dict:
         """Export all data for backup."""
-        return {
-            "concepts": [c.to_dict() for c in self.get_all_concepts()],
-            "episodes": [e.to_dict() for e in self.get_recent_episodes(limit=10000)],
-        }
+        conn = self._get_conn()
+        try:
+            # Export mentions as list of (episode_id, entity_id) tuples
+            mentions = conn.execute(
+                "SELECT episode_id, entity_id FROM mentions"
+            ).fetchall()
+            
+            return {
+                "version": 2,
+                "concepts": [c.to_dict() for c in self.get_all_concepts()],
+                "episodes": [e.to_dict() for e in self.get_recent_episodes(limit=10000)],
+                "entities": [e.to_dict() for e in self.get_all_entities()],
+                "mentions": [
+                    {"episode_id": row["episode_id"], "entity_id": row["entity_id"]}
+                    for row in mentions
+                ],
+            }
+        finally:
+            conn.close()
     
     def import_data(self, data: dict) -> dict:
         """Import data from backup. Returns counts."""
         concepts_imported = 0
         episodes_imported = 0
+        entities_imported = 0
+        mentions_imported = 0
         
         for concept_data in data.get("concepts", []):
             concept = Concept.from_dict(concept_data)
@@ -648,11 +988,25 @@ class SQLiteMemoryStore(MemoryStore):
                 self.add_episode(episode)
                 episodes_imported += 1
             except sqlite3.IntegrityError:
-                # Already exists
-                pass
+                # Already exists, update instead
+                self.update_episode(episode)
+                episodes_imported += 1
+        
+        # Import entities (v2 schema)
+        for entity_data in data.get("entities", []):
+            entity = Entity.from_dict(entity_data)
+            self.add_entity(entity)  # Uses INSERT OR REPLACE
+            entities_imported += 1
+        
+        # Import mentions (v2 schema)
+        for mention in data.get("mentions", []):
+            self.add_mention(mention["episode_id"], mention["entity_id"])
+            mentions_imported += 1
         
         return {
             "concepts_imported": concepts_imported,
             "episodes_imported": episodes_imported,
+            "entities_imported": entities_imported,
+            "mentions_imported": mentions_imported,
         }
 

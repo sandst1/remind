@@ -14,11 +14,15 @@ from pathlib import Path
 import logging
 import json
 
-from realmem.models import Episode, Concept, ConsolidationResult
+from realmem.models import (
+    Episode, Concept, ConsolidationResult, 
+    Entity, EpisodeType, BackfillResult,
+)
 from realmem.store import MemoryStore, SQLiteMemoryStore
 from realmem.providers.base import LLMProvider, EmbeddingProvider
 from realmem.consolidation import Consolidator
 from realmem.retrieval import MemoryRetriever, ActivatedConcept
+from realmem.extraction import EntityExtractor, extract_for_remember
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +73,8 @@ class MemoryInterface:
         # Consolidation settings
         consolidation_threshold: int = 10,  # episodes before auto-consolidation
         auto_consolidate: bool = True,
+        # Extraction settings
+        auto_extract: bool = True,  # Extract entities on remember()
         # Retrieval settings
         default_recall_k: int = 5,
         spread_hops: int = 2,
@@ -90,9 +96,15 @@ class MemoryInterface:
             spread_hops=spread_hops,
         )
         
+        self.extractor = EntityExtractor(
+            llm=llm,
+            store=self.store,
+        )
+        
         # Settings
         self.consolidation_threshold = consolidation_threshold
         self.auto_consolidate = auto_consolidate
+        self.auto_extract = auto_extract
         self.default_recall_k = default_recall_k
         
         # Episode buffer for tracking (this session only)
@@ -103,6 +115,9 @@ class MemoryInterface:
         self,
         content: str,
         metadata: Optional[dict] = None,
+        episode_type: Optional[EpisodeType] = None,
+        entities: Optional[list[str]] = None,
+        auto_extract: Optional[bool] = None,
     ) -> str:
         """
         Log an experience/interaction to be consolidated later.
@@ -110,17 +125,65 @@ class MemoryInterface:
         Args:
             content: The interaction or experience to remember
             metadata: Optional metadata about the episode
+            episode_type: Explicit type (observation, decision, question, meta, preference)
+                          If not provided and auto_extract=True, will be auto-detected
+            entities: Explicit list of entity IDs (e.g., ["file:src/auth.ts", "person:alice"])
+                      If not provided and auto_extract=True, will be auto-detected
+            auto_extract: Override the instance-level auto_extract setting
             
         Returns:
             The episode ID
         """
+        should_extract = auto_extract if auto_extract is not None else self.auto_extract
+        
+        # Create episode with explicit type/entities if provided
         episode = Episode(
             content=content,
             metadata=metadata or {},
         )
         
+        if episode_type:
+            episode.episode_type = episode_type
+            episode.entities_extracted = True  # Manual override counts as extracted
+        
+        if entities:
+            episode.entity_ids = entities
+            episode.entities_extracted = True
+        
+        # Auto-extract if enabled and not already set
+        if should_extract and not episode.entities_extracted:
+            episode = await extract_for_remember(
+                llm=self.llm,
+                store=self.store,
+                episode=episode,
+                auto_extract=True,
+            )
+        
+        # Store the episode
         episode_id = self.store.add_episode(episode)
         self._episode_buffer.append(episode_id)
+        
+        # Store pending entities from extraction (if any)
+        pending_entities = episode.metadata.pop("_pending_entities", [])
+        for entity_data in pending_entities:
+            entity = Entity.from_dict(entity_data)
+            self.store.add_entity(entity)
+            self.store.add_mention(episode_id, entity.id)
+        
+        # Also store explicitly provided entities
+        if entities:
+            for entity_id in entities:
+                # Ensure entity exists
+                if not self.store.get_entity(entity_id):
+                    type_str, name = Entity.parse_id(entity_id)
+                    from realmem.models import EntityType
+                    try:
+                        etype = EntityType(type_str)
+                    except ValueError:
+                        etype = EntityType.OTHER
+                    entity = Entity(id=entity_id, type=etype, display_name=name)
+                    self.store.add_entity(entity)
+                self.store.add_mention(episode_id, entity_id)
         
         logger.debug(f"Remembered episode {episode_id}: {content[:50]}...")
         
@@ -137,8 +200,9 @@ class MemoryInterface:
         query: str,
         k: Optional[int] = None,
         context: Optional[str] = None,
+        entity: Optional[str] = None,
         raw: bool = False,
-    ) -> str | list[ActivatedConcept]:
+    ) -> str | list[ActivatedConcept] | list[Episode]:
         """
         Retrieve relevant memory for a query.
         
@@ -146,13 +210,22 @@ class MemoryInterface:
             query: What to search for
             k: Number of concepts to return
             context: Additional context for the search
-            raw: If True, return ActivatedConcept objects instead of formatted string
+            entity: If provided, retrieve by entity instead of semantic search
+            raw: If True, return raw objects instead of formatted string
             
         Returns:
-            Formatted memory string for LLM injection, or list of ActivatedConcept if raw=True
+            Formatted memory string for LLM injection, or raw objects if raw=True
         """
         k = k or self.default_recall_k
         
+        # Entity-based retrieval
+        if entity:
+            episodes = await self.retriever.retrieve_by_entity(entity, limit=k * 4)
+            if raw:
+                return episodes
+            return self.retriever.format_entity_context(entity, episodes)
+        
+        # Concept-based retrieval (semantic)
         activated = await self.retriever.retrieve(
             query=query,
             k=k,
@@ -312,6 +385,43 @@ and what gaps might exist in your understanding."""
     def get_recent_episodes(self, limit: int = 10) -> list[Episode]:
         """Get recent episodes."""
         return self.store.get_recent_episodes(limit=limit)
+    
+    def get_episodes_by_type(self, episode_type: EpisodeType, limit: int = 50) -> list[Episode]:
+        """Get episodes of a specific type (decision, question, meta, etc.)."""
+        return self.store.get_episodes_by_type(episode_type, limit=limit)
+    
+    # Entity operations
+    
+    def get_entity(self, entity_id: str) -> Optional[Entity]:
+        """Get an entity by ID."""
+        return self.store.get_entity(entity_id)
+    
+    def get_all_entities(self) -> list[Entity]:
+        """Get all entities."""
+        return self.store.get_all_entities()
+    
+    def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
+        """Get all episodes that mention a specific entity."""
+        return self.store.get_episodes_mentioning(entity_id, limit=limit)
+    
+    def get_entity_mention_counts(self) -> list[tuple[Entity, int]]:
+        """Get all entities with their mention counts, sorted by most mentioned."""
+        return self.store.get_entity_mention_counts()
+    
+    async def backfill_extraction(self, limit: int = 100) -> BackfillResult:
+        """
+        Backfill entity extraction for existing episodes.
+        
+        Processes episodes that haven't had extraction performed yet.
+        Useful for migrating existing databases to the v2 schema.
+        
+        Args:
+            limit: Maximum number of episodes to process
+            
+        Returns:
+            BackfillResult with statistics
+        """
+        return await self.extractor.backfill(limit=limit)
     
     def get_stats(self) -> dict:
         """Get memory statistics including consolidation state."""

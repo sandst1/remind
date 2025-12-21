@@ -21,6 +21,83 @@ class RelationType(Enum):
     CONTEXT_OF = "context_of"     # A provides context for understanding B
 
 
+class EpisodeType(Enum):
+    """Types of episodic memories."""
+    
+    OBSERVATION = "observation"   # Default - something noticed or learned
+    DECISION = "decision"         # A choice or decision that was made
+    QUESTION = "question"         # An open question or uncertainty
+    META = "meta"                 # Meta-cognition about patterns/processes
+    PREFERENCE = "preference"     # A preference, value, or opinion
+
+
+class EntityType(Enum):
+    """Types of entities that can be mentioned in episodes."""
+    
+    FILE = "file"                 # Source file (e.g., "file:src/auth.ts")
+    FUNCTION = "function"         # Function or method (e.g., "function:authenticate")
+    CLASS = "class"               # Class or type (e.g., "class:UserService")
+    MODULE = "module"             # Module or package (e.g., "module:auth")
+    CONCEPT = "concept"           # Abstract concept (e.g., "concept:caching")
+    PERSON = "person"             # Person (e.g., "person:alice")
+    PROJECT = "project"           # Project (e.g., "project:backend-api")
+    TOOL = "tool"                 # Tool or technology (e.g., "tool:redis")
+    OTHER = "other"               # Catch-all for other entity types
+
+
+@dataclass
+class Entity:
+    """
+    An entity that can be mentioned in episodes.
+    
+    Entities are external referents - files, functions, people, concepts, etc.
+    They form a graph alongside concepts, connected through mentions.
+    """
+    
+    id: str  # e.g., "file:src/auth.ts", "person:alice", "concept:caching"
+    type: EntityType
+    display_name: Optional[str] = None  # Human-readable name
+    created_at: datetime = field(default_factory=datetime.now)
+    
+    # Optional metadata
+    metadata: dict = field(default_factory=dict)
+    
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        return {
+            "id": self.id,
+            "type": self.type.value,
+            "display_name": self.display_name,
+            "created_at": self.created_at.isoformat(),
+            "metadata": self.metadata,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "Entity":
+        """Deserialize from dictionary."""
+        return cls(
+            id=data["id"],
+            type=EntityType(data["type"]),
+            display_name=data.get("display_name"),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+            metadata=data.get("metadata", {}),
+        )
+    
+    @classmethod
+    def parse_id(cls, entity_id: str) -> tuple[str, str]:
+        """Parse entity ID into (type, name). E.g., 'file:src/auth.ts' -> ('file', 'src/auth.ts')"""
+        if ":" in entity_id:
+            type_str, name = entity_id.split(":", 1)
+            return type_str, name
+        # No prefix - assume concept
+        return "concept", entity_id
+    
+    @classmethod
+    def make_id(cls, entity_type: str, name: str) -> str:
+        """Create entity ID from type and name."""
+        return f"{entity_type}:{name}"
+
+
 @dataclass
 class Relation:
     """A directed relationship between two concepts."""
@@ -150,14 +227,23 @@ class Episode:
     # The raw interaction content
     content: str = ""
     
+    # Episode type classification (defaults to observation for backwards compat)
+    episode_type: EpisodeType = EpisodeType.OBSERVATION
+    
     # Optional compressed summary (created during consolidation)
     summary: Optional[str] = None
     
     # Which concepts were activated when this episode occurred
     concepts_activated: list[str] = field(default_factory=list)
     
+    # Entity IDs mentioned in this episode (e.g., ["file:src/auth.ts", "concept:caching"])
+    entity_ids: list[str] = field(default_factory=list)
+    
     # Has this episode been processed into concepts?
     consolidated: bool = False
+    
+    # Has entity extraction been performed on this episode?
+    entities_extracted: bool = False
     
     # Optional metadata
     metadata: dict = field(default_factory=dict)
@@ -168,22 +254,36 @@ class Episode:
             "id": self.id,
             "timestamp": self.timestamp.isoformat(),
             "content": self.content,
+            "episode_type": self.episode_type.value,
             "summary": self.summary,
             "concepts_activated": self.concepts_activated,
+            "entity_ids": self.entity_ids,
             "consolidated": self.consolidated,
+            "entities_extracted": self.entities_extracted,
             "metadata": self.metadata,
         }
     
     @classmethod
     def from_dict(cls, data: dict) -> "Episode":
         """Deserialize from dictionary."""
+        # Handle backwards compatibility for episode_type
+        episode_type = EpisodeType.OBSERVATION
+        if data.get("episode_type"):
+            try:
+                episode_type = EpisodeType(data["episode_type"])
+            except ValueError:
+                episode_type = EpisodeType.OBSERVATION
+        
         return cls(
             id=data["id"],
             timestamp=datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(),
             content=data.get("content", ""),
+            episode_type=episode_type,
             summary=data.get("summary"),
             concepts_activated=data.get("concepts_activated", []),
+            entity_ids=data.get("entity_ids", []),
             consolidated=data.get("consolidated", False),
+            entities_extracted=data.get("entities_extracted", False),
             metadata=data.get("metadata", {}),
         )
 
@@ -201,4 +301,50 @@ class ConsolidationResult:
     created_concept_ids: list[str] = field(default_factory=list)
     updated_concept_ids: list[str] = field(default_factory=list)
     contradiction_details: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class ExtractionResult:
+    """Result of entity/type extraction from an episode."""
+    
+    episode_type: EpisodeType
+    entities: list[Entity] = field(default_factory=list)
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "ExtractionResult":
+        """Create from LLM extraction response."""
+        # Parse episode type
+        episode_type = EpisodeType.OBSERVATION
+        if data.get("type"):
+            try:
+                episode_type = EpisodeType(data["type"])
+            except ValueError:
+                pass
+        
+        # Parse entities
+        entities = []
+        for e in data.get("entities", []):
+            try:
+                entity_type = EntityType(e.get("type", "other"))
+            except ValueError:
+                entity_type = EntityType.OTHER
+            
+            entity_id = e.get("id") or Entity.make_id(entity_type.value, e.get("name", "unknown"))
+            entities.append(Entity(
+                id=entity_id,
+                type=entity_type,
+                display_name=e.get("name"),
+            ))
+        
+        return cls(episode_type=episode_type, entities=entities)
+
+
+@dataclass 
+class BackfillResult:
+    """Result of backfilling entities/types for existing episodes."""
+    
+    episodes_processed: int = 0
+    entities_created: int = 0
+    episodes_updated: int = 0
+    errors: list[str] = field(default_factory=list)
 

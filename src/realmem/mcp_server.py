@@ -90,27 +90,67 @@ async def get_memory() -> MemoryInterface:
 # MCP Tool Implementations
 # ============================================================================
 
-async def tool_remember(content: str, metadata: Optional[str] = None) -> str:
+async def tool_remember(
+    content: str, 
+    metadata: Optional[str] = None,
+    episode_type: Optional[str] = None,
+    entities: Optional[str] = None,
+) -> str:
     """Store an experience or observation in memory."""
+    from realmem.models import EpisodeType
+    
     memory = await get_memory()
     
     meta = json.loads(metadata) if metadata else None
-    episode_id = await memory.remember(content, metadata=meta)
+    
+    # Parse episode type if provided
+    ep_type = None
+    if episode_type:
+        try:
+            ep_type = EpisodeType(episode_type)
+        except ValueError:
+            return f"Invalid episode_type: {episode_type}. Valid: observation, decision, question, meta, preference"
+    
+    # Parse entities if provided (comma-separated)
+    entity_list = None
+    if entities:
+        entity_list = [e.strip() for e in entities.split(",") if e.strip()]
+    
+    episode_id = await memory.remember(
+        content, 
+        metadata=meta,
+        episode_type=ep_type,
+        entities=entity_list,
+    )
+    
+    # Get episode to show extraction results
+    episode = memory.store.get_episode(episode_id)
     
     stats = memory.get_stats()
     pending = stats.get("unconsolidated_episodes", 0)
     
-    result = f"Remembered as episode {episode_id}"
-    if pending >= 5:
-        result += f"\n\n({pending} episodes pending consolidation - consider running consolidate)"
+    lines = [f"Remembered as episode {episode_id}"]
     
-    return result
+    if episode:
+        lines.append(f"  Type: {episode.episode_type.value}")
+        if episode.entity_ids:
+            lines.append(f"  Entities: {', '.join(episode.entity_ids)}")
+    
+    if pending >= 5:
+        lines.append(f"\n({pending} episodes pending consolidation)")
+    
+    return "\n".join(lines)
 
 
-async def tool_recall(query: str, k: int = 5, context: Optional[str] = None) -> str:
+async def tool_recall(
+    query: str, 
+    k: int = 5, 
+    context: Optional[str] = None,
+    entity: Optional[str] = None,
+) -> str:
     """Retrieve relevant memories for a query."""
     memory = await get_memory()
-    return await memory.recall(query, k=k, context=context)
+    return await memory.recall(query, k=k, context=context, entity=entity)
 
 
 async def tool_consolidate(force: bool = False) -> str:
@@ -173,10 +213,16 @@ async def tool_inspect(
         lines = [header]
         for ep in episodes:
             status = "✓" if ep.consolidated else "pending"
-            content = ep.content[:80] + "..." if len(ep.content) > 80 else ep.content
+            content = ep.content[:70] + "..." if len(ep.content) > 70 else ep.content
             timestamp = ep.timestamp.strftime('%Y-%m-%d %H:%M:%S')
-            lines.append(f"  [{ep.id}] {timestamp} ({status})")
+            ep_type = ep.episode_type.value
+            lines.append(f"  [{ep.id}] {timestamp} ({ep_type}, {status})")
             lines.append(f"      {content}")
+            if ep.entity_ids:
+                entities = ", ".join(ep.entity_ids[:3])
+                if len(ep.entity_ids) > 3:
+                    entities += f" +{len(ep.entity_ids) - 3}"
+                lines.append(f"      → entities: {entities}")
         return "\n".join(lines)
     
     if concept_id:
@@ -236,12 +282,27 @@ async def tool_stats() -> str:
     lines.append(f"  Concepts: {s['concepts']}")
     lines.append(f"  Episodes: {s['episodes']}")
     lines.append(f"  Relations: {s['relations']}")
+    lines.append(f"  Entities: {s.get('entities', 0)}")
+    lines.append(f"  Mentions: {s.get('mentions', 0)}")
     lines.append("")
     lines.append("Consolidation:")
     lines.append(f"  Pending episodes: {s.get('unconsolidated_episodes', 0)}")
+    lines.append(f"  Unextracted episodes: {s.get('unextracted_episodes', 0)}")
     lines.append(f"  Threshold: {s.get('consolidation_threshold', 10)}")
     lines.append(f"  Auto-consolidate: {s.get('auto_consolidate', True)}")
     lines.append(f"  Should consolidate: {s.get('should_consolidate', False)}")
+    
+    if s.get('episode_types'):
+        lines.append("")
+        lines.append("Episode Types:")
+        for ep_type, count in s['episode_types'].items():
+            lines.append(f"  {ep_type}: {count}")
+    
+    if s.get('entity_types'):
+        lines.append("")
+        lines.append("Entity Types:")
+        for ent_type, count in s['entity_types'].items():
+            lines.append(f"  {ent_type}: {count}")
     
     if s.get('relation_types'):
         lines.append("")
@@ -259,6 +320,133 @@ async def tool_reflect(prompt: str) -> str:
     """Let the LLM reason about its own memory."""
     memory = await get_memory()
     return await memory.reflect(prompt)
+
+
+async def tool_entities(
+    entity_id: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    limit: int = 20,
+) -> str:
+    """List entities or show episodes mentioning a specific entity."""
+    from realmem.models import EntityType
+    
+    memory = await get_memory()
+    store = memory.store
+    
+    if entity_id:
+        # Show specific entity and its mentions
+        entity = store.get_entity(entity_id)
+        if not entity:
+            return f"Entity {entity_id} not found."
+        
+        episodes = store.get_episodes_mentioning(entity_id, limit=limit)
+        
+        lines = [f"Entity: {entity.id}"]
+        lines.append(f"  Type: {entity.type.value}")
+        if entity.display_name:
+            lines.append(f"  Name: {entity.display_name}")
+        lines.append("")
+        
+        if episodes:
+            lines.append(f"Mentioned in {len(episodes)} episodes:")
+            for ep in episodes[:10]:
+                content = ep.content[:60] + "..." if len(ep.content) > 60 else ep.content
+                lines.append(f"  [{ep.id}] ({ep.episode_type.value}) {content}")
+            if len(episodes) > 10:
+                lines.append(f"  ... and {len(episodes) - 10} more")
+        else:
+            lines.append("No episodes mention this entity.")
+        
+        return "\n".join(lines)
+    
+    # List all entities
+    entity_counts = store.get_entity_mention_counts()
+    
+    if not entity_counts:
+        return "No entities in memory."
+    
+    # Filter by type if specified
+    if entity_type:
+        try:
+            etype = EntityType(entity_type)
+            entity_counts = [(e, c) for e, c in entity_counts if e.type == etype]
+        except ValueError:
+            valid = ', '.join(t.value for t in EntityType)
+            return f"Invalid entity_type: {entity_type}. Valid: {valid}"
+    
+    lines = [f"Entities ({len(entity_counts)}):"]
+    for entity, count in entity_counts[:limit]:
+        name = f" ({entity.display_name})" if entity.display_name else ""
+        lines.append(f"  {entity.id}{name} - {count} mentions")
+    
+    if len(entity_counts) > limit:
+        lines.append(f"  ... and {len(entity_counts) - limit} more")
+    
+    return "\n".join(lines)
+
+
+async def tool_backfill(limit: int = 100) -> str:
+    """Backfill entity extraction for existing episodes."""
+    memory = await get_memory()
+    
+    stats = memory.get_stats()
+    unextracted = stats.get("unextracted_episodes", 0)
+    
+    if unextracted == 0:
+        return "All episodes already have entity extraction."
+    
+    result = await memory.backfill_extraction(limit=limit)
+    
+    lines = [f"Backfill complete:"]
+    lines.append(f"  Episodes processed: {result.episodes_processed}")
+    lines.append(f"  Entities created: {result.entities_created}")
+    
+    if result.errors:
+        lines.append(f"  Errors: {len(result.errors)}")
+    
+    remaining = max(0, unextracted - result.episodes_processed)
+    if remaining > 0:
+        lines.append(f"\n{remaining} episodes still need extraction.")
+    
+    return "\n".join(lines)
+
+
+async def tool_decisions(limit: int = 20) -> str:
+    """Show decision-type episodes."""
+    from realmem.models import EpisodeType
+    
+    memory = await get_memory()
+    episodes = memory.get_episodes_by_type(EpisodeType.DECISION, limit=limit)
+    
+    if not episodes:
+        return "No decisions recorded."
+    
+    lines = [f"Decisions ({len(episodes)}):"]
+    for ep in episodes:
+        status = "✓" if ep.consolidated else "pending"
+        content = ep.content[:70] + "..." if len(ep.content) > 70 else ep.content
+        lines.append(f"  [{ep.id}] ({status}) {content}")
+    
+    return "\n".join(lines)
+
+
+async def tool_questions(limit: int = 20) -> str:
+    """Show open questions and uncertainties."""
+    from realmem.models import EpisodeType
+    
+    memory = await get_memory()
+    episodes = memory.get_episodes_by_type(EpisodeType.QUESTION, limit=limit)
+    
+    if not episodes:
+        return "No questions recorded."
+    
+    lines = [f"Open Questions ({len(episodes)}):"]
+    for ep in episodes:
+        status = "✓" if ep.consolidated else "pending"
+        content = ep.content[:70] + "..." if len(ep.content) > 70 else ep.content
+        lines.append(f"  [{ep.id}] ({status}) {content}")
+    
+    return "\n".join(lines)
 
 
 # ============================================================================
@@ -279,6 +467,8 @@ def create_mcp_server():
     async def remember(
         content: str,
         metadata: Optional[str] = None,
+        episode_type: Optional[str] = None,
+        entities: Optional[str] = None,
     ) -> str:
         """Store an experience or observation in memory.
         
@@ -288,35 +478,42 @@ def create_mcp_server():
         - Corrections or clarifications
         - Patterns and decisions
         
+        Entity and type extraction is automatic by default. You can also provide explicit values.
+        
         Args:
             content: The experience/observation to remember (clear, standalone statement)
             metadata: Optional JSON string with additional metadata
+            episode_type: Optional explicit type: observation, decision, question, meta, preference
+            entities: Optional comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
         
         Returns:
-            Confirmation with episode ID
+            Confirmation with episode ID, detected type, and entities
         """
-        return await tool_remember(content, metadata)
+        return await tool_remember(content, metadata, episode_type, entities)
     
     @mcp.tool()
     async def recall(
         query: str,
         k: int = 5,
         context: Optional[str] = None,
+        entity: Optional[str] = None,
     ) -> str:
         """Retrieve relevant memories for a query.
         
-        Uses semantic search with spreading activation through the concept graph.
-        Related concepts activate together, providing rich associative retrieval.
+        Two modes:
+        1. Semantic search (default): Uses embeddings with spreading activation
+        2. Entity-based: Retrieves all memories about a specific entity
         
         Args:
             query: What to search for in memory
             k: Number of concepts to retrieve (default: 5)
             context: Optional additional context to improve retrieval
+            entity: Optional entity ID to retrieve by (e.g., "file:src/auth.ts")
         
         Returns:
             Formatted memory context for injection into prompts
         """
-        return await tool_recall(query, k, context)
+        return await tool_recall(query, k, context, entity)
     
     @mcp.tool()
     async def consolidate(force: bool = False) -> str:
@@ -403,6 +600,72 @@ def create_mcp_server():
             LLM's reflection response based on memory contents
         """
         return await tool_reflect(prompt)
+    
+    @mcp.tool()
+    async def entities(
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 20,
+    ) -> str:
+        """List entities or show episodes mentioning a specific entity.
+        
+        Entities are external referents (files, functions, people, concepts, tools, etc.)
+        that are automatically extracted from episodes.
+        
+        Args:
+            entity_id: Optional entity ID to inspect (e.g., "file:src/auth.ts")
+            entity_type: Optional filter by type: file, function, class, person, concept, tool, project
+            limit: Maximum entities to show
+        
+        Returns:
+            List of entities with mention counts, or details for a specific entity
+        """
+        return await tool_entities(entity_id, entity_type, limit)
+    
+    @mcp.tool()
+    async def backfill(limit: int = 100) -> str:
+        """Backfill entity extraction for existing episodes.
+        
+        Processes episodes that were added before entity extraction was enabled.
+        Extracts episode types and entity mentions using the LLM.
+        
+        Args:
+            limit: Maximum episodes to process (default: 100)
+        
+        Returns:
+            Summary of what was extracted
+        """
+        return await tool_backfill(limit)
+    
+    @mcp.tool()
+    async def decisions(limit: int = 20) -> str:
+        """Show decision-type episodes.
+        
+        Decisions are episodes classified as choices or decisions that were made.
+        Useful for reviewing past choices and their context.
+        
+        Args:
+            limit: Maximum decisions to show
+        
+        Returns:
+            List of decision episodes
+        """
+        return await tool_decisions(limit)
+    
+    @mcp.tool()
+    async def questions(limit: int = 20) -> str:
+        """Show open questions and uncertainties.
+        
+        Questions are episodes classified as open questions, uncertainties,
+        or things that need investigation.
+        
+        Args:
+            limit: Maximum questions to show
+        
+        Returns:
+            List of question episodes
+        """
+        return await tool_questions(limit)
     
     return mcp
 

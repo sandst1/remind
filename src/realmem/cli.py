@@ -68,19 +68,46 @@ def main(ctx, db: str, llm: str, embedding: str):
 @main.command()
 @click.argument("content")
 @click.option("--metadata", "-m", help="JSON metadata to attach")
+@click.option("--type", "-t", "episode_type", 
+              type=click.Choice(["observation", "decision", "question", "meta", "preference"]),
+              help="Episode type (auto-detected if not provided)")
+@click.option("--entity", "-e", "entities", multiple=True, 
+              help="Entity IDs (e.g., file:src/auth.ts, person:alice)")
+@click.option("--no-extract", is_flag=True, help="Disable auto-extraction")
 @click.pass_context
-def remember(ctx, content: str, metadata: Optional[str]):
+def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[str], 
+             entities: tuple, no_extract: bool):
     """Add an episode to memory."""
+    from realmem.models import EpisodeType
+    
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
     
     meta = json.loads(metadata) if metadata else None
+    ep_type = EpisodeType(episode_type) if episode_type else None
+    entity_list = list(entities) if entities else None
     
     async def _remember():
-        episode_id = await memory.remember(content, metadata=meta)
-        return episode_id
+        episode_id = await memory.remember(
+            content, 
+            metadata=meta,
+            episode_type=ep_type,
+            entities=entity_list,
+            auto_extract=not no_extract,
+        )
+        # Get the episode to show extraction results
+        episode = memory.store.get_episode(episode_id)
+        return episode_id, episode
     
-    episode_id = run_async(_remember())
+    with console.status("[bold cyan]Remembering...") if not no_extract else console.status(""):
+        episode_id, episode = run_async(_remember())
+    
     console.print(f"[green]✓[/green] Remembered as episode [cyan]{episode_id}[/cyan]")
+    
+    # Show extracted info
+    if episode and episode.entities_extracted:
+        console.print(f"  Type: [yellow]{episode.episode_type.value}[/yellow]")
+        if episode.entity_ids:
+            console.print(f"  Entities: {', '.join(episode.entity_ids)}")
     
     # Show unconsolidated count
     stats = memory.get_stats()
@@ -93,19 +120,44 @@ def remember(ctx, content: str, metadata: Optional[str]):
 @click.argument("query")
 @click.option("-k", default=5, help="Number of concepts to retrieve")
 @click.option("--context", "-c", help="Additional context for search")
+@click.option("--entity", "-e", help="Retrieve by entity ID instead of semantic search")
 @click.option("--raw", is_flag=True, help="Show raw concept data")
 @click.pass_context
-def recall(ctx, query: str, k: int, context: Optional[str], raw: bool):
-    """Retrieve relevant concepts for a query."""
+def recall(ctx, query: str, k: int, context: Optional[str], entity: Optional[str], raw: bool):
+    """Retrieve relevant concepts for a query.
+    
+    By default, does semantic search across concepts. 
+    Use --entity to retrieve by entity ID instead.
+    
+    Examples:
+        realmem recall "authentication issues"
+        realmem recall "auth" --entity file:src/auth.ts
+    """
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
     
     async def _recall():
-        return await memory.recall(query, k=k, context=context, raw=raw)
+        return await memory.recall(query, k=k, context=context, entity=entity, raw=raw)
     
     result = run_async(_recall())
     
-    if raw:
-        # Show detailed view
+    if entity:
+        # Entity-based result
+        if raw:
+            # Show episodes as table
+            table = Table(title=f"Episodes mentioning '{entity}'")
+            table.add_column("ID", style="cyan")
+            table.add_column("Type", style="yellow")
+            table.add_column("Content")
+            
+            for ep in result:
+                content = ep.content[:60] + "..." if len(ep.content) > 60 else ep.content
+                table.add_row(ep.id, ep.episode_type.value, content)
+            
+            console.print(table)
+        else:
+            console.print(Panel(result, title=f"Memory: {entity}", border_style="cyan"))
+    elif raw:
+        # Show detailed concept view
         for ac in result:
             c = ac.concept
             panel_content = f"""[bold]{c.summary}[/bold]
@@ -213,14 +265,26 @@ def inspect(ctx, concept_id: Optional[str], episodes: bool, limit: int):
         
         table = Table(title="Recent Episodes")
         table.add_column("ID", style="cyan")
+        table.add_column("Type", style="yellow")
         table.add_column("Timestamp", style="dim")
         table.add_column("Content")
+        table.add_column("Entities", style="dim")
         table.add_column("Status", style="yellow")
         
         for ep in recent:
             status = "✓" if ep.consolidated else "pending"
-            content = ep.content[:60] + "..." if len(ep.content) > 60 else ep.content
-            table.add_row(ep.id, ep.timestamp.strftime("%Y-%m-%d %H:%M"), content, status)
+            content = ep.content[:50] + "..." if len(ep.content) > 50 else ep.content
+            entities = ", ".join(ep.entity_ids[:2]) if ep.entity_ids else ""
+            if len(ep.entity_ids) > 2:
+                entities += f" +{len(ep.entity_ids)-2}"
+            table.add_row(
+                ep.id, 
+                ep.episode_type.value[:3],  # Shortened type
+                ep.timestamp.strftime("%Y-%m-%d %H:%M"), 
+                content, 
+                entities,
+                status
+            )
         
         console.print(table)
         return
@@ -308,10 +372,17 @@ def stats(ctx):
     
     # Consolidation status
     pending = stats.get('unconsolidated_episodes', 0)
+    unextracted = stats.get('unextracted_episodes', 0)
     threshold = stats.get('consolidation_threshold', 10)
     auto = "enabled" if stats.get('auto_consolidate') else "disabled"
     should_consolidate = "[green]ready[/green]" if stats.get('should_consolidate') else "[dim]not needed[/dim]"
     last_consolidation = stats.get('last_consolidation') or "never"
+    
+    # Entity info
+    entity_count = stats.get('entities', 0)
+    mention_count = stats.get('mentions', 0)
+    entity_types = stats.get('entity_types', {})
+    episode_types = stats.get('episode_types', {})
     
     console.print(Panel(
         f"""[bold]Memory Statistics[/bold]
@@ -319,13 +390,22 @@ def stats(ctx):
 [cyan]Concepts:[/cyan] {stats['concepts']}
 [cyan]Episodes:[/cyan] {stats['episodes']}
 [cyan]Relations:[/cyan] {stats['relations']}
+[cyan]Entities:[/cyan] {entity_count}
+[cyan]Mentions:[/cyan] {mention_count}
 
 [bold]Consolidation[/bold]
 [cyan]Pending episodes:[/cyan] {pending}
+[cyan]Unextracted episodes:[/cyan] {unextracted}
 [cyan]Threshold:[/cyan] {threshold}
 [cyan]Auto-consolidate:[/cyan] {auto}
 [cyan]Should consolidate:[/cyan] {should_consolidate}
 [cyan]Last consolidation:[/cyan] {last_consolidation}
+
+[bold]Episode Types:[/bold]
+{json.dumps(episode_types, indent=2)}
+
+[bold]Entity Types:[/bold]
+{json.dumps(entity_types, indent=2)}
 
 [bold]Relation Distribution:[/bold]
 {json.dumps(stats.get('relation_types', {}), indent=2)}
@@ -418,6 +498,207 @@ def search(ctx, query: str):
     for c, score in matches[:10]:
         summary = c.summary[:60] + "..." if len(c.summary) > 60 else c.summary
         table.add_row(c.id, summary, str(score))
+    
+    console.print(table)
+
+
+# ============================================================================
+# Entity/Extraction Commands (v2 schema)
+# ============================================================================
+
+@main.command()
+@click.option("--limit", "-n", default=100, help="Maximum episodes to process")
+@click.pass_context
+def backfill(ctx, limit: int):
+    """Backfill entity extraction for existing episodes.
+    
+    Processes episodes that haven't had extraction performed yet.
+    Useful for migrating existing databases to the v2 schema.
+    """
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    
+    stats = memory.get_stats()
+    unextracted = stats.get("unextracted_episodes", 0)
+    
+    if unextracted == 0:
+        console.print("[green]✓[/green] All episodes already have entity extraction")
+        return
+    
+    console.print(f"[cyan]Found {unextracted} episodes needing extraction (processing up to {limit})...[/cyan]")
+    
+    async def _backfill():
+        return await memory.backfill_extraction(limit=limit)
+    
+    with console.status("[bold cyan]Running entity extraction..."):
+        result = run_async(_backfill())
+    
+    console.print(f"\n[green]✓ Backfill complete[/green]")
+    console.print(f"  Episodes processed: {result.episodes_processed}")
+    console.print(f"  Entities created: {result.entities_created}")
+    
+    if result.errors:
+        console.print(f"  [yellow]Errors: {len(result.errors)}[/yellow]")
+        for error in result.errors[:3]:
+            console.print(f"    → {error}")
+
+
+@main.command()
+@click.argument("entity_id", required=False)
+@click.option("--type", "-t", "entity_type", help="Filter by entity type (file, function, person, etc.)")
+@click.pass_context
+def entities(ctx, entity_id: Optional[str], entity_type: Optional[str]):
+    """List entities or show details for a specific entity."""
+    from realmem.store import SQLiteMemoryStore
+    from realmem.models import EntityType
+    store = SQLiteMemoryStore(ctx.obj["db"])
+    
+    if entity_id:
+        # Show specific entity and its mentions
+        entity = store.get_entity(entity_id)
+        
+        if not entity:
+            console.print(f"[red]Entity {entity_id} not found[/red]")
+            return
+        
+        # Get episodes mentioning this entity
+        episodes = store.get_episodes_mentioning(entity_id, limit=20)
+        
+        tree = Tree(f"[bold cyan]{entity.id}[/bold cyan]")
+        tree.add(f"[bold]Type:[/bold] {entity.type.value}")
+        if entity.display_name:
+            tree.add(f"[bold]Display Name:[/bold] {entity.display_name}")
+        tree.add(f"Created: {entity.created_at.strftime('%Y-%m-%d %H:%M')}")
+        
+        if episodes:
+            ep_branch = tree.add(f"Mentioned in {len(episodes)} episodes")
+            for ep in episodes[:10]:
+                content = ep.content[:50] + "..." if len(ep.content) > 50 else ep.content
+                ep_branch.add(f"[dim]{ep.id}[/dim] {content}")
+            if len(episodes) > 10:
+                ep_branch.add(f"[dim]... and {len(episodes) - 10} more[/dim]")
+        
+        console.print(tree)
+    else:
+        # List all entities with mention counts
+        entity_counts = store.get_entity_mention_counts()
+        
+        if not entity_counts:
+            console.print("[yellow]No entities in memory[/yellow]")
+            return
+        
+        # Filter by type if specified
+        if entity_type:
+            try:
+                etype = EntityType(entity_type)
+                entity_counts = [(e, c) for e, c in entity_counts if e.type == etype]
+            except ValueError:
+                console.print(f"[red]Unknown entity type: {entity_type}[/red]")
+                console.print(f"Valid types: {', '.join(t.value for t in EntityType)}")
+                return
+        
+        table = Table(title=f"Entities ({len(entity_counts)})")
+        table.add_column("ID", style="cyan")
+        table.add_column("Type", style="yellow")
+        table.add_column("Name")
+        table.add_column("Mentions", justify="right")
+        
+        for entity, count in entity_counts[:50]:
+            table.add_row(
+                entity.id,
+                entity.type.value,
+                entity.display_name or "",
+                str(count),
+            )
+        
+        console.print(table)
+
+
+@main.command()
+@click.argument("entity_id")
+@click.pass_context
+def mentions(ctx, entity_id: str):
+    """Show all episodes mentioning an entity."""
+    from realmem.store import SQLiteMemoryStore
+    store = SQLiteMemoryStore(ctx.obj["db"])
+    
+    episodes = store.get_episodes_mentioning(entity_id, limit=50)
+    
+    if not episodes:
+        console.print(f"[yellow]No episodes mention '{entity_id}'[/yellow]")
+        return
+    
+    table = Table(title=f"Episodes mentioning '{entity_id}'")
+    table.add_column("ID", style="cyan")
+    table.add_column("Type", style="yellow")
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Content")
+    
+    for ep in episodes:
+        content = ep.content[:60] + "..." if len(ep.content) > 60 else ep.content
+        table.add_row(
+            ep.id,
+            ep.episode_type.value,
+            ep.timestamp.strftime("%Y-%m-%d %H:%M"),
+            content,
+        )
+    
+    console.print(table)
+
+
+@main.command("decisions")
+@click.option("--limit", "-n", default=20, help="Number of decisions to show")
+@click.pass_context
+def decisions(ctx, limit: int):
+    """Show decision-type episodes."""
+    from realmem.store import SQLiteMemoryStore
+    from realmem.models import EpisodeType
+    store = SQLiteMemoryStore(ctx.obj["db"])
+    
+    episodes = store.get_episodes_by_type(EpisodeType.DECISION, limit=limit)
+    
+    if not episodes:
+        console.print("[yellow]No decisions recorded yet[/yellow]")
+        return
+    
+    table = Table(title="Decisions")
+    table.add_column("ID", style="cyan")
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Content")
+    table.add_column("Status", style="yellow")
+    
+    for ep in episodes:
+        content = ep.content[:70] + "..." if len(ep.content) > 70 else ep.content
+        status = "✓" if ep.consolidated else "pending"
+        table.add_row(ep.id, ep.timestamp.strftime("%Y-%m-%d %H:%M"), content, status)
+    
+    console.print(table)
+
+
+@main.command("questions")
+@click.option("--limit", "-n", default=20, help="Number of questions to show")
+@click.pass_context
+def questions(ctx, limit: int):
+    """Show question-type episodes (open questions, uncertainties)."""
+    from realmem.store import SQLiteMemoryStore
+    from realmem.models import EpisodeType
+    store = SQLiteMemoryStore(ctx.obj["db"])
+    
+    episodes = store.get_episodes_by_type(EpisodeType.QUESTION, limit=limit)
+    
+    if not episodes:
+        console.print("[yellow]No questions recorded yet[/yellow]")
+        return
+    
+    table = Table(title="Open Questions")
+    table.add_column("ID", style="cyan")
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Content")
+    table.add_column("Status", style="yellow")
+    
+    for ep in episodes:
+        content = ep.content[:70] + "..." if len(ep.content) > 70 else ep.content
+        status = "✓" if ep.consolidated else "pending"
+        table.add_row(ep.id, ep.timestamp.strftime("%Y-%m-%d %H:%M"), content, status)
     
     console.print(table)
 

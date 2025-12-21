@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Optional
 import logging
 
-from realmem.models import Concept, RelationType
+from realmem.models import Concept, Episode, Entity, RelationType
 from realmem.store import MemoryStore
 from realmem.providers.base import EmbeddingProvider
 
@@ -207,6 +207,64 @@ class MemoryRetriever:
         scored.sort(key=lambda x: x[1], reverse=True)
         return [c for c, _ in scored[:k]]
     
+    async def retrieve_by_entity(
+        self,
+        entity_id: str,
+        limit: int = 20,
+    ) -> list[Episode]:
+        """
+        Retrieve episodes mentioning a specific entity.
+        
+        Direct entity-based lookup - finds all memories about a file, person, etc.
+        
+        Args:
+            entity_id: The entity ID (e.g., "file:src/auth.ts", "person:alice")
+            limit: Maximum episodes to return
+            
+        Returns:
+            List of episodes mentioning this entity, newest first
+        """
+        return self.store.get_episodes_mentioning(entity_id, limit=limit)
+    
+    async def retrieve_related_entities(
+        self,
+        entity_id: str,
+        limit: int = 10,
+    ) -> list[tuple[Entity, int]]:
+        """
+        Find entities that co-occur with a given entity.
+        
+        Uses episode co-mention to find related entities - entities that
+        are frequently mentioned together are likely related.
+        
+        Args:
+            entity_id: The entity to find relations for
+            limit: Maximum related entities to return
+            
+        Returns:
+            List of (entity, co_occurrence_count) tuples
+        """
+        # Get episodes mentioning this entity
+        episodes = self.store.get_episodes_mentioning(entity_id, limit=100)
+        
+        # Count co-occurring entities
+        co_occurrences: dict[str, int] = {}
+        for episode in episodes:
+            for other_entity_id in episode.entity_ids:
+                if other_entity_id != entity_id:
+                    co_occurrences[other_entity_id] = co_occurrences.get(other_entity_id, 0) + 1
+        
+        # Sort by count and fetch entity objects
+        sorted_ids = sorted(co_occurrences.items(), key=lambda x: x[1], reverse=True)[:limit]
+        
+        results = []
+        for eid, count in sorted_ids:
+            entity = self.store.get_entity(eid)
+            if entity:
+                results.append((entity, count))
+        
+        return results
+    
     async def find_related_chain(
         self,
         start_concept_id: str,
@@ -315,6 +373,67 @@ class MemoryRetriever:
                         shown += 1
             
             lines.append("")  # Blank line between concepts
+        
+        return "\n".join(lines)
+    
+    def format_entity_context(
+        self,
+        entity_id: str,
+        episodes: list[Episode],
+        include_type_breakdown: bool = True,
+    ) -> str:
+        """
+        Format entity-centric context for LLM injection.
+        
+        Shows what's known about a specific entity (file, person, etc.).
+        
+        Args:
+            entity_id: The entity being recalled
+            episodes: Episodes mentioning this entity
+            include_type_breakdown: Group episodes by type
+            
+        Returns:
+            Formatted string for LLM context
+        """
+        if not episodes:
+            return f"(No memories about {entity_id})"
+        
+        entity = self.store.get_entity(entity_id)
+        entity_name = entity.display_name if entity else entity_id
+        
+        lines = [f"MEMORY ABOUT: {entity_name}\n"]
+        
+        if include_type_breakdown:
+            # Group by episode type
+            by_type: dict[str, list[Episode]] = {}
+            for ep in episodes:
+                type_name = ep.episode_type.value
+                by_type.setdefault(type_name, []).append(ep)
+            
+            # Show decisions first, then questions, then others
+            type_order = ["decision", "question", "preference", "observation", "meta"]
+            for type_name in type_order:
+                if type_name not in by_type:
+                    continue
+                
+                type_episodes = by_type[type_name]
+                lines.append(f"[{type_name.upper()}S]")
+                
+                for ep in type_episodes[:5]:  # Limit per type
+                    lines.append(f"  • {ep.content}")
+                
+                if len(type_episodes) > 5:
+                    lines.append(f"  ... and {len(type_episodes) - 5} more")
+                
+                lines.append("")
+        else:
+            # Simple chronological list
+            for ep in episodes[:15]:
+                type_label = f"[{ep.episode_type.value[:3]}]"
+                lines.append(f"  {type_label} {ep.content}")
+            
+            if len(episodes) > 15:
+                lines.append(f"  ... and {len(episodes) - 15} more")
         
         return "\n".join(lines)
 
