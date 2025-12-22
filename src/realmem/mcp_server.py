@@ -2,18 +2,25 @@
 RealMem MCP Server - Memory system exposed via Model Context Protocol.
 
 Single server instance supporting multiple databases. Each client specifies
-its database via URL query parameter:
+its database via URL query parameter (SSE) or environment variable (stdio).
 
-    http://127.0.0.1:8765/sse?db=/path/to/memory.db
+Database path resolution:
+    - Absolute path (/path/to/db.db or ~/path/to/db.db) - used as-is
+    - Relative path (./memory.db or subdir/memory.db) - resolved against cwd
+    - Simple name (my-project) - resolved to ~/.realmem/my-project.db
 
-Usage:
+Usage (SSE - default):
     realmem-mcp --port 8765
-    realmem-mcp --host 0.0.0.0 --port 8765
+    Connect: http://127.0.0.1:8765/sse?db=my-project
+
+Usage (stdio - for Claude Desktop):
+    realmem-mcp --stdio --db my-project
 """
 
 import asyncio
 import json
 import logging
+import os
 import uuid
 from contextvars import ContextVar
 from pathlib import Path
@@ -28,6 +35,9 @@ from realmem.interface import create_memory, MemoryInterface
 
 logger = logging.getLogger(__name__)
 
+# Central directory for databases when using simple names
+REALMEM_DIR = Path.home() / ".realmem"
+
 # Context variable to track current database path per async context
 _current_db: ContextVar[str] = ContextVar('current_db', default='')
 
@@ -40,15 +50,55 @@ _memory_locks: dict[str, asyncio.Lock] = {}
 _global_lock = asyncio.Lock()
 
 # Default providers - can be overridden via CLI args or env vars
-import os
 DEFAULT_LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai")
 DEFAULT_EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "openai")
 
 
+def resolve_db_path(db_spec: str) -> str:
+    """Resolve a database specification to an absolute path.
+    
+    Resolution rules:
+    - Starts with "/" → absolute path, use as-is
+    - Starts with "~" → expand home directory
+    - Contains "/" → relative path, resolve against cwd
+    - Simple name → ~/.realmem/{name}.db
+    
+    Examples:
+        /absolute/path/memory.db → /absolute/path/memory.db
+        ~/my-project/memory.db → /home/user/my-project/memory.db
+        ./memory.db → /current/dir/memory.db
+        my-project → ~/.realmem/my-project.db
+        my-project.db → ~/.realmem/my-project.db
+    """
+    db_spec = db_spec.strip()
+    
+    if db_spec.startswith("~"):
+        # Expand home directory
+        return str(Path(db_spec).expanduser().resolve())
+    
+    if db_spec.startswith("/"):
+        # Absolute path
+        return str(Path(db_spec).resolve())
+    
+    if "/" in db_spec:
+        # Relative path - resolve against cwd
+        return str(Path(db_spec).resolve())
+    
+    # Simple name - use central directory
+    # Ensure the ~/.realmem directory exists
+    REALMEM_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Add .db extension if not present
+    if not db_spec.endswith(".db"):
+        db_spec = f"{db_spec}.db"
+    
+    return str(REALMEM_DIR / db_spec)
+
+
 async def get_memory_for_db(db_path: str) -> MemoryInterface:
     """Get or create a MemoryInterface for the given database path."""
-    # Normalize path
-    db_path = str(Path(db_path).resolve())
+    # Resolve path using our resolution rules
+    db_path = resolve_db_path(db_path)
     
     # Get or create lock for this db
     async with _global_lock:
@@ -639,8 +689,8 @@ def create_mcp_server():
     return mcp
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8765):
-    """Run the MCP server with HTTP transport."""
+def run_server_sse(host: str = "127.0.0.1", port: int = 8765):
+    """Run the MCP server with SSE (HTTP) transport."""
     import uvicorn
     from fastmcp.server.http import create_sse_app
     
@@ -683,7 +733,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8765):
             
             # Case 1: db param provided directly (initial SSE connection)
             if db_list:
-                db_path = str(Path(db_list[0]).resolve())
+                db_path = resolve_db_path(db_list[0])
                 logger.info(f"Request with db param: {db_path}")
             
             # Case 2: session_id provided, look up db from session map
@@ -707,7 +757,11 @@ def run_server(host: str = "127.0.0.1", port: int = 8765):
                     })
                     await send({
                         'type': 'http.response.body',
-                        'body': b'Missing required query parameter: db\n\nExample: /sse?db=/path/to/memory.db',
+                        'body': b'Missing required query parameter: db\n\n'
+                               b'Examples:\n'
+                               b'  /sse?db=my-project      -> ~/.realmem/my-project.db\n'
+                               b'  /sse?db=./memory.db     -> ./memory.db (relative)\n'
+                               b'  /sse?db=/full/path.db   -> /full/path.db (absolute)\n',
                     })
                     return
                 
@@ -772,10 +826,31 @@ def run_server(host: str = "127.0.0.1", port: int = 8765):
             finally:
                 _current_db.reset(token)
     
-    print(f"Starting RealMem MCP server on {host}:{port}")
-    print(f"Connect with: http://{host}:{port}/sse?db=/path/to/memory.db")
+    print(f"Starting RealMem MCP server (SSE) on {host}:{port}")
+    print(f"Database resolution:")
+    print(f"  ?db=my-project      → ~/.realmem/my-project.db")
+    print(f"  ?db=./memory.db     → ./memory.db (relative to cwd)")
+    print(f"  ?db=/full/path.db   → /full/path.db (absolute)")
+    print(f"\nConnect with: http://{host}:{port}/sse?db=<name>")
     
     uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+def run_server_stdio(db: str):
+    """Run the MCP server with stdio transport (for Claude Desktop)."""
+    import sys
+    
+    # Resolve the database path
+    db_path = resolve_db_path(db)
+    logger.info(f"Starting RealMem MCP server (stdio) with database: {db_path}")
+    
+    # Set the database in context for all operations
+    _current_db.set(db_path)
+    
+    mcp = create_mcp_server()
+    
+    # Run with stdio transport
+    mcp.run(transport="stdio")
 
 
 def main():
@@ -783,19 +858,51 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="RealMem MCP Server - Memory system via Model Context Protocol"
+        description="RealMem MCP Server - Memory system via Model Context Protocol",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Database path resolution:
+  my-project        → ~/.realmem/my-project.db (central storage)
+  ./memory.db       → ./memory.db (relative to cwd)
+  /full/path.db     → /full/path.db (absolute)
+
+Examples:
+  # SSE mode (default) - for Cursor and web clients
+  realmem-mcp --port 8765
+  
+  # stdio mode - for Claude Desktop
+  realmem-mcp --stdio --db my-project
+"""
     )
+    
+    # Transport mode
+    parser.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Use stdio transport (for Claude Desktop). Requires --db."
+    )
+    
+    # SSE options
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="Host to bind to (default: 127.0.0.1)"
+        help="Host to bind to for SSE mode (default: 127.0.0.1)"
     )
     parser.add_argument(
         "--port",
         type=int,
         default=8765,
-        help="Port to listen on (default: 8765)"
+        help="Port to listen on for SSE mode (default: 8765)"
     )
+    
+    # Database (required for stdio, optional context for SSE)
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="Database name or path. Required for --stdio mode."
+    )
+    
+    # Provider options
     parser.add_argument(
         "--llm",
         default=None,
@@ -829,7 +936,14 @@ def main():
     if args.embedding:
         DEFAULT_EMBEDDING_PROVIDER = args.embedding
     
-    run_server(host=args.host, port=args.port)
+    if args.stdio:
+        # stdio mode requires --db
+        if not args.db:
+            parser.error("--stdio requires --db to specify the database")
+        run_server_stdio(db=args.db)
+    else:
+        # SSE mode (default)
+        run_server_sse(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

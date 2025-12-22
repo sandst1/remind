@@ -173,6 +173,8 @@ realmem --llm ollama --embedding ollama remember "Local-only experience"
 
 RealMem can run as an MCP (Model Context Protocol) server, allowing AI agents in IDEs like Cursor to use it as their memory system.
 
+#### SSE Mode (default) - For Cursor and other web-based clients
+
 ```bash
 # Start the MCP server
 realmem-mcp --port 8765
@@ -187,13 +189,45 @@ Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
 {
   "mcpServers": {
     "realmem": {
-      "url": "http://127.0.0.1:8765/sse?db=/path/to/your/project/memory.db"
+      "url": "http://127.0.0.1:8765/sse?db=my-project"
     }
   }
 }
 ```
 
-Each project can have its own database - the `db` query parameter specifies which database to use. A single MCP server instance can serve multiple projects with different databases.
+#### stdio Mode - For Claude Desktop
+
+```bash
+realmem-mcp --stdio --db my-project
+```
+
+Configure Claude Desktop's `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "realmem": {
+      "command": "realmem-mcp",
+      "args": ["--stdio", "--db", "my-project"]
+    }
+  }
+}
+```
+
+#### Database Path Resolution
+
+The `db` parameter supports multiple formats:
+
+| Format | Resolves To | Example |
+|--------|-------------|---------|
+| Simple name | `~/.realmem/{name}.db` | `my-project` → `~/.realmem/my-project.db` |
+| Relative path | Resolved against cwd | `./memory.db` → `/current/dir/memory.db` |
+| Absolute path | Used as-is | `/path/to/db.db` → `/path/to/db.db` |
+| Home path | Expanded | `~/data/mem.db` → `/home/user/data/mem.db` |
+
+**Recommended**: Use simple names (e.g., `my-project`) for portability. All databases are stored in `~/.realmem/`.
+
+Each project can have its own database. A single MCP server instance (SSE mode) can serve multiple projects with different databases.
 
 **Available MCP Tools:**
 - `remember` - Store experiences/observations
