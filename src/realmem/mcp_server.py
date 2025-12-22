@@ -387,32 +387,6 @@ async def tool_entities(
     return "\n".join(lines)
 
 
-async def tool_backfill(limit: int = 100) -> str:
-    """Backfill entity extraction for existing episodes."""
-    memory = await get_memory()
-    
-    stats = memory.get_stats()
-    unextracted = stats.get("unextracted_episodes", 0)
-    
-    if unextracted == 0:
-        return "All episodes already have entity extraction."
-    
-    result = await memory.backfill_extraction(limit=limit)
-    
-    lines = [f"Backfill complete:"]
-    lines.append(f"  Episodes processed: {result.episodes_processed}")
-    lines.append(f"  Entities created: {result.entities_created}")
-    
-    if result.errors:
-        lines.append(f"  Errors: {len(result.errors)}")
-    
-    remaining = max(0, unextracted - result.episodes_processed)
-    if remaining > 0:
-        lines.append(f"\n{remaining} episodes still need extraction.")
-    
-    return "\n".join(lines)
-
-
 async def tool_decisions(limit: int = 20) -> str:
     """Show decision-type episodes."""
     from realmem.models import EpisodeType
@@ -631,21 +605,6 @@ def create_mcp_server():
             List of entities with mention counts, or details for a specific entity
         """
         return await tool_entities(entity_id, entity_type, limit)
-    
-    @mcp.tool()
-    async def backfill(limit: int = 100) -> str:
-        """Backfill entity extraction for existing episodes.
-        
-        Processes episodes that were added before entity extraction was enabled.
-        Extracts episode types and entity mentions using the LLM.
-        
-        Args:
-            limit: Maximum episodes to process (default: 100)
-        
-        Returns:
-            Summary of what was extracted
-        """
-        return await tool_backfill(limit)
     
     @mcp.tool()
     async def decisions(limit: int = 20) -> str:

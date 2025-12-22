@@ -41,7 +41,6 @@ from realmem.models import (
     EntityType,
     EpisodeType,
     ExtractionResult,
-    BackfillResult,
 )
 
 # Storage
@@ -90,7 +89,6 @@ __all__ = [
     "EntityType",
     "EpisodeType",
     "ExtractionResult",
-    "BackfillResult",
     # Storage
     "MemoryStore",
     "SQLiteMemoryStore",

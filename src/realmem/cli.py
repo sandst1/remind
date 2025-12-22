@@ -503,42 +503,6 @@ def search(ctx, query: str):
 # ============================================================================
 
 @main.command()
-@click.option("--limit", "-n", default=100, help="Maximum episodes to process")
-@click.pass_context
-def backfill(ctx, limit: int):
-    """Backfill entity extraction for existing episodes.
-    
-    Processes episodes that haven't had extraction performed yet.
-    Useful for migrating existing databases to the v2 schema.
-    """
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-    
-    stats = memory.get_stats()
-    unextracted = stats.get("unextracted_episodes", 0)
-    
-    if unextracted == 0:
-        console.print("[green]✓[/green] All episodes already have entity extraction")
-        return
-    
-    console.print(f"[cyan]Found {unextracted} episodes needing extraction (processing up to {limit})...[/cyan]")
-    
-    async def _backfill():
-        return await memory.backfill_extraction(limit=limit)
-    
-    with console.status("[bold cyan]Running entity extraction..."):
-        result = run_async(_backfill())
-    
-    console.print(f"\n[green]✓ Backfill complete[/green]")
-    console.print(f"  Episodes processed: {result.episodes_processed}")
-    console.print(f"  Entities created: {result.entities_created}")
-    
-    if result.errors:
-        console.print(f"  [yellow]Errors: {len(result.errors)}[/yellow]")
-        for error in result.errors[:3]:
-            console.print(f"    → {error}")
-
-
-@main.command()
 @click.argument("entity_id", required=False)
 @click.option("--type", "-t", "entity_type", help="Filter by entity type (file, function, person, etc.)")
 @click.pass_context

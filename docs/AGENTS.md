@@ -1,100 +1,164 @@
-# RealMem - External Memory for AI Agents
+# RealMem - Instructions for AI Agents
 
-This project uses **RealMem** as its persistent memory system. Do NOT use any built-in memory tools provided by your IDE or runtime (such as Cursor's default memory, Claude's memory features, etc.). Use the RealMem MCP tools instead.
+RealMem is your external memory layer. Unlike your context window (which resets each conversation), RealMem persists knowledge across sessions and generalizes from specific experiences into abstract concepts.
+
+**Important**: Do NOT use any built-in memory tools provided by your IDE or runtime (such as Cursor's default memory, Claude's memory features, etc.). Use the RealMem MCP tools instead.
 
 ## Why RealMem?
-
-RealMem provides **generalization-capable memory** that goes beyond simple storage:
 
 - **Episodic → Semantic**: Raw experiences are consolidated into generalized concepts
 - **Associative Retrieval**: Queries activate related concepts through a semantic graph
 - **Cross-session Persistence**: Memories persist across conversations and sessions
-- **Project-specific**: This database is specific to this project, not shared globally
+- **Project-specific**: Each project can have its own memory database
 
-## Available Tools
+## Quick Reference
 
-### `remember` - Store Important Information
-Use this to log experiences and observations that should persist:
+| Tool | Purpose |
+|------|---------|
+| `remember` | Store an experience (fast, no LLM call) |
+| `recall` | Retrieve relevant memories |
+| `consolidate` | Extract entities + process episodes into concepts |
+| `entities` | List/inspect entities (files, people, concepts) |
+| `decisions` | Show decision-type episodes |
+| `questions` | Show open questions |
+| `stats` | Memory statistics |
+| `inspect` | View concepts or episodes |
+| `reflect` | Meta-cognitive analysis |
+
+---
+
+## Core Operations
+
+### remember - Store Experiences
 
 ```
-remember("User prefers functional programming patterns")
-remember("The API uses OAuth2 with JWT tokens")
-remember("User wants verbose error messages during development")
+remember(content="User prefers TypeScript over JavaScript")
 ```
 
 **Fast operation**: `remember()` just stores the episode - no LLM call. Entity extraction and type classification happen during `consolidate()`.
 
+**Optional parameters:**
+- `episode_type`: `observation` (default), `decision`, `question`, `meta`, `preference`
+- `entities`: Comma-separated entity IDs (e.g., `"file:auth.ts,person:alice"`)
+
+If not provided, these are automatically detected during consolidation.
+
+```
+remember(
+  content="Decided to use Redis for session caching",
+  episode_type="decision",
+  entities="tool:redis,concept:caching"
+)
+```
+
 **When to remember:**
-- User preferences, opinions, or values
-- Technical decisions and constraints
-- Project-specific context
-- Corrections to previous understanding
-- Patterns you observe
+- User preferences, opinions, values
+- Technical context about their project
+- Decisions and their rationale
+- Open questions or uncertainties
+- Corrections to existing knowledge
 
 **When NOT to remember:**
 - Trivial, one-off information
 - Information already captured in existing concepts
 - Raw conversation logs (summarize first)
 
-### `recall` - Retrieve Relevant Context
-Query memory before responding to get relevant context:
+### recall - Retrieve Context
 
+**Semantic search** (default):
 ```
-recall("What are the user's coding preferences?")
-recall("What authentication method does this project use?")
-recall("What do I know about the database schema?", k=10)
+recall(query="authentication issues")
 ```
 
-**Best practices:**
-- Recall before starting complex tasks
-- Use specific queries for better results
-- Add context parameter when helpful: `recall("languages", context="choosing for new microservice")`
+**Entity-based** (get everything about a specific entity):
+```
+recall(query="auth", entity="file:src/auth.ts")
+```
 
-### `consolidate` - Process Episodes into Concepts
-Run periodically to transform raw episodes into generalized knowledge.
+Use entity-based recall when the user mentions a specific file, function, or person.
 
-Consolidation runs in two phases:
+### consolidate - Process Episodes
+
+Runs in two phases:
 1. **Extraction**: Classifies episode types and extracts entity mentions
-2. **Generalization**: Creates/updates concepts from patterns across episodes
+2. **Generalization**: Transforms episodes into abstract concepts
+
+Run periodically or at session end.
 
 ```
-consolidate()           # Normal consolidation (needs 3+ episodes)
-consolidate(force=True) # Force with fewer episodes
+consolidate()
+consolidate(force=True)  # Even with few episodes
 ```
 
-**When to consolidate:**
-- After several `remember` calls (5-10)
-- At end of conversation/session
-- Before reflecting on memory
+---
 
-### `inspect` - Examine Memory Contents
-View what's stored in memory:
+## Episode Types
+
+| Type | Use For |
+|------|---------|
+| `observation` | Something noticed/learned (default) |
+| `decision` | A choice that was made |
+| `question` | Uncertainty, needs investigation |
+| `meta` | Thinking patterns, processes |
+| `preference` | User preferences, values |
+
+Query by type:
+```
+decisions()   # Show all decisions
+questions()   # Show open questions
+```
+
+---
+
+## Entity Types
+
+Entities are automatically extracted. Format: `type:name`
+
+| Type | Examples |
+|------|----------|
+| `file` | `file:src/auth.ts` |
+| `function` | `function:authenticate` |
+| `class` | `class:UserService` |
+| `person` | `person:alice` |
+| `concept` | `concept:caching` |
+| `tool` | `tool:redis` |
+| `project` | `project:backend-api` |
+
+Query entities:
+```
+entities()                        # List all with mention counts
+entities(entity_type="file")      # Filter by type
+entities(entity_id="file:auth.ts") # Show details + episodes
+```
+
+---
+
+## Other Tools
+
+### inspect - View Memory Contents
 
 ```
-inspect()                          # List all concepts
-inspect(concept_id="abc123")       # View specific concept
-inspect(show_episodes=True)        # View recent episodes
-inspect(limit=20)                  # Show more items
+inspect()                    # List all concepts
+inspect(concept_id="abc123") # Specific concept
+inspect(show_episodes=True)  # Recent episodes
 ```
 
-### `stats` - Memory Statistics
-Get overview of memory state:
+### stats - Memory Statistics
 
 ```
 stats()
 ```
 
-Shows concept/episode counts, consolidation status, relation distribution.
+Shows: concept/episode/entity counts, consolidation status, type distributions.
 
-### `reflect` - Meta-cognitive Analysis
-Ask questions about your own memory:
+### reflect - Meta-cognitive Analysis
 
 ```
-reflect("What do I know about this user's preferences?")
-reflect("What are the main themes in my memory?")
-reflect("Are there any contradictions in what I know?")
-reflect("What gaps exist in my understanding?")
+reflect(prompt="What do I know about this user's preferences?")
+reflect(prompt="Are there any contradictions in my memory?")
 ```
+
+---
 
 ## Workflow Examples
 
@@ -138,6 +202,8 @@ remember("Found that rate limiting is implemented at the gateway level")
 remember("User wants 429 errors to include retry-after headers")
 ```
 
+---
+
 ## Memory Concepts
 
 ### Episodes vs Concepts
@@ -145,7 +211,7 @@ remember("User wants 429 errors to include retry-after headers")
 - **Concepts**: Generalized knowledge extracted via `consolidate()`. These persist.
 
 ### Relations
-Concepts are connected through relations:
+Concepts are connected through typed relations:
 - `implies` - If A then likely B
 - `contradicts` - A conflicts with B
 - `specializes` / `generalizes` - Hierarchy
@@ -155,24 +221,15 @@ Concepts are connected through relations:
 ### Confidence
 Each concept has a confidence score (0.0-1.0) based on how many episodes support it.
 
-## Important Notes
+---
 
-1. **Be selective**: Don't remember everything. Focus on information that will be useful in future sessions.
+## Best Practices
 
-2. **Use clear statements**: Write episodes as standalone, clear statements:
-   - ✅ "User prefers TypeScript over JavaScript for all new code"
-   - ❌ "typescript"
-
-3. **Consolidate regularly**: Run consolidation to transform episodes into searchable concepts.
-
-4. **Handle contradictions**: When you notice conflicting information:
-   ```
-   remember("User now prefers spaces over tabs (changed from previous preference)")
-   consolidate()  # Will flag the contradiction
-   ```
-
-5. **Periodic reflection**: Occasionally reflect on memory state:
-   ```
-   reflect("What important things might I be missing?")
-   ```
-
+1. **Be selective**: Don't remember trivial information
+2. **Use clear statements**: "User prefers tabs over spaces" not "tabs"
+3. **Log decisions explicitly**: Use `episode_type="decision"` for choices
+4. **Track open questions**: Use `episode_type="question"` for uncertainties
+5. **Use entity recall**: When user mentions a file/person, recall by entity
+6. **Consolidate periodically**: Run `consolidate()` at natural boundaries
+7. **Handle contradictions**: When you notice conflicting information, remember the update and consolidate - it will flag the contradiction
+8. **Periodic reflection**: Occasionally run `reflect("What important things might I be missing?")`

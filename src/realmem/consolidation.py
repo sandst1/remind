@@ -161,8 +161,8 @@ class Consolidator:
         extraction_result = await self._run_extraction_phase()
         if extraction_result:
             logger.info(
-                f"Extraction phase: processed {extraction_result.episodes_processed} episodes, "
-                f"created {extraction_result.entities_created} entities"
+                f"Extraction phase: processed {extraction_result['episodes_processed']} episodes, "
+                f"created {extraction_result['entities_created']} entities"
             )
         
         # Phase 2: Generalize unconsolidated episodes into concepts
@@ -248,7 +248,7 @@ class Consolidator:
         
         return result
     
-    async def _run_extraction_phase(self):
+    async def _run_extraction_phase(self) -> dict:
         """
         Run entity extraction on episodes that haven't been processed yet.
         
@@ -256,7 +256,7 @@ class Consolidator:
         extracting entity mentions.
         
         Returns:
-            BackfillResult or None if no episodes needed extraction
+            dict with extraction stats or None if no episodes needed extraction
         """
         # Check if there are unextracted episodes
         unextracted = self.store.get_unextracted_episodes(limit=self.batch_size)
@@ -266,8 +266,21 @@ class Consolidator:
         
         logger.info(f"Running extraction on {len(unextracted)} episodes...")
         
-        # Use the extractor's backfill method which handles batching
-        return await self.extractor.backfill(limit=len(unextracted))
+        episodes_processed = 0
+        entities_created = 0
+        
+        for episode in unextracted:
+            try:
+                extraction = await self.extractor.extract_and_store(episode)
+                episodes_processed += 1
+                entities_created += len(extraction.entities)
+            except Exception as e:
+                logger.warning(f"Failed to extract from {episode.id}: {e}")
+        
+        return {
+            "episodes_processed": episodes_processed,
+            "entities_created": entities_created,
+        }
     
     def _format_concepts(self, concepts: list[dict]) -> str:
         """Format existing concepts for the prompt."""

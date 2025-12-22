@@ -339,12 +339,3 @@ class ExtractionResult:
         return cls(episode_type=episode_type, entities=entities)
 
 
-@dataclass 
-class BackfillResult:
-    """Result of backfilling entities/types for existing episodes."""
-    
-    episodes_processed: int = 0
-    entities_created: int = 0
-    episodes_updated: int = 0
-    errors: list[str] = field(default_factory=list)
-

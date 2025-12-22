@@ -16,7 +16,7 @@ import json
 
 from realmem.models import (
     Episode, Concept, ConsolidationResult, 
-    Entity, EpisodeType, BackfillResult,
+    Entity, EpisodeType,
 )
 from realmem.store import MemoryStore, SQLiteMemoryStore
 from realmem.providers.base import LLMProvider, EmbeddingProvider
@@ -389,21 +389,6 @@ and what gaps might exist in your understanding."""
     def get_entity_mention_counts(self) -> list[tuple[Entity, int]]:
         """Get all entities with their mention counts, sorted by most mentioned."""
         return self.store.get_entity_mention_counts()
-    
-    async def backfill_extraction(self, limit: int = 100) -> BackfillResult:
-        """
-        Backfill entity extraction for existing episodes.
-        
-        Processes episodes that haven't had extraction performed yet.
-        Useful for migrating existing databases to the v2 schema.
-        
-        Args:
-            limit: Maximum number of episodes to process
-            
-        Returns:
-            BackfillResult with statistics
-        """
-        return await self.extractor.backfill(limit=limit)
     
     def get_stats(self) -> dict:
         """Get memory statistics including consolidation state."""

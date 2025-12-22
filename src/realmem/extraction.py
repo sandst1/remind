@@ -13,7 +13,7 @@ from typing import Optional
 
 from realmem.models import (
     Episode, Entity, EntityType, EpisodeType,
-    ExtractionResult, BackfillResult,
+    ExtractionResult,
 )
 from realmem.store import MemoryStore
 from realmem.providers.base import LLMProvider
@@ -215,56 +215,6 @@ class EntityExtractor:
         logger.debug(
             f"Extracted from {episode.id}: type={result.episode_type.value}, "
             f"entities={[e.id for e in result.entities]}"
-        )
-        
-        return result
-    
-    async def backfill(
-        self,
-        limit: int = 100,
-        batch_size: int = 10,
-    ) -> BackfillResult:
-        """
-        Backfill entity extraction for existing episodes.
-        
-        Processes episodes that haven't had extraction performed yet.
-        
-        Args:
-            limit: Maximum number of episodes to process
-            batch_size: How many to process before logging progress
-            
-        Returns:
-            BackfillResult with statistics
-        """
-        result = BackfillResult()
-        
-        # Get unextracted episodes
-        episodes = self.store.get_unextracted_episodes(limit=limit)
-        
-        if not episodes:
-            logger.info("No episodes need extraction")
-            return result
-        
-        logger.info(f"Backfilling {len(episodes)} episodes...")
-        
-        for i, episode in enumerate(episodes):
-            try:
-                extraction = await self.extract_and_store(episode)
-                result.episodes_processed += 1
-                result.episodes_updated += 1
-                result.entities_created += len(extraction.entities)
-                
-                if (i + 1) % batch_size == 0:
-                    logger.info(f"Processed {i + 1}/{len(episodes)} episodes...")
-                    
-            except Exception as e:
-                error_msg = f"Failed to extract from {episode.id}: {e}"
-                logger.warning(error_msg)
-                result.errors.append(error_msg)
-        
-        logger.info(
-            f"Backfill complete: {result.episodes_processed} episodes, "
-            f"{result.entities_created} entities created"
         )
         
         return result

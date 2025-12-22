@@ -199,11 +199,13 @@ Each project can have its own database - the `db` query parameter specifies whic
 - `remember` - Store experiences/observations
 - `recall` - Retrieve relevant memories
 - `consolidate` - Process episodes into concepts
+- `entities` - List/inspect entities
+- `decisions` / `questions` - View by episode type
 - `inspect` - View concepts or episodes
 - `stats` - Memory statistics
 - `reflect` - Meta-cognitive analysis
 
-See [docs/AGENTS.md](./docs/AGENTS.md) for a template you can copy into your projects to instruct AI agents to use RealMem.
+**Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use RealMem as their memory system.
 
 ## Core Concepts
 
@@ -280,10 +282,6 @@ By default, RealMem uses SQLite for storage (`memory.db`). This is simple and po
 ```python
 memory = create_memory(db_path="my-memory.db")
 ```
-
-## For AI Agents
-
-See [AGENT_README.md](./AGENT_README.md) for instructions on how AI agents and LLMs should use this tool.
 
 ## License
 
