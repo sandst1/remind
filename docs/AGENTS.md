@@ -22,6 +22,8 @@ remember("The API uses OAuth2 with JWT tokens")
 remember("User wants verbose error messages during development")
 ```
 
+**Fast operation**: `remember()` just stores the episode - no LLM call. Entity extraction and type classification happen during `consolidate()`.
+
 **When to remember:**
 - User preferences, opinions, or values
 - Technical decisions and constraints
@@ -49,7 +51,11 @@ recall("What do I know about the database schema?", k=10)
 - Add context parameter when helpful: `recall("languages", context="choosing for new microservice")`
 
 ### `consolidate` - Process Episodes into Concepts
-Run periodically to transform raw episodes into generalized knowledge:
+Run periodically to transform raw episodes into generalized knowledge.
+
+Consolidation runs in two phases:
+1. **Extraction**: Classifies episode types and extracts entity mentions
+2. **Generalization**: Creates/updates concepts from patterns across episodes
 
 ```
 consolidate()           # Normal consolidation (needs 3+ episodes)

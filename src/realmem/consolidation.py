@@ -1,9 +1,14 @@
 """
 Consolidation engine - the "sleep" process that generalizes episodes into concepts.
 
-This is where the magic happens: the LLM reviews raw episodic memories and
-extracts generalized concepts, identifies patterns, updates existing knowledge,
-and resolves contradictions.
+This is where the magic happens. Consolidation runs in two phases:
+
+1. **Extraction Phase**: Classify episode types and extract entity mentions
+   from episodes that haven't been processed yet.
+
+2. **Generalization Phase**: The LLM reviews episodic memories and extracts
+   generalized concepts, identifies patterns, updates existing knowledge,
+   and resolves contradictions.
 """
 
 from datetime import datetime
@@ -11,9 +16,10 @@ from typing import Optional
 import json
 import logging
 
-from realmem.models import Concept, Episode, Relation, RelationType, ConsolidationResult
+from realmem.models import Concept, Episode, Relation, RelationType, ConsolidationResult, ExtractionResult
 from realmem.store import MemoryStore
 from realmem.providers.base import LLMProvider, EmbeddingProvider
+from realmem.extraction import EntityExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +120,10 @@ class Consolidator:
     
     This is analogous to what the brain does during sleep: replay experiences,
     extract patterns, and integrate new knowledge into existing schemas.
+    
+    Consolidation happens in two phases:
+    1. Extraction: Classify episode types and extract entity mentions
+    2. Generalization: Create/update concepts from patterns across episodes
     """
     
     def __init__(
@@ -129,10 +139,15 @@ class Consolidator:
         self.store = store
         self.batch_size = batch_size
         self.min_confidence = min_confidence
+        self.extractor = EntityExtractor(llm, store)
     
     async def consolidate(self, force: bool = False) -> ConsolidationResult:
         """
         Run a consolidation pass.
+        
+        This runs in two phases:
+        1. Extraction: Process any episodes that haven't had entity extraction
+        2. Generalization: Create/update concepts from unconsolidated episodes
         
         Args:
             force: If True, process even if there aren't many episodes
@@ -142,6 +157,15 @@ class Consolidator:
         """
         result = ConsolidationResult()
         
+        # Phase 1: Extract entities from unextracted episodes
+        extraction_result = await self._run_extraction_phase()
+        if extraction_result:
+            logger.info(
+                f"Extraction phase: processed {extraction_result.episodes_processed} episodes, "
+                f"created {extraction_result.entities_created} entities"
+            )
+        
+        # Phase 2: Generalize unconsolidated episodes into concepts
         # Get unconsolidated episodes
         episodes = self.store.get_unconsolidated_episodes(limit=self.batch_size)
         
@@ -223,6 +247,27 @@ class Consolidator:
         )
         
         return result
+    
+    async def _run_extraction_phase(self):
+        """
+        Run entity extraction on episodes that haven't been processed yet.
+        
+        This is Phase 1 of consolidation - classifying episode types and
+        extracting entity mentions.
+        
+        Returns:
+            BackfillResult or None if no episodes needed extraction
+        """
+        # Check if there are unextracted episodes
+        unextracted = self.store.get_unextracted_episodes(limit=self.batch_size)
+        
+        if not unextracted:
+            return None
+        
+        logger.info(f"Running extraction on {len(unextracted)} episodes...")
+        
+        # Use the extractor's backfill method which handles batching
+        return await self.extractor.backfill(limit=len(unextracted))
     
     def _format_concepts(self, concepts: list[dict]) -> str:
         """Format existing concepts for the prompt."""

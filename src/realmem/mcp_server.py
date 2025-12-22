@@ -96,7 +96,11 @@ async def tool_remember(
     episode_type: Optional[str] = None,
     entities: Optional[str] = None,
 ) -> str:
-    """Store an experience or observation in memory."""
+    """Store an experience or observation in memory.
+    
+    This is a fast operation - no LLM calls. Entity extraction and
+    type classification happen during consolidation.
+    """
     from realmem.models import EpisodeType
     
     memory = await get_memory()
@@ -116,25 +120,23 @@ async def tool_remember(
     if entities:
         entity_list = [e.strip() for e in entities.split(",") if e.strip()]
     
-    episode_id = await memory.remember(
+    # remember() is now sync - no LLM call
+    episode_id = memory.remember(
         content, 
         metadata=meta,
         episode_type=ep_type,
         entities=entity_list,
     )
     
-    # Get episode to show extraction results
-    episode = memory.store.get_episode(episode_id)
-    
     stats = memory.get_stats()
     pending = stats.get("unconsolidated_episodes", 0)
     
     lines = [f"Remembered as episode {episode_id}"]
     
-    if episode:
-        lines.append(f"  Type: {episode.episode_type.value}")
-        if episode.entity_ids:
-            lines.append(f"  Entities: {', '.join(episode.entity_ids)}")
+    if ep_type:
+        lines.append(f"  Type: {ep_type.value}")
+    if entity_list:
+        lines.append(f"  Entities: {', '.join(entity_list)}")
     
     if pending >= 5:
         lines.append(f"\n({pending} episodes pending consolidation)")
@@ -472,22 +474,25 @@ def create_mcp_server():
     ) -> str:
         """Store an experience or observation in memory.
         
+        This is a fast operation - no LLM calls. Entity extraction and type
+        classification happen during consolidation.
+        
         Use this to log important information that should be remembered across sessions:
         - User preferences and opinions
         - Technical context about projects
         - Corrections or clarifications
         - Patterns and decisions
         
-        Entity and type extraction is automatic by default. You can also provide explicit values.
-        
         Args:
             content: The experience/observation to remember (clear, standalone statement)
             metadata: Optional JSON string with additional metadata
             episode_type: Optional explicit type: observation, decision, question, meta, preference
+                          (auto-detected during consolidation if not provided)
             entities: Optional comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
+                      (auto-detected during consolidation if not provided)
         
         Returns:
-            Confirmation with episode ID, detected type, and entities
+            Confirmation with episode ID
         """
         return await tool_remember(content, metadata, episode_type, entities)
     
@@ -519,13 +524,18 @@ def create_mcp_server():
     async def consolidate(force: bool = False) -> str:
         """Process pending episodes into generalized concepts.
         
-        Consolidation is the "sleep" process where raw experiences are analyzed
-        and transformed into abstract, generalized knowledge. The LLM:
-        1. Identifies patterns across episodes
-        2. Creates new generalized concepts
-        3. Updates existing concepts with new evidence
-        4. Establishes relations between concepts
-        5. Flags contradictions
+        Consolidation runs in two phases:
+        
+        Phase 1 - Extraction:
+        - Classifies episode types (observation, decision, question, etc.)
+        - Extracts entity mentions (files, people, tools, concepts)
+        
+        Phase 2 - Generalization:
+        - Identifies patterns across episodes
+        - Creates new generalized concepts
+        - Updates existing concepts with new evidence
+        - Establishes relations between concepts
+        - Flags contradictions
         
         Args:
             force: If True, consolidate even with few pending episodes

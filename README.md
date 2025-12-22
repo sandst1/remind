@@ -116,12 +116,14 @@ async def main():
         embedding_provider="openai",    # or "ollama"
     )
     
-    # Log experiences (episodes)
-    await memory.remember("User mentioned they prefer Python for backend work")
-    await memory.remember("User is building a distributed system")
-    await memory.remember("User values type safety")
+    # Log experiences (episodes) - fast, no LLM calls
+    memory.remember("User mentioned they prefer Python for backend work")
+    memory.remember("User is building a distributed system")
+    memory.remember("User values type safety")
     
-    # Run consolidation - extracts generalized concepts
+    # Run consolidation - this is where LLM work happens:
+    # 1. Extracts entities and classifies episode types
+    # 2. Generalizes episodes into concepts
     result = await memory.consolidate(force=True)
     print(f"Created {result.concepts_created} concepts")
     
@@ -229,12 +231,18 @@ Typed connections between concepts:
 - `context_of` - A provides context for B
 
 ### Consolidation
-The "sleep" process where episodes are processed into concepts. The LLM:
-1. Identifies patterns across episodes
-2. Creates new generalized concepts
-3. Updates existing concepts
-4. Establishes relations
-5. Flags contradictions
+The "sleep" process where episodes are processed into concepts. Runs in two phases:
+
+**Phase 1 - Extraction:**
+- Classifies episode types (observation, decision, question, etc.)
+- Extracts entity mentions (files, people, tools, concepts)
+
+**Phase 2 - Generalization:**
+- Identifies patterns across episodes
+- Creates new generalized concepts
+- Updates existing concepts
+- Establishes relations
+- Flags contradictions
 
 ### Spreading Activation
 Retrieval that goes beyond keyword matching:

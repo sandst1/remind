@@ -70,14 +70,17 @@ def main(ctx, db: str, llm: str, embedding: str):
 @click.option("--metadata", "-m", help="JSON metadata to attach")
 @click.option("--type", "-t", "episode_type", 
               type=click.Choice(["observation", "decision", "question", "meta", "preference"]),
-              help="Episode type (auto-detected if not provided)")
+              help="Episode type (detected during consolidation if not provided)")
 @click.option("--entity", "-e", "entities", multiple=True, 
               help="Entity IDs (e.g., file:src/auth.ts, person:alice)")
-@click.option("--no-extract", is_flag=True, help="Disable auto-extraction")
 @click.pass_context
 def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[str], 
-             entities: tuple, no_extract: bool):
-    """Add an episode to memory."""
+             entities: tuple):
+    """Add an episode to memory.
+    
+    This is a fast operation - no LLM calls. Entity extraction and
+    type classification happen during consolidation.
+    """
     from realmem.models import EpisodeType
     
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
@@ -86,28 +89,21 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
     ep_type = EpisodeType(episode_type) if episode_type else None
     entity_list = list(entities) if entities else None
     
-    async def _remember():
-        episode_id = await memory.remember(
-            content, 
-            metadata=meta,
-            episode_type=ep_type,
-            entities=entity_list,
-            auto_extract=not no_extract,
-        )
-        # Get the episode to show extraction results
-        episode = memory.store.get_episode(episode_id)
-        return episode_id, episode
-    
-    with console.status("[bold cyan]Remembering...") if not no_extract else console.status(""):
-        episode_id, episode = run_async(_remember())
+    # remember() is now sync - no LLM call
+    episode_id = memory.remember(
+        content, 
+        metadata=meta,
+        episode_type=ep_type,
+        entities=entity_list,
+    )
     
     console.print(f"[green]✓[/green] Remembered as episode [cyan]{episode_id}[/cyan]")
     
-    # Show extracted info
-    if episode and episode.entities_extracted:
-        console.print(f"  Type: [yellow]{episode.episode_type.value}[/yellow]")
-        if episode.entity_ids:
-            console.print(f"  Entities: {', '.join(episode.entity_ids)}")
+    # Show explicit type/entities if provided
+    if ep_type:
+        console.print(f"  Type: [yellow]{ep_type.value}[/yellow]")
+    if entity_list:
+        console.print(f"  Entities: {', '.join(entity_list)}")
     
     # Show unconsolidated count
     stats = memory.get_stats()

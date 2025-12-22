@@ -22,7 +22,7 @@ from realmem.store import MemoryStore, SQLiteMemoryStore
 from realmem.providers.base import LLMProvider, EmbeddingProvider
 from realmem.consolidation import Consolidator
 from realmem.retrieval import MemoryRetriever, ActivatedConcept
-from realmem.extraction import EntityExtractor, extract_for_remember
+from realmem.extraction import EntityExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 class MemoryInterface:
     """
     The main interface to the memory system.
+    
+    Key Design:
+    -----------
+    - `remember()` is fast and synchronous - just stores episodes, no LLM calls
+    - `consolidate()` does all LLM work in two phases:
+      1. Extract entities/types from unextracted episodes
+      2. Generalize episodes into concepts (the "sleep" process)
     
     Consolidation Modes:
     -------------------
@@ -50,7 +57,7 @@ class MemoryInterface:
             consolidation_threshold=10,  # Episodes before auto-consolidate
         )
         
-        # Log experiences
+        # Log experiences (fast, no LLM call)
         await memory.remember("User prefers Python for backend development")
         await memory.remember("User mentioned they work on distributed systems")
         
@@ -60,7 +67,7 @@ class MemoryInterface:
         # Hook: Call at end of conversation/task for explicit consolidation
         await memory.end_session()
         
-        # Or manually consolidate anytime
+        # Or manually consolidate anytime (this is where LLM work happens)
         await memory.consolidate(force=True)
     """
     
@@ -73,8 +80,6 @@ class MemoryInterface:
         # Consolidation settings
         consolidation_threshold: int = 10,  # episodes before auto-consolidation
         auto_consolidate: bool = True,
-        # Extraction settings
-        auto_extract: bool = True,  # Extract entities on remember()
         # Retrieval settings
         default_recall_k: int = 5,
         spread_hops: int = 2,
@@ -104,44 +109,43 @@ class MemoryInterface:
         # Settings
         self.consolidation_threshold = consolidation_threshold
         self.auto_consolidate = auto_consolidate
-        self.auto_extract = auto_extract
         self.default_recall_k = default_recall_k
         
         # Episode buffer for tracking (this session only)
         self._episode_buffer: list[str] = []
         self._last_consolidation: Optional[datetime] = None
     
-    async def remember(
+    def remember(
         self,
         content: str,
         metadata: Optional[dict] = None,
         episode_type: Optional[EpisodeType] = None,
         entities: Optional[list[str]] = None,
-        auto_extract: Optional[bool] = None,
     ) -> str:
         """
         Log an experience/interaction to be consolidated later.
         
+        This is a fast operation - no LLM calls. Entity extraction and
+        type classification happen during consolidate().
+        
         Args:
             content: The interaction or experience to remember
             metadata: Optional metadata about the episode
-            episode_type: Explicit type (observation, decision, question, meta, preference)
-                          If not provided and auto_extract=True, will be auto-detected
-            entities: Explicit list of entity IDs (e.g., ["file:src/auth.ts", "person:alice"])
-                      If not provided and auto_extract=True, will be auto-detected
-            auto_extract: Override the instance-level auto_extract setting
+            episode_type: Optional explicit type (observation, decision, question, meta, preference).
+                          If not provided, will be auto-detected during consolidation.
+            entities: Optional explicit list of entity IDs (e.g., ["file:src/auth.ts", "person:alice"]).
+                      If not provided, will be auto-detected during consolidation.
             
         Returns:
             The episode ID
         """
-        should_extract = auto_extract if auto_extract is not None else self.auto_extract
-        
-        # Create episode with explicit type/entities if provided
+        # Create episode
         episode = Episode(
             content=content,
             metadata=metadata or {},
         )
         
+        # Apply explicit type/entities if provided
         if episode_type:
             episode.episode_type = episode_type
             episode.entities_extracted = True  # Manual override counts as extracted
@@ -150,27 +154,11 @@ class MemoryInterface:
             episode.entity_ids = entities
             episode.entities_extracted = True
         
-        # Auto-extract if enabled and not already set
-        if should_extract and not episode.entities_extracted:
-            episode = await extract_for_remember(
-                llm=self.llm,
-                store=self.store,
-                episode=episode,
-                auto_extract=True,
-            )
-        
         # Store the episode
         episode_id = self.store.add_episode(episode)
         self._episode_buffer.append(episode_id)
         
-        # Store pending entities from extraction (if any)
-        pending_entities = episode.metadata.pop("_pending_entities", [])
-        for entity_data in pending_entities:
-            entity = Entity.from_dict(entity_data)
-            self.store.add_entity(entity)
-            self.store.add_mention(episode_id, entity.id)
-        
-        # Also store explicitly provided entities
+        # Store explicitly provided entities
         if entities:
             for entity_id in entities:
                 # Ensure entity exists
@@ -186,12 +174,6 @@ class MemoryInterface:
                 self.store.add_mention(episode_id, entity_id)
         
         logger.debug(f"Remembered episode {episode_id}: {content[:50]}...")
-        
-        # Auto-consolidate if threshold reached
-        if self.auto_consolidate and len(self._episode_buffer) >= self.consolidation_threshold:
-            logger.info(f"Auto-consolidation triggered ({len(self._episode_buffer)} episodes)")
-            await self.consolidate()
-            self._episode_buffer = []
         
         return episode_id
     

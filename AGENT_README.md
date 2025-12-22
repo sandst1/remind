@@ -6,9 +6,9 @@ RealMem is your external memory layer. Unlike your context window (which resets 
 
 | Tool | Purpose |
 |------|---------|
-| `remember` | Store an experience (auto-extracts type & entities) |
+| `remember` | Store an experience (fast, no LLM call) |
 | `recall` | Retrieve relevant memories |
-| `consolidate` | Process episodes into generalized concepts |
+| `consolidate` | Extract entities + process episodes into concepts |
 | `entities` | List/inspect entities (files, people, concepts) |
 | `decisions` | Show decision-type episodes |
 | `questions` | Show open questions |
@@ -27,11 +27,13 @@ RealMem is your external memory layer. Unlike your context window (which resets 
 remember(content="User prefers TypeScript over JavaScript")
 ```
 
-**Automatic extraction**: The system automatically classifies the episode type and extracts entity mentions.
+**Fast operation**: `remember()` just stores the episode - no LLM call. Entity extraction and type classification happen during `consolidate()`.
 
 **Optional parameters:**
 - `episode_type`: `observation` (default), `decision`, `question`, `meta`, `preference`
 - `entities`: Comma-separated entity IDs (e.g., `"file:auth.ts,person:alice"`)
+
+If not provided, these are automatically detected during consolidation.
 
 ```
 remember(
@@ -62,9 +64,13 @@ recall(query="auth", entity="file:src/auth.ts")
 
 Use entity-based recall when the user mentions a specific file, function, or person.
 
-### consolidate - Generalize Knowledge
+### consolidate - Process Episodes
 
-Processes raw episodes into abstract concepts. Run periodically or at session end.
+Runs in two phases:
+1. **Extraction**: Classifies episode types and extracts entity mentions
+2. **Generalization**: Transforms episodes into abstract concepts
+
+Run periodically or at session end.
 
 ```
 consolidate()
