@@ -244,7 +244,10 @@ class Episode:
     
     # Has entity extraction been performed on this episode?
     entities_extracted: bool = False
-    
+
+    # How certain is this information? (0.0-1.0, default 1.0 = fully certain)
+    confidence: float = 1.0
+
     # Optional metadata
     metadata: dict = field(default_factory=dict)
     
@@ -260,6 +263,7 @@ class Episode:
             "entity_ids": self.entity_ids,
             "consolidated": self.consolidated,
             "entities_extracted": self.entities_extracted,
+            "confidence": self.confidence,
             "metadata": self.metadata,
         }
     
@@ -284,6 +288,7 @@ class Episode:
             entity_ids=data.get("entity_ids", []),
             consolidated=data.get("consolidated", False),
             entities_extracted=data.get("entities_extracted", False),
+            confidence=data.get("confidence", 1.0),
             metadata=data.get("metadata", {}),
         )
 

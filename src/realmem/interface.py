@@ -121,13 +121,14 @@ class MemoryInterface:
         metadata: Optional[dict] = None,
         episode_type: Optional[EpisodeType] = None,
         entities: Optional[list[str]] = None,
+        confidence: float = 1.0,
     ) -> str:
         """
         Log an experience/interaction to be consolidated later.
-        
+
         This is a fast operation - no LLM calls. Entity extraction and
         type classification happen during consolidate().
-        
+
         Args:
             content: The interaction or experience to remember
             metadata: Optional metadata about the episode
@@ -135,7 +136,9 @@ class MemoryInterface:
                           If not provided, will be auto-detected during consolidation.
             entities: Optional explicit list of entity IDs (e.g., ["file:src/auth.ts", "person:alice"]).
                       If not provided, will be auto-detected during consolidation.
-            
+            confidence: How certain this information is (0.0-1.0, default 1.0).
+                        Lower values indicate uncertainty or weak signals.
+
         Returns:
             The episode ID
         """
@@ -143,6 +146,7 @@ class MemoryInterface:
         episode = Episode(
             content=content,
             metadata=metadata or {},
+            confidence=max(0.0, min(1.0, confidence)),  # Clamp to valid range
         )
         
         # Apply explicit type/entities if provided

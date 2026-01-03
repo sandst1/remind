@@ -113,8 +113,10 @@ class MemoryRetriever:
         concept_cache: dict[str, Concept] = {}
         
         for concept, similarity in initial_matches:
-            if similarity > self.activation_threshold:
-                activation_map[concept.id] = (similarity, "embedding", 0)
+            # Weight similarity by concept confidence
+            weighted_activation = similarity * concept.confidence
+            if weighted_activation > self.activation_threshold:
+                activation_map[concept.id] = (weighted_activation, "embedding", 0)
                 concept_cache[concept.id] = concept
         
         logger.debug(f"Initial activation: {len(activation_map)} concepts")
@@ -131,13 +133,14 @@ class MemoryRetriever:
                 related = self.store.get_related(concept_id, depth=1)
                 
                 for related_concept, relation in related:
-                    # Calculate spread activation
+                    # Calculate spread activation, weighted by target concept's confidence
                     relation_weight = self.relation_weights.get(relation.type, 0.5)
                     spread_activation = (
-                        activation 
-                        * relation.strength 
-                        * relation_weight 
+                        activation
+                        * relation.strength
+                        * relation_weight
                         * (self.spread_decay ** (hop + 1))
+                        * related_concept.confidence  # Weight by target's reliability
                     )
                     
                     if spread_activation < self.activation_threshold:

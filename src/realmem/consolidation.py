@@ -299,12 +299,28 @@ class Consolidator:
         return "\n\n".join(lines)
     
     def _format_episodes(self, episodes: list[Episode]) -> str:
-        """Format episodes for the prompt."""
+        """Format episodes for the prompt, including extraction results and metadata."""
         lines = []
         for ep in episodes:
             timestamp = ep.timestamp.strftime("%Y-%m-%d %H:%M")
-            lines.append(f"[{ep.id}] ({timestamp})\n{ep.content}")
-        
+            # Include type and confidence in header
+            conf_str = f", conf={ep.confidence:.1f}" if ep.confidence < 1.0 else ""
+            header = f"[{ep.id}] ({timestamp}, type={ep.episode_type.value}{conf_str})"
+
+            # Include entities if present
+            if ep.entity_ids:
+                header += f"\n  Entities: {', '.join(ep.entity_ids[:5])}"
+                if len(ep.entity_ids) > 5:
+                    header += f" (+{len(ep.entity_ids) - 5} more)"
+
+            # Include metadata if present (filter out internal keys starting with _)
+            if ep.metadata:
+                show_meta = {k: v for k, v in ep.metadata.items() if not k.startswith("_")}
+                if show_meta:
+                    header += f"\n  Meta: {show_meta}"
+
+            lines.append(f"{header}\n{ep.content}")
+
         return "\n\n---\n\n".join(lines)
     
     async def _apply_update(self, update: dict) -> None:
