@@ -2,19 +2,16 @@
 RealMem MCP Server - Memory system exposed via Model Context Protocol.
 
 Single server instance supporting multiple databases. Each client specifies
-its database via URL query parameter (SSE) or environment variable (stdio).
+its database via URL query parameter.
 
 Database path resolution:
     - Absolute path (/path/to/db.db or ~/path/to/db.db) - used as-is
     - Relative path (./memory.db or subdir/memory.db) - resolved against cwd
     - Simple name (my-project) - resolved to ~/.realmem/my-project.db
 
-Usage (SSE - default):
+Usage:
     realmem-mcp --port 8765
     Connect: http://127.0.0.1:8765/sse?db=my-project
-
-Usage (stdio - for Claude Desktop):
-    realmem-mcp --stdio --db my-project
 """
 
 import asyncio
@@ -836,23 +833,6 @@ def run_server_sse(host: str = "127.0.0.1", port: int = 8765):
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
-def run_server_stdio(db: str):
-    """Run the MCP server with stdio transport (for Claude Desktop)."""
-    import sys
-    
-    # Resolve the database path
-    db_path = resolve_db_path(db)
-    logger.info(f"Starting RealMem MCP server (stdio) with database: {db_path}")
-    
-    # Set the database in context for all operations
-    _current_db.set(db_path)
-    
-    mcp = create_mcp_server()
-    
-    # Run with stdio transport
-    mcp.run(transport="stdio")
-
-
 def main():
     """CLI entry point for the MCP server."""
     import argparse
@@ -867,21 +847,10 @@ Database path resolution:
   /full/path.db     → /full/path.db (absolute)
 
 Examples:
-  # SSE mode (default) - for Cursor and web clients
   realmem-mcp --port 8765
-  
-  # stdio mode - for Claude Desktop
-  realmem-mcp --stdio --db my-project
 """
     )
-    
-    # Transport mode
-    parser.add_argument(
-        "--stdio",
-        action="store_true",
-        help="Use stdio transport (for Claude Desktop). Requires --db."
-    )
-    
+
     # SSE options
     parser.add_argument(
         "--host",
@@ -895,12 +864,6 @@ Examples:
         help="Port to listen on for SSE mode (default: 8765)"
     )
     
-    # Database (required for stdio, optional context for SSE)
-    parser.add_argument(
-        "--db",
-        default=None,
-        help="Database name or path. Required for --stdio mode."
-    )
     
     # Provider options
     parser.add_argument(
@@ -936,14 +899,7 @@ Examples:
     if args.embedding:
         DEFAULT_EMBEDDING_PROVIDER = args.embedding
     
-    if args.stdio:
-        # stdio mode requires --db
-        if not args.db:
-            parser.error("--stdio requires --db to specify the database")
-        run_server_stdio(db=args.db)
-    else:
-        # SSE mode (default)
-        run_server_sse(host=args.host, port=args.port)
+    run_server_sse(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

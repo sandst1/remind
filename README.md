@@ -173,8 +173,6 @@ realmem --llm ollama --embedding ollama remember "Local-only experience"
 
 RealMem can run as an MCP (Model Context Protocol) server, allowing AI agents in IDEs like Cursor to use it as their memory system.
 
-#### SSE Mode (default) - For Cursor and other web-based clients
-
 ```bash
 # Start the MCP server
 realmem-mcp --port 8765
@@ -190,25 +188,6 @@ Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
   "mcpServers": {
     "realmem": {
       "url": "http://127.0.0.1:8765/sse?db=my-project"
-    }
-  }
-}
-```
-
-#### stdio Mode - For Claude Desktop
-
-```bash
-realmem-mcp --stdio --db my-project
-```
-
-Configure Claude Desktop's `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "realmem": {
-      "command": "realmem-mcp",
-      "args": ["--stdio", "--db", "my-project"]
     }
   }
 }
