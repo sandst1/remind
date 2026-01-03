@@ -1,6 +1,6 @@
-# RealMem
+# Remind
 
-Generalization-capable memory layer for LLMs. Unlike simple RAG systems that store verbatim text, RealMem extracts and maintains *generalized concepts* from experiences, mimicking how human memory consolidates specific episodes into abstract knowledge.
+Generalization-capable memory layer for LLMs. Unlike simple RAG systems that store verbatim text, Remind extracts and maintains *generalized concepts* from experiences, mimicking how human memory consolidates specific episodes into abstract knowledge.
 
 ## Key Features
 
@@ -94,8 +94,8 @@ cp .env.example .env
 ollama pull llama3.2           # For LLM operations
 ollama pull nomic-embed-text   # For embeddings
 
-# Use with RealMem:
-realmem --llm ollama --embedding ollama remember "Some experience"
+# Use with Remind:
+remind--llm ollama --embedding ollama remember "Some experience"
 ```
 
 ## Quick Start
@@ -105,7 +105,7 @@ realmem --llm ollama --embedding ollama remember "Some experience"
 ```python
 import asyncio
 from dotenv import load_dotenv
-from realmem import create_memory
+from remindimport create_memory
 
 load_dotenv()  # Load .env file
 
@@ -142,43 +142,43 @@ asyncio.run(main())
 
 ```bash
 # Add episodes
-realmem remember "User likes Python and Rust"
-realmem remember "User works on backend systems"
+remindremember "User likes Python and Rust"
+remindremember "User works on backend systems"
 
 # Run consolidation
-realmem consolidate
+remindconsolidate
 
 # Query memory
-realmem recall "What languages does the user know?"
+remindrecall "What languages does the user know?"
 
 # Inspect concepts
-realmem inspect
-realmem inspect <concept-id>
+remindinspect
+remindinspect <concept-id>
 
 # Show statistics
-realmem stats
+remindstats
 
 # Export/Import
-realmem export memory-backup.json
-realmem import memory-backup.json
+remindexport memory-backup.json
+remindimport memory-backup.json
 
 # Reflect
-realmem reflect "What are the key themes in my memory?"
+remindreflect "What are the key themes in my memory?"
 
 # Use different providers
-realmem --llm ollama --embedding ollama remember "Local-only experience"
+remind--llm ollama --embedding ollama remember "Local-only experience"
 ```
 
 ### MCP Server (for AI Agents)
 
-RealMem can run as an MCP (Model Context Protocol) server, allowing AI agents in IDEs like Cursor to use it as their memory system.
+Remind can run as an MCP (Model Context Protocol) server, allowing AI agents in IDEs like Cursor to use it as their memory system.
 
 ```bash
 # Start the MCP server
-realmem-mcp --port 8765
+remind-mcp --port 8765
 
 # With custom providers
-realmem-mcp --port 8765 --llm anthropic --embedding openai
+remind-mcp --port 8765 --llm anthropic --embedding openai
 ```
 
 Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
@@ -186,7 +186,7 @@ Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
 ```json
 {
   "mcpServers": {
-    "realmem": {
+    "remind": {
       "url": "http://127.0.0.1:8765/sse?db=my-project"
     }
   }
@@ -199,12 +199,12 @@ The `db` parameter supports multiple formats:
 
 | Format | Resolves To | Example |
 |--------|-------------|---------|
-| Simple name | `~/.realmem/{name}.db` | `my-project` → `~/.realmem/my-project.db` |
+| Simple name | `~/.remind/{name}.db` | `my-project` → `~/.remind/my-project.db` |
 | Relative path | Resolved against cwd | `./memory.db` → `/current/dir/memory.db` |
 | Absolute path | Used as-is | `/path/to/db.db` → `/path/to/db.db` |
 | Home path | Expanded | `~/data/mem.db` → `/home/user/data/mem.db` |
 
-**Recommended**: Use simple names (e.g., `my-project`) for portability. All databases are stored in `~/.realmem/`.
+**Recommended**: Use simple names (e.g., `my-project`) for portability. All databases are stored in `~/.remind/`.
 
 Each project can have its own database. A single MCP server instance (SSE mode) can serve multiple projects with different databases.
 
@@ -218,7 +218,7 @@ Each project can have its own database. A single MCP server instance (SSE mode) 
 - `stats` - Memory statistics
 - `reflect` - Meta-cognitive analysis
 
-**Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use RealMem as their memory system.
+**Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
 
 ## Core Concepts
 
@@ -270,27 +270,27 @@ Retrieval that goes beyond keyword matching:
 
 ### Anthropic (Claude)
 ```python
-from realmem import AnthropicLLM
+from remindimport AnthropicLLM
 llm = AnthropicLLM(model="claude-sonnet-4-20250514")
 ```
 
 ### OpenAI
 ```python
-from realmem import OpenAILLM, OpenAIEmbedding
+from remindimport OpenAILLM, OpenAIEmbedding
 llm = OpenAILLM(model="gpt-4o")
 embedding = OpenAIEmbedding(model="text-embedding-3-small")
 ```
 
 ### Ollama (Local)
 ```python
-from realmem import OllamaLLM, OllamaEmbedding
+from remindimport OllamaLLM, OllamaEmbedding
 llm = OllamaLLM(model="llama3.2")
 embedding = OllamaEmbedding(model="nomic-embed-text")
 ```
 
 ## Database
 
-By default, RealMem uses SQLite for storage (`memory.db`). This is simple and portable.
+By default, Remind uses SQLite for storage (`memory.db`). This is simple and portable.
 
 ```python
 memory = create_memory(db_path="my-memory.db")

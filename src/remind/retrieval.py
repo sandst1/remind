@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from typing import Optional
 import logging
 
-from realmem.models import Concept, Episode, Entity, RelationType
-from realmem.store import MemoryStore
-from realmem.providers.base import EmbeddingProvider
+from remind.models import Concept, Episode, Entity, RelationType
+from remind.store import MemoryStore
+from remind.providers.base import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

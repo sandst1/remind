@@ -5,7 +5,7 @@ import json
 import re
 from typing import Optional
 
-from realmem.providers.base import LLMProvider, EmbeddingProvider
+from remind.providers.base import LLMProvider, EmbeddingProvider
 
 
 class OpenAILLM(LLMProvider):

@@ -1,17 +1,17 @@
-# RealMem - Development Guide for AI Agents
+# Remind - Development Guide for AI Agents
 
-This guide is for AI agents developing **RealMem itself**. For using RealMem as a memory layer, see [docs/AGENTS.md](./docs/AGENTS.md).
+This guide is for AI agents developing **Remind itself**. For using Remind as a memory layer, see [docs/AGENTS.md](./docs/AGENTS.md).
 
 ## Project Overview
 
-RealMem is a generalization-capable memory layer for LLMs. It differs from simple RAG by extracting and maintaining **generalized concepts** from episodic experiences, mimicking how human memory consolidates specific events into abstract knowledge.
+Remind is a generalization-capable memory layer for LLMs. It differs from simple RAG by extracting and maintaining **generalized concepts** from episodic experiences, mimicking how human memory consolidates specific events into abstract knowledge.
 
 **Core insight**: Episodes → Consolidation (LLM-powered "sleep") → Concepts with relations
 
 ## Architecture
 
 ```
-src/realmem/
+src/remind/
 ├── models.py          # Data models (Concept, Episode, Entity, Relation)
 ├── store.py           # SQLite persistence layer
 ├── interface.py       # MemoryInterface - main public API
@@ -196,7 +196,7 @@ pytest -v                   # Verbose
 ```bash
 # Clone and install in development mode
 git clone <repo>
-cd realmem
+cd remind
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
@@ -209,10 +209,10 @@ cp .env.example .env
 pytest
 
 # Run CLI
-realmem --help
+remind --help
 
 # Run MCP server
-realmem-mcp --port 8765
+remind-mcp --port 8765
 ```
 
 ## Design Principles

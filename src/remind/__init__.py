@@ -1,5 +1,5 @@
 """
-RealMem: Generalization-capable memory layer for LLMs.
+Remind: Generalization-capable memory layer for LLMs.
 
 A hierarchical memory system featuring:
 - Episodic buffers for raw experiences
@@ -8,7 +8,7 @@ A hierarchical memory system featuring:
 - Spreading activation retrieval
 
 Basic usage:
-    from realmem import MemoryInterface, create_memory
+    from remind import MemoryInterface, create_memory
     
     # Quick setup with defaults
     memory = create_memory(llm_provider="anthropic", embedding_provider="openai")
@@ -30,7 +30,7 @@ Basic usage:
 __version__ = "0.1.0"
 
 # Core models
-from realmem.models import (
+from remind.models import (
     Concept,
     Episode,
     Relation,
@@ -44,28 +44,28 @@ from realmem.models import (
 )
 
 # Storage
-from realmem.store import (
+from remind.store import (
     MemoryStore,
     SQLiteMemoryStore,
 )
 
 # Main interface
-from realmem.interface import (
+from remind.interface import (
     MemoryInterface,
     create_memory,
 )
 
 # Retrieval
-from realmem.retrieval import (
+from remind.retrieval import (
     MemoryRetriever,
     ActivatedConcept,
 )
 
 # Consolidation
-from realmem.consolidation import Consolidator
+from remind.consolidation import Consolidator
 
 # Providers
-from realmem.providers import (
+from remind.providers import (
     LLMProvider,
     EmbeddingProvider,
     AnthropicLLM,

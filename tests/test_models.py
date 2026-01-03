@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime
 
-from realmem.models import (
+from remind.models import (
     Concept,
     Episode,
     Relation,

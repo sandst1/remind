@@ -1,5 +1,5 @@
 """
-RealMem MCP Server - Memory system exposed via Model Context Protocol.
+Remind MCP Server - Memory system exposed via Model Context Protocol.
 
 Single server instance supporting multiple databases. Each client specifies
 its database via URL query parameter.
@@ -7,10 +7,10 @@ its database via URL query parameter.
 Database path resolution:
     - Absolute path (/path/to/db.db or ~/path/to/db.db) - used as-is
     - Relative path (./memory.db or subdir/memory.db) - resolved against cwd
-    - Simple name (my-project) - resolved to ~/.realmem/my-project.db
+    - Simple name (my-project) - resolved to ~/.remind/my-project.db
 
 Usage:
-    realmem-mcp --port 8765
+    remind-mcp --port 8765
     Connect: http://127.0.0.1:8765/sse?db=my-project
 """
 
@@ -28,12 +28,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from realmem.interface import create_memory, MemoryInterface
+from remind.interface import create_memory, MemoryInterface
 
 logger = logging.getLogger(__name__)
 
 # Central directory for databases when using simple names
-REALMEM_DIR = Path.home() / ".realmem"
+REMIND_DIR = Path.home() / ".remind"
 
 # Context variable to track current database path per async context
 _current_db: ContextVar[str] = ContextVar('current_db', default='')
@@ -58,14 +58,14 @@ def resolve_db_path(db_spec: str) -> str:
     - Starts with "/" → absolute path, use as-is
     - Starts with "~" → expand home directory
     - Contains "/" → relative path, resolve against cwd
-    - Simple name → ~/.realmem/{name}.db
+    - Simple name → ~/.remind/{name}.db
     
     Examples:
         /absolute/path/memory.db → /absolute/path/memory.db
         ~/my-project/memory.db → /home/user/my-project/memory.db
         ./memory.db → /current/dir/memory.db
-        my-project → ~/.realmem/my-project.db
-        my-project.db → ~/.realmem/my-project.db
+        my-project → ~/.remind/my-project.db
+        my-project.db → ~/.remind/my-project.db
     """
     db_spec = db_spec.strip()
     
@@ -82,14 +82,14 @@ def resolve_db_path(db_spec: str) -> str:
         return str(Path(db_spec).resolve())
     
     # Simple name - use central directory
-    # Ensure the ~/.realmem directory exists
-    REALMEM_DIR.mkdir(parents=True, exist_ok=True)
+    # Ensure the ~/.remind directory exists
+    REMIND_DIR.mkdir(parents=True, exist_ok=True)
     
     # Add .db extension if not present
     if not db_spec.endswith(".db"):
         db_spec = f"{db_spec}.db"
     
-    return str(REALMEM_DIR / db_spec)
+    return str(REMIND_DIR / db_spec)
 
 
 async def get_memory_for_db(db_path: str) -> MemoryInterface:
@@ -148,7 +148,7 @@ async def tool_remember(
     This is a fast operation - no LLM calls. Entity extraction and
     type classification happen during consolidation.
     """
-    from realmem.models import EpisodeType
+    from remind.models import EpisodeType
     
     memory = await get_memory()
     
@@ -377,7 +377,7 @@ async def tool_entities(
     limit: int = 20,
 ) -> str:
     """List entities or show episodes mentioning a specific entity."""
-    from realmem.models import EntityType
+    from remind.models import EntityType
     
     memory = await get_memory()
     store = memory.store
@@ -436,7 +436,7 @@ async def tool_entities(
 
 async def tool_decisions(limit: int = 20) -> str:
     """Show decision-type episodes."""
-    from realmem.models import EpisodeType
+    from remind.models import EpisodeType
     
     memory = await get_memory()
     episodes = memory.get_episodes_by_type(EpisodeType.DECISION, limit=limit)
@@ -455,7 +455,7 @@ async def tool_decisions(limit: int = 20) -> str:
 
 async def tool_questions(limit: int = 20) -> str:
     """Show open questions and uncertainties."""
-    from realmem.models import EpisodeType
+    from remind.models import EpisodeType
     
     memory = await get_memory()
     episodes = memory.get_episodes_by_type(EpisodeType.QUESTION, limit=limit)
@@ -481,7 +481,7 @@ def create_mcp_server():
     from fastmcp import FastMCP
     
     mcp = FastMCP(
-        "RealMem",
+        "Remind",
         instructions="Generalization-capable memory layer for LLMs with episodic buffers, "
                      "semantic concept graphs, and spreading activation retrieval.",
     )
@@ -707,10 +707,10 @@ def run_server_sse(host: str = "127.0.0.1", port: int = 8765):
             while True:
                 message = await receive()
                 if message['type'] == 'lifespan.startup':
-                    logger.info(f"RealMem MCP server starting on {host}:{port}")
+                    logger.info(f"Remind MCP server starting on {host}:{port}")
                     await send({'type': 'lifespan.startup.complete'})
                 elif message['type'] == 'lifespan.shutdown':
-                    logger.info("RealMem MCP server shutting down")
+                    logger.info("Remind MCP server shutting down")
                     # Clean up session map
                     _session_db_map.clear()
                     await send({'type': 'lifespan.shutdown.complete'})
@@ -756,7 +756,7 @@ def run_server_sse(host: str = "127.0.0.1", port: int = 8765):
                         'type': 'http.response.body',
                         'body': b'Missing required query parameter: db\n\n'
                                b'Examples:\n'
-                               b'  /sse?db=my-project      -> ~/.realmem/my-project.db\n'
+                               b'  /sse?db=my-project      -> ~/.remind/my-project.db\n'
                                b'  /sse?db=./memory.db     -> ./memory.db (relative)\n'
                                b'  /sse?db=/full/path.db   -> /full/path.db (absolute)\n',
                     })
@@ -823,9 +823,9 @@ def run_server_sse(host: str = "127.0.0.1", port: int = 8765):
             finally:
                 _current_db.reset(token)
     
-    print(f"Starting RealMem MCP server (SSE) on {host}:{port}")
+    print(f"Starting Remind MCP server (SSE) on {host}:{port}")
     print(f"Database resolution:")
-    print(f"  ?db=my-project      → ~/.realmem/my-project.db")
+    print(f"  ?db=my-project      → ~/.remind/my-project.db")
     print(f"  ?db=./memory.db     → ./memory.db (relative to cwd)")
     print(f"  ?db=/full/path.db   → /full/path.db (absolute)")
     print(f"\nConnect with: http://{host}:{port}/sse?db=<name>")
@@ -838,16 +838,16 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="RealMem MCP Server - Memory system via Model Context Protocol",
+        description="Remind MCP Server - Memory system via Model Context Protocol",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Database path resolution:
-  my-project        → ~/.realmem/my-project.db (central storage)
+  my-project        → ~/.remind/my-project.db (central storage)
   ./memory.db       → ./memory.db (relative to cwd)
   /full/path.db     → /full/path.db (absolute)
 
 Examples:
-  realmem-mcp --port 8765
+  remind-mcp --port 8765
 """
     )
 

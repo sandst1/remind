@@ -1,10 +1,10 @@
-# RealMem - Instructions for AI Agents
+# Remind - Instructions for AI Agents
 
-RealMem is your external memory layer. Unlike your context window (which resets each conversation), RealMem persists knowledge across sessions and generalizes from specific experiences into abstract concepts.
+Remind is your external memory layer. Unlike your context window (which resets each conversation), Remind persists knowledge across sessions and generalizes from specific experiences into abstract concepts.
 
-**Important**: Do NOT use any built-in memory tools provided by your IDE or runtime (such as Cursor's default memory, Claude's memory features, etc.). Use the RealMem MCP tools instead.
+**Important**: Do NOT use any built-in memory tools provided by your IDE or runtime (such as Cursor's default memory, Claude's memory features, etc.). Use the Remind MCP tools instead.
 
-## Why RealMem?
+## Why Remind?
 
 - **Episodic → Semantic**: Raw experiences are consolidated into generalized concepts
 - **Associative Retrieval**: Queries activate related concepts through a semantic graph

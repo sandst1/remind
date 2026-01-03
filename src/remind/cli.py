@@ -1,14 +1,14 @@
 """
-CLI for RealMem - testing and experimentation interface.
+CLI for Remind - testing and experimentation interface.
 
 Commands:
-    realmem remember "text"     - Add an episode
-    realmem recall "query"      - Retrieve relevant concepts
-    realmem consolidate         - Run consolidation
-    realmem inspect [id]        - View concepts/relations
-    realmem stats               - Show memory statistics
-    realmem export <file>       - Export memory to JSON
-    realmem import <file>       - Import memory from JSON
+    remindremember "text"     - Add an episode
+    remindrecall "query"      - Retrieve relevant concepts
+    remindconsolidate         - Run consolidation
+    remindinspect [id]        - View concepts/relations
+    remindstats               - Show memory statistics
+    remindexport <file>       - Export memory to JSON
+    remindimport <file>       - Import memory from JSON
 """
 
 import asyncio
@@ -33,7 +33,7 @@ console = Console()
 
 def get_memory(db_path: str, llm: str, embedding: str):
     """Create a MemoryInterface with the given settings."""
-    from realmem.interface import create_memory
+    from remind.interface import create_memory
     return create_memory(
         llm_provider=llm,
         embedding_provider=embedding,
@@ -52,7 +52,7 @@ def run_async(coro):
 @click.option("--embedding", default=None, type=click.Choice(["openai", "azure_openai", "ollama"]))
 @click.pass_context
 def main(ctx, db: str, llm: str, embedding: str):
-    """RealMem - Generalization-capable memory for LLMs."""
+    """Remind - Generalization-capable memory for LLMs."""
     import os
     
     # Resolve providers (CLI > Env var > Default)
@@ -81,7 +81,7 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
     This is a fast operation - no LLM calls. Entity extraction and
     type classification happen during consolidation.
     """
-    from realmem.models import EpisodeType
+    from remind.models import EpisodeType
     
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
     
@@ -109,7 +109,7 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
     stats = memory.get_stats()
     unconsolidated = stats.get("unconsolidated_episodes", 0)
     if unconsolidated >= 5:
-        console.print(f"[yellow]→[/yellow] {unconsolidated} episodes pending consolidation. Run [bold]realmem consolidate[/bold]")
+        console.print(f"[yellow]→[/yellow] {unconsolidated} episodes pending consolidation. Run [bold]remindconsolidate[/bold]")
 
 
 @main.command()
@@ -126,8 +126,8 @@ def recall(ctx, query: str, k: int, context: Optional[str], entity: Optional[str
     Use --entity to retrieve by entity ID instead.
     
     Examples:
-        realmem recall "authentication issues"
-        realmem recall "auth" --entity file:src/auth.ts
+        remindrecall "authentication issues"
+        remindrecall "auth" --entity file:src/auth.ts
     """
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
     
@@ -248,7 +248,7 @@ def end_session(ctx):
 @click.pass_context
 def inspect(ctx, concept_id: Optional[str], episodes: bool, limit: int):
     """Inspect concepts or episodes."""
-    from realmem.store import SQLiteMemoryStore
+    from remind.store import SQLiteMemoryStore
     store = SQLiteMemoryStore(ctx.obj["db"])
     
     if episodes:
@@ -460,7 +460,7 @@ def reflect(ctx, prompt: str):
 @click.pass_context
 def search(ctx, query: str):
     """Search concepts by tag or keyword."""
-    from realmem.store import SQLiteMemoryStore
+    from remind.store import SQLiteMemoryStore
     store = SQLiteMemoryStore(ctx.obj["db"])
     
     concepts = store.get_all_concepts()
@@ -508,8 +508,8 @@ def search(ctx, query: str):
 @click.pass_context
 def entities(ctx, entity_id: Optional[str], entity_type: Optional[str]):
     """List entities or show details for a specific entity."""
-    from realmem.store import SQLiteMemoryStore
-    from realmem.models import EntityType
+    from remind.store import SQLiteMemoryStore
+    from remind.models import EntityType
     store = SQLiteMemoryStore(ctx.obj["db"])
     
     if entity_id:
@@ -578,7 +578,7 @@ def entities(ctx, entity_id: Optional[str], entity_type: Optional[str]):
 @click.pass_context
 def mentions(ctx, entity_id: str):
     """Show all episodes mentioning an entity."""
-    from realmem.store import SQLiteMemoryStore
+    from remind.store import SQLiteMemoryStore
     store = SQLiteMemoryStore(ctx.obj["db"])
     
     episodes = store.get_episodes_mentioning(entity_id, limit=50)
@@ -610,8 +610,8 @@ def mentions(ctx, entity_id: str):
 @click.pass_context
 def decisions(ctx, limit: int):
     """Show decision-type episodes."""
-    from realmem.store import SQLiteMemoryStore
-    from realmem.models import EpisodeType
+    from remind.store import SQLiteMemoryStore
+    from remind.models import EpisodeType
     store = SQLiteMemoryStore(ctx.obj["db"])
     
     episodes = store.get_episodes_by_type(EpisodeType.DECISION, limit=limit)
@@ -639,8 +639,8 @@ def decisions(ctx, limit: int):
 @click.pass_context
 def questions(ctx, limit: int):
     """Show question-type episodes (open questions, uncertainties)."""
-    from realmem.store import SQLiteMemoryStore
-    from realmem.models import EpisodeType
+    from remind.store import SQLiteMemoryStore
+    from remind.models import EpisodeType
     store = SQLiteMemoryStore(ctx.obj["db"])
     
     episodes = store.get_episodes_by_type(EpisodeType.QUESTION, limit=limit)

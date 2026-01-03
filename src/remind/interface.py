@@ -1,7 +1,7 @@
 """
 MemoryInterface - The unified API for the memory system.
 
-This is the main entry point for applications integrating RealMem.
+This is the main entry point for applications integrating Remind.
 It provides a simple interface for:
 - remember() - log experiences/interactions
 - recall() - retrieve relevant concepts
@@ -14,15 +14,15 @@ from pathlib import Path
 import logging
 import json
 
-from realmem.models import (
+from remind.models import (
     Episode, Concept, ConsolidationResult, 
     Entity, EpisodeType,
 )
-from realmem.store import MemoryStore, SQLiteMemoryStore
-from realmem.providers.base import LLMProvider, EmbeddingProvider
-from realmem.consolidation import Consolidator
-from realmem.retrieval import MemoryRetriever, ActivatedConcept
-from realmem.extraction import EntityExtractor
+from remind.store import MemoryStore, SQLiteMemoryStore
+from remind.providers.base import LLMProvider, EmbeddingProvider
+from remind.consolidation import Consolidator
+from remind.retrieval import MemoryRetriever, ActivatedConcept
+from remind.extraction import EntityExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,7 @@ class MemoryInterface:
                 # Ensure entity exists
                 if not self.store.get_entity(entity_id):
                     type_str, name = Entity.parse_id(entity_id)
-                    from realmem.models import EntityType
+                    from remind.models import EntityType
                     try:
                         etype = EntityType(type_str)
                     except ValueError:
@@ -486,7 +486,7 @@ def create_memory(
     embedding_provider = embedding_provider or os.environ.get("EMBEDDING_PROVIDER", "openai")
     
     # Import providers
-    from realmem.providers import (
+    from remind.providers import (
         AnthropicLLM, OpenAILLM, OllamaLLM, AzureOpenAILLM,
         OpenAIEmbedding, OllamaEmbedding, AzureOpenAIEmbedding,
     )

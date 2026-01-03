@@ -1,2 +1,2 @@
-"""Tests for RealMem."""
+"""Tests for Remind."""
 

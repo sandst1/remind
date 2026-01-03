@@ -6,7 +6,7 @@ from typing import Optional
 
 import httpx
 
-from realmem.providers.base import LLMProvider, EmbeddingProvider
+from remind.providers.base import LLMProvider, EmbeddingProvider
 
 
 class OllamaLLM(LLMProvider):

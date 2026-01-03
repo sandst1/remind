@@ -16,10 +16,10 @@ from typing import Optional
 import json
 import logging
 
-from realmem.models import Concept, Episode, Relation, RelationType, ConsolidationResult, ExtractionResult
-from realmem.store import MemoryStore
-from realmem.providers.base import LLMProvider, EmbeddingProvider
-from realmem.extraction import EntityExtractor
+from remind.models import Concept, Episode, Relation, RelationType, ConsolidationResult, ExtractionResult
+from remind.store import MemoryStore
+from remind.providers.base import LLMProvider, EmbeddingProvider
+from remind.extraction import EntityExtractor
 
 logger = logging.getLogger(__name__)
 

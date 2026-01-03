@@ -11,12 +11,12 @@ import logging
 import re
 from typing import Optional
 
-from realmem.models import (
+from remind.models import (
     Episode, Entity, EntityType, EpisodeType,
     ExtractionResult,
 )
-from realmem.store import MemoryStore
-from realmem.providers.base import LLMProvider
+from remind.store import MemoryStore
+from remind.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 

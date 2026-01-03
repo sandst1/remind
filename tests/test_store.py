@@ -4,8 +4,8 @@ import pytest
 import tempfile
 import os
 
-from realmem.models import Concept, Episode, Relation, RelationType
-from realmem.store import SQLiteMemoryStore, cosine_similarity
+from remind.models import Concept, Episode, Relation, RelationType
+from remind.store import SQLiteMemoryStore, cosine_similarity
 
 
 class TestCosineSimilarity:

@@ -8,7 +8,7 @@ import logging
 import numpy as np
 from pathlib import Path
 
-from realmem.models import (
+from remind.models import (
     Concept, Episode, Relation, RelationType,
     Entity, EntityType, EpisodeType,
 )
