@@ -47,20 +47,24 @@ def run_async(coro):
 
 
 @click.group()
-@click.option("--db", default="memory.db", help="Path to memory database")
+@click.option("--db", default="memory", help="Database name (stored in ~/.remind/)")
 @click.option("--llm", default=None, type=click.Choice(["anthropic", "openai", "azure_openai", "ollama"]))
 @click.option("--embedding", default=None, type=click.Choice(["openai", "azure_openai", "ollama"]))
 @click.pass_context
 def main(ctx, db: str, llm: str, embedding: str):
     """Remind - Generalization-capable memory for LLMs."""
     import os
-    
+    from remind.mcp_server import resolve_db_path
+
     # Resolve providers (CLI > Env var > Default)
     llm = llm or os.environ.get("LLM_PROVIDER", "openai")
     embedding = embedding or os.environ.get("EMBEDDING_PROVIDER", "openai")
-    
+
+    # Resolve database name to path in ~/.remind/
+    db_path = resolve_db_path(db)
+
     ctx.ensure_object(dict)
-    ctx.obj["db"] = db
+    ctx.obj["db"] = db_path
     ctx.obj["llm"] = llm
     ctx.obj["embedding"] = embedding
 

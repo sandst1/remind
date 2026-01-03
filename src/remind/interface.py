@@ -464,23 +464,27 @@ and what gaps might exist in your understanding."""
 def create_memory(
     llm_provider: Optional[str] = None,
     embedding_provider: Optional[str] = None,
-    db_path: str = "memory.db",
+    db_path: str = "memory",
     **kwargs,
 ) -> MemoryInterface:
     """
     Factory function to create a MemoryInterface with sensible defaults.
-    
+
     Args:
         llm_provider: "anthropic", "openai", "azure_openai", or "ollama"
         embedding_provider: "openai", "azure_openai", or "ollama"
-        db_path: Path to SQLite database
+        db_path: Database name (stored in ~/.remind/)
         **kwargs: Additional arguments passed to MemoryInterface
-        
+
     Returns:
         Configured MemoryInterface
     """
     import os
-    
+    from remind.mcp_server import resolve_db_path
+
+    # Resolve database name to full path
+    db_path = resolve_db_path(db_path)
+
     # Resolve providers from env vars if not provided
     llm_provider = llm_provider or os.environ.get("LLM_PROVIDER", "anthropic")
     embedding_provider = embedding_provider or os.environ.get("EMBEDDING_PROVIDER", "openai")

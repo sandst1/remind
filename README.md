@@ -193,18 +193,13 @@ Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
 }
 ```
 
-#### Database Path Resolution
+#### Database Names
 
-The `db` parameter supports multiple formats:
+The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`:
 
-| Format | Resolves To | Example |
-|--------|-------------|---------|
-| Simple name | `~/.remind/{name}.db` | `my-project` → `~/.remind/my-project.db` |
-| Relative path | Resolved against cwd | `./memory.db` → `/current/dir/memory.db` |
-| Absolute path | Used as-is | `/path/to/db.db` → `/path/to/db.db` |
-| Home path | Expanded | `~/data/mem.db` → `/home/user/data/mem.db` |
-
-**Recommended**: Use simple names (e.g., `my-project`) for portability. All databases are stored in `~/.remind/`.
+```
+my-project → ~/.remind/my-project.db
+```
 
 Each project can have its own database. A single MCP server instance (SSE mode) can serve multiple projects with different databases.
 
@@ -290,10 +285,14 @@ embedding = OllamaEmbedding(model="nomic-embed-text")
 
 ## Database
 
-By default, Remind uses SQLite for storage (`memory.db`). This is simple and portable.
+Remind uses SQLite for storage. All databases are stored in `~/.remind/`. By default, the database is `~/.remind/memory.db`.
 
 ```python
-memory = create_memory(db_path="my-memory.db")
+# Uses ~/.remind/memory.db
+memory = create_memory()
+
+# Uses ~/.remind/my-project.db
+memory = create_memory(db_path="my-project")
 ```
 
 ## License

@@ -51,45 +51,36 @@ DEFAULT_LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai")
 DEFAULT_EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "openai")
 
 
-def resolve_db_path(db_spec: str) -> str:
-    """Resolve a database specification to an absolute path.
-    
-    Resolution rules:
-    - Starts with "/" → absolute path, use as-is
-    - Starts with "~" → expand home directory
-    - Contains "/" → relative path, resolve against cwd
-    - Simple name → ~/.remind/{name}.db
-    
+def resolve_db_path(db_name: str) -> str:
+    """Resolve a database name to ~/.remind/{name}.db.
+
+    Only simple names are accepted. Paths are not allowed.
+
     Examples:
-        /absolute/path/memory.db → /absolute/path/memory.db
-        ~/my-project/memory.db → /home/user/my-project/memory.db
-        ./memory.db → /current/dir/memory.db
         my-project → ~/.remind/my-project.db
         my-project.db → ~/.remind/my-project.db
+
+    Raises:
+        ValueError: If the name contains path separators or starts with special characters.
     """
-    db_spec = db_spec.strip()
-    
-    if db_spec.startswith("~"):
-        # Expand home directory
-        return str(Path(db_spec).expanduser().resolve())
-    
-    if db_spec.startswith("/"):
-        # Absolute path
-        return str(Path(db_spec).resolve())
-    
-    if "/" in db_spec:
-        # Relative path - resolve against cwd
-        return str(Path(db_spec).resolve())
-    
-    # Simple name - use central directory
+    db_name = db_name.strip()
+
+    # Reject paths - only simple names allowed
+    if "/" in db_name or db_name.startswith("~") or db_name.startswith("."):
+        raise ValueError(
+            f"Invalid database name '{db_name}'. "
+            "Only simple names are allowed (e.g., 'my-project'). "
+            "Paths are not supported."
+        )
+
     # Ensure the ~/.remind directory exists
     REMIND_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     # Add .db extension if not present
-    if not db_spec.endswith(".db"):
-        db_spec = f"{db_spec}.db"
-    
-    return str(REMIND_DIR / db_spec)
+    if not db_name.endswith(".db"):
+        db_name = f"{db_name}.db"
+
+    return str(REMIND_DIR / db_name)
 
 
 async def get_memory_for_db(db_path: str) -> MemoryInterface:
