@@ -482,8 +482,9 @@ def create_memory(
     import os
     from remind.mcp_server import resolve_db_path
 
-    # Resolve database name to full path
-    db_path = resolve_db_path(db_path)
+    # Resolve database name to full path (skip if already absolute)
+    if not os.path.isabs(db_path):
+        db_path = resolve_db_path(db_path)
 
     # Resolve providers from env vars if not provided
     llm_provider = llm_provider or os.environ.get("LLM_PROVIDER", "anthropic")

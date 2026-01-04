@@ -84,9 +84,10 @@ def resolve_db_path(db_name: str) -> str:
 
 
 async def get_memory_for_db(db_path: str) -> MemoryInterface:
-    """Get or create a MemoryInterface for the given database path."""
-    # Resolve path using our resolution rules
-    db_path = resolve_db_path(db_path)
+    """Get or create a MemoryInterface for the given database path.
+
+    Note: db_path should already be resolved via resolve_db_path() by the caller.
+    """
     
     # Get or create lock for this db
     async with _global_lock:

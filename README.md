@@ -41,6 +41,23 @@ Generalization-capable memory layer for LLMs. Unlike simple RAG systems that sto
       └─────────────────┘      └─────────────────┘
 ```
 
+## Quick Run (No Install)
+
+Using [uv](https://docs.astral.sh/uv/), you can run Remind directly without installing:
+
+```bash
+# Run CLI commands
+uv run remind remember "Some experience"
+uv run remind consolidate
+uv run remind recall "What do I know?"
+
+# Run MCP server
+uv run remind-mcp --port 8765
+
+# With local Ollama (no API keys needed)
+uv run remind --llm ollama --embedding ollama remember "Some experience"
+```
+
 ## Installation
 
 ### Global Install (Recommended for CLI usage)
