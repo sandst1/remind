@@ -139,6 +139,8 @@ async def tool_remember(
     
     This is a fast operation - no LLM calls. Entity extraction and
     type classification happen during consolidation.
+    
+    Auto-consolidation triggers when episode threshold (default: 10) is reached.
     """
     from remind.models import EpisodeType
     
@@ -167,9 +169,6 @@ async def tool_remember(
         entities=entity_list,
     )
     
-    stats = memory.get_stats()
-    pending = stats.get("unconsolidated_episodes", 0)
-    
     lines = [f"Remembered as episode {episode_id}"]
     
     if ep_type:
@@ -177,8 +176,22 @@ async def tool_remember(
     if entity_list:
         lines.append(f"  Entities: {', '.join(entity_list)}")
     
-    if pending >= 5:
-        lines.append(f"\n({pending} episodes pending consolidation)")
+    # Auto-consolidate if threshold reached and auto_consolidate is enabled
+    if memory.auto_consolidate and memory.should_consolidate:
+        result = await memory.consolidate()
+        lines.append("")
+        lines.append("Auto-consolidation triggered:")
+        lines.append(f"  Episodes processed: {result.episodes_processed}")
+        lines.append(f"  Concepts created: {result.concepts_created}")
+        lines.append(f"  Concepts updated: {result.concepts_updated}")
+        if result.contradictions_found:
+            lines.append(f"  Contradictions found: {result.contradictions_found}")
+    else:
+        # Show pending count if not consolidating
+        stats = memory.get_stats()
+        pending = stats.get("unconsolidated_episodes", 0)
+        if pending >= 5:
+            lines.append(f"\n({pending} episodes pending consolidation)")
     
     return "\n".join(lines)
 
@@ -254,15 +267,12 @@ async def tool_inspect(
         lines = [header]
         for ep in episodes:
             status = "✓" if ep.consolidated else "pending"
-            content = ep.content[:70] + "..." if len(ep.content) > 70 else ep.content
             timestamp = ep.timestamp.strftime('%Y-%m-%d %H:%M:%S')
             ep_type = ep.episode_type.value
             lines.append(f"  [{ep.id}] {timestamp} ({ep_type}, {status})")
-            lines.append(f"      {content}")
+            lines.append(f"      {ep.content}")
             if ep.entity_ids:
-                entities = ", ".join(ep.entity_ids[:3])
-                if len(ep.entity_ids) > 3:
-                    entities += f" +{len(ep.entity_ids) - 3}"
+                entities = ", ".join(ep.entity_ids)
                 lines.append(f"      → entities: {entities}")
         return "\n".join(lines)
     
@@ -281,15 +291,15 @@ async def tool_inspect(
         if concept.conditions:
             lines.append(f"  Conditions: {concept.conditions}")
         if concept.exceptions:
-            lines.append(f"  Exceptions: {', '.join(concept.exceptions[:5])}")
+            lines.append(f"  Exceptions: {', '.join(concept.exceptions)}")
         if concept.tags:
             lines.append(f"  Tags: {', '.join(concept.tags)}")
         
         if concept.relations:
             lines.append(f"  Relations ({len(concept.relations)}):")
-            for rel in concept.relations[:10]:
+            for rel in concept.relations:
                 target = store.get_concept(rel.target_id)
-                target_summary = target.summary[:50] + "..." if target else "[unknown]"
+                target_summary = target.summary if target else "[unknown]"
                 lines.append(f"    {rel.type.value} → [{rel.target_id}] {target_summary}")
         
         return "\n".join(lines)
@@ -301,10 +311,9 @@ async def tool_inspect(
     
     lines = [f"All Concepts ({len(concepts)}):"]
     for c in concepts[:limit]:
-        summary = c.summary[:60] + "..." if len(c.summary) > 60 else c.summary
-        tags = f" [{', '.join(c.tags[:3])}]" if c.tags else ""
+        tags = f" [{', '.join(c.tags)}]" if c.tags else ""
         lines.append(f"  [{c.id}] (conf: {c.confidence:.2f}, n={c.instance_count}){tags}")
-        lines.append(f"      {summary}")
+        lines.append(f"      {c.summary}")
     
     if len(concepts) > limit:
         lines.append(f"  ... and {len(concepts) - limit} more")
@@ -382,6 +391,9 @@ def create_mcp_server():
         
         This is a fast operation - no LLM calls. Entity extraction and type
         classification happen during consolidation.
+        
+        Auto-consolidation: When the episode threshold (default: 10) is reached,
+        consolidation runs automatically after this call.
         
         Use this to log important information that should be remembered across sessions:
         - User preferences and opinions
