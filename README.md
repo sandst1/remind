@@ -182,6 +182,19 @@ remind import memory-backup.json
 # Reflect
 remind reflect "What are the key themes in my memory?"
 
+# Entity management
+remind entities                  # List all entities
+remind entities file:src/auth.ts # Show details for a specific entity
+remind mentions file:src/auth.ts # Show episodes mentioning an entity
+
+# Episode filtering
+remind decisions                 # Show decision-type episodes
+remind questions                 # Show open questions/uncertainties
+remind search "keyword"          # Search concepts by keyword
+
+# Session management
+remind end-session               # End session and consolidate pending episodes
+
 # Use different providers
 remind --llm ollama --embedding ollama remember "Local-only experience"
 ```
@@ -224,11 +237,8 @@ Each project can have its own database. A single MCP server instance (SSE mode) 
 - `remember` - Store experiences/observations
 - `recall` - Retrieve relevant memories
 - `consolidate` - Process episodes into concepts
-- `entities` - List/inspect entities
-- `decisions` / `questions` - View by episode type
 - `inspect` - View concepts or episodes
 - `stats` - Memory statistics
-- `reflect` - Meta-cognitive analysis
 
 **Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
 

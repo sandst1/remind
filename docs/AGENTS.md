@@ -18,12 +18,8 @@ Remind is your external memory layer. Unlike your context window (which resets e
 | `remember` | Store an experience (fast, no LLM call) |
 | `recall` | Retrieve relevant memories |
 | `consolidate` | Extract entities + process episodes into concepts |
-| `entities` | List/inspect entities (files, people, concepts) |
-| `decisions` | Show decision-type episodes |
-| `questions` | Show open questions |
-| `stats` | Memory statistics |
 | `inspect` | View concepts or episodes |
-| `reflect` | Meta-cognitive analysis |
+| `stats` | Memory statistics |
 
 ---
 
@@ -102,17 +98,13 @@ consolidate(force=True)  # Even with few episodes
 | `meta` | Thinking patterns, processes |
 | `preference` | User preferences, values |
 
-Query by type:
-```
-decisions()   # Show all decisions
-questions()   # Show open questions
-```
+Use `inspect(show_episodes=True)` to view recent episodes of all types.
 
 ---
 
 ## Entity Types
 
-Entities are automatically extracted. Format: `type:name`
+Entities are automatically extracted during consolidation. Format: `type:name`
 
 | Type | Examples |
 |------|----------|
@@ -124,12 +116,7 @@ Entities are automatically extracted. Format: `type:name`
 | `tool` | `tool:redis` |
 | `project` | `project:backend-api` |
 
-Query entities:
-```
-entities()                        # List all with mention counts
-entities(entity_type="file")      # Filter by type
-entities(entity_id="file:auth.ts") # Show details + episodes
-```
+Use `recall(entity="file:src/auth.ts")` to retrieve memories about a specific entity.
 
 ---
 
@@ -150,13 +137,6 @@ stats()
 ```
 
 Shows: concept/episode/entity counts, consolidation status, type distributions.
-
-### reflect - Meta-cognitive Analysis
-
-```
-reflect(prompt="What do I know about this user's preferences?")
-reflect(prompt="Are there any contradictions in my memory?")
-```
 
 ---
 
@@ -232,4 +212,3 @@ Each concept has a confidence score (0.0-1.0) based on how many episodes support
 5. **Use entity recall**: When user mentions a file/person, recall by entity
 6. **Consolidate periodically**: Run `consolidate()` at natural boundaries
 7. **Handle contradictions**: When you notice conflicting information, remember the update and consolidate - it will flag the contradiction
-8. **Periodic reflection**: Occasionally run `reflect("What important things might I be missing?")`
