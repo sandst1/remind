@@ -10,6 +10,9 @@ Generalization-capable memory layer for LLMs. Unlike simple RAG systems that sto
 - **Spreading Activation Retrieval**: Queries activate not just matching concepts but related ones through the graph
 - **Multi-Provider Support**: Works with Anthropic, OpenAI, Azure OpenAI, and Ollama (local)
 
+![Architecture Diagram](docs/architecture.png)
+
+
 ## Architecture
 
 ```
