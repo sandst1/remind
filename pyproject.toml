@@ -1,5 +1,5 @@
 [project]
-name = "remind"
+name = "remind-mcp"
 version = "0.1.0"
 description = "Generalization-capable memory layer for LLMs with episodic buffers, semantic graphs, and spreading activation retrieval"
 readme = "README.md"
