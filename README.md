@@ -15,7 +15,7 @@ Generalization-capable memory layer for LLMs. Unlike simple RAG systems that sto
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    LLM Provider (Abstract)                      │
-│              (Claude / OpenAI / Ollama / vLLM)                  │
+│              (Claude / OpenAI / Ollama )                        │
 └─────────────────────┬───────────────────────┬───────────────────┘
                       │                       │
                  read/query              write/update
