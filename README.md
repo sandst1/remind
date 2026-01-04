@@ -8,14 +8,14 @@ Generalization-capable memory layer for LLMs. Unlike simple RAG systems that sto
 - **LLM-Powered Consolidation**: Episodes are processed into generalized concepts (like "sleeping" consolidates memory)
 - **Semantic Concept Graph**: Concepts have typed relations (implies, contradicts, specializes, etc.)
 - **Spreading Activation Retrieval**: Queries activate not just matching concepts but related ones through the graph
-- **Multi-Provider Support**: Works with Anthropic, OpenAI, and Ollama (local)
+- **Multi-Provider Support**: Works with Anthropic, OpenAI, Azure OpenAI, and Ollama (local)
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    LLM Provider (Abstract)                      │
-│              (Claude / OpenAI / Ollama )                        │
+│         (Claude / OpenAI / Azure OpenAI / Ollama)               │
 └─────────────────────┬───────────────────────┬───────────────────┘
                       │                       │
                  read/query              write/update
@@ -87,32 +87,66 @@ cp .env.example .env
 # Edit .env with your API keys
 ```
 
-### Required Environment Variables
-
-| Variable | Required For | Description |
-|----------|--------------|-------------|
-| `ANTHROPIC_API_KEY` | `--llm anthropic` | Claude API key from [Anthropic Console](https://console.anthropic.com/) |
-| `OPENAI_API_KEY` | `--llm openai` or `--embedding openai` | OpenAI API key from [OpenAI Platform](https://platform.openai.com/api-keys) |
-
-### Provider Combinations
-
-| Setup | Command | Requirements |
-|-------|---------|--------------|
-| **Cloud (recommended)** | `--llm anthropic --embedding openai` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` |
-| **Fully Local** | `--llm ollama --embedding ollama` | [Ollama](https://ollama.ai/) with `llama3.2` and `nomic-embed-text` |
-| **Hybrid** | `--llm ollama --embedding openai` | `OPENAI_API_KEY`, Ollama running |
-| **OpenAI Only** | `--llm openai --embedding openai` | `OPENAI_API_KEY` |
-
-### Using Ollama (Local Models)
+### Using OpenAI
 
 ```bash
-# Install Ollama from https://ollama.ai/
-# Then pull the required models:
-ollama pull llama3.2           # For LLM operations
-ollama pull nomic-embed-text   # For embeddings
+# Required
+OPENAI_API_KEY=sk-...
 
-# Use with Remind:
-remind --llm ollama --embedding ollama remember "Some experience"
+# Provider selection
+LLM_PROVIDER=openai
+EMBEDDING_PROVIDER=openai
+```
+
+OpenAI can be used for both LLM and embeddings.
+
+### Using Anthropic (Claude)
+
+```bash
+# Required
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Provider selection
+LLM_PROVIDER=anthropic
+EMBEDDING_PROVIDER=openai  # Anthropic has no embeddings, use OpenAI or Ollama
+```
+
+Anthropic provides LLM only. Pair with OpenAI or Ollama for embeddings.
+
+### Using Azure OpenAI
+
+```bash
+# Required
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_API_BASE_URL=https://your-resource.openai.azure.com
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME=text-embedding-3-small
+
+# Provider selection
+LLM_PROVIDER=azure_openai
+EMBEDDING_PROVIDER=azure_openai
+```
+
+### Using Ollama (Local)
+
+No API keys required. Install [Ollama](https://ollama.ai/) and pull models:
+
+```bash
+ollama pull llama3.2           # For LLM
+ollama pull nomic-embed-text   # For embeddings
+```
+
+Optional configuration:
+
+```bash
+OLLAMA_URL=http://localhost:11434
+OLLAMA_LLM_MODEL=llama3.2
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+
+# Provider selection
+LLM_PROVIDER=ollama
+EMBEDDING_PROVIDER=ollama
 ```
 
 ## Quick Start
@@ -129,8 +163,8 @@ load_dotenv()  # Load .env file
 async def main():
     # Create memory with default providers (openai for both LLM and embeddings)
     memory = create_memory(
-        llm_provider="openai",          # or "anthropic", "ollama"
-        embedding_provider="openai",    # or "ollama"
+        llm_provider="openai",          # or "anthropic", "azure_openai", "ollama"
+        embedding_provider="openai",    # or "azure_openai", "ollama"
     )
     
     # Log experiences (episodes) - fast, no LLM calls
@@ -189,7 +223,10 @@ remind search "keyword"          # Search concepts by keyword
 remind end-session               # End session and consolidate pending episodes
 
 # Use different providers
-remind --llm ollama --embedding ollama remember "Local-only experience"
+remind --llm openai --embedding openai remember "..."
+remind --llm anthropic --embedding openai remember "..."
+remind --llm azure_openai --embedding azure_openai remember "..."
+remind --llm ollama --embedding ollama remember "..."
 ```
 
 ### MCP Server (for AI Agents)
@@ -294,6 +331,13 @@ llm = AnthropicLLM(model="claude-sonnet-4-20250514")
 from remind import OpenAILLM, OpenAIEmbedding
 llm = OpenAILLM(model="gpt-4o")
 embedding = OpenAIEmbedding(model="text-embedding-3-small")
+```
+
+### Azure OpenAI
+```python
+from remind import AzureOpenAILLM, AzureOpenAIEmbedding
+llm = AzureOpenAILLM()  # Uses AZURE_OPENAI_* env vars
+embedding = AzureOpenAIEmbedding()
 ```
 
 ### Ollama (Local)
