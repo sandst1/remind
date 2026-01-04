@@ -95,7 +95,7 @@ ollama pull llama3.2           # For LLM operations
 ollama pull nomic-embed-text   # For embeddings
 
 # Use with Remind:
-remind--llm ollama --embedding ollama remember "Some experience"
+remind --llm ollama --embedding ollama remember "Some experience"
 ```
 
 ## Quick Start
@@ -105,7 +105,7 @@ remind--llm ollama --embedding ollama remember "Some experience"
 ```python
 import asyncio
 from dotenv import load_dotenv
-from remindimport create_memory
+from remind import create_memory
 
 load_dotenv()  # Load .env file
 
@@ -142,31 +142,31 @@ asyncio.run(main())
 
 ```bash
 # Add episodes
-remindremember "User likes Python and Rust"
-remindremember "User works on backend systems"
+remind remember "User likes Python and Rust"
+remind remember "User works on backend systems"
 
 # Run consolidation
-remindconsolidate
+remind consolidate
 
 # Query memory
-remindrecall "What languages does the user know?"
+remind recall "What languages does the user know?"
 
 # Inspect concepts
-remindinspect
-remindinspect <concept-id>
+remind inspect
+remind inspect <concept-id>
 
 # Show statistics
-remindstats
+remind stats
 
 # Export/Import
-remindexport memory-backup.json
-remindimport memory-backup.json
+remind export memory-backup.json
+remind import memory-backup.json
 
 # Reflect
-remindreflect "What are the key themes in my memory?"
+remind reflect "What are the key themes in my memory?"
 
 # Use different providers
-remind--llm ollama --embedding ollama remember "Local-only experience"
+remind --llm ollama --embedding ollama remember "Local-only experience"
 ```
 
 ### MCP Server (for AI Agents)
@@ -265,20 +265,20 @@ Retrieval that goes beyond keyword matching:
 
 ### Anthropic (Claude)
 ```python
-from remindimport AnthropicLLM
+from remind import AnthropicLLM
 llm = AnthropicLLM(model="claude-sonnet-4-20250514")
 ```
 
 ### OpenAI
 ```python
-from remindimport OpenAILLM, OpenAIEmbedding
+from remind import OpenAILLM, OpenAIEmbedding
 llm = OpenAILLM(model="gpt-4o")
 embedding = OpenAIEmbedding(model="text-embedding-3-small")
 ```
 
 ### Ollama (Local)
 ```python
-from remindimport OllamaLLM, OllamaEmbedding
+from remind import OllamaLLM, OllamaEmbedding
 llm = OllamaLLM(model="llama3.2")
 embedding = OllamaEmbedding(model="nomic-embed-text")
 ```
