@@ -41,43 +41,6 @@ Generalization-capable memory layer for LLMs. Unlike simple RAG systems that sto
       └─────────────────┘      └─────────────────┘
 ```
 
-## Quick Run (No Install)
-
-Using [uv](https://docs.astral.sh/uv/), you can run Remind directly without installing:
-
-```bash
-# Run CLI commands
-uv run remind remember "Some experience"
-uv run remind consolidate
-uv run remind recall "What do I know?"
-
-# Run MCP server
-uv run remind-mcp --port 8765
-
-# With local Ollama (no API keys needed)
-uv run remind --llm ollama --embedding ollama remember "Some experience"
-```
-
-## Installation
-
-### Global Install (Recommended for CLI usage)
-
-```bash
-# Using pipx (creates isolated env, command available globally)
-pipx install .
-
-# Or for development:
-pipx install -e .
-```
-
-### Development Install (in a virtual environment)
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e .
-```
-
 ## Environment Setup
 
 Copy the example environment file and add your API keys:
@@ -149,43 +112,52 @@ LLM_PROVIDER=ollama
 EMBEDDING_PROVIDER=ollama
 ```
 
-## Quick Start
+## Usage
 
-### Python API
+### MCP Server (for AI Agents)
 
-```python
-import asyncio
-from dotenv import load_dotenv
-from remind import create_memory
+Remind can run as an MCP (Model Context Protocol) server, allowing AI agents in IDEs like Cursor to use it as their memory system.
 
-load_dotenv()  # Load .env file
+Using [uv](https://docs.astral.sh/uv/), no installation needed:
 
-async def main():
-    # Create memory with default providers (openai for both LLM and embeddings)
-    memory = create_memory(
-        llm_provider="openai",          # or "anthropic", "azure_openai", "ollama"
-        embedding_provider="openai",    # or "azure_openai", "ollama"
-    )
-    
-    # Log experiences (episodes) - fast, no LLM calls
-    memory.remember("User mentioned they prefer Python for backend work")
-    memory.remember("User is building a distributed system")
-    memory.remember("User values type safety")
-    
-    # Run consolidation - this is where LLM work happens:
-    # 1. Extracts entities and classifies episode types
-    # 2. Generalizes episodes into concepts
-    result = await memory.consolidate(force=True)
-    print(f"Created {result.concepts_created} concepts")
-    
-    # Retrieve relevant concepts
-    context = await memory.recall("What programming preferences?")
-    print(context)
-
-asyncio.run(main())
+```bash
+uv run remind-mcp --port 8765
 ```
 
+Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "remind": {
+      "url": "http://127.0.0.1:8765/sse?db=my-project"
+    }
+  }
+}
+```
+
+The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`. Each project can have its own database.
+
+**Available MCP Tools:**
+- `remember` - Store experiences/observations
+- `recall` - Retrieve relevant memories
+- `consolidate` - Process episodes into concepts
+- `inspect` - View concepts or episodes
+- `stats` - Memory statistics
+
+**Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
+
 ### CLI
+
+Run with [uv](https://docs.astral.sh/uv/) (no install needed):
+
+```bash
+uv run remind remember "User likes Python and Rust"
+uv run remind consolidate
+uv run remind recall "What languages does the user know?"
+```
+
+Or install globally for a `remind` command (see [Installation](#installation)).
 
 ```bash
 # Add episodes
@@ -229,48 +201,36 @@ remind --llm azure_openai --embedding azure_openai remember "..."
 remind --llm ollama --embedding ollama remember "..."
 ```
 
-### MCP Server (for AI Agents)
+### Python API
 
-Remind can run as an MCP (Model Context Protocol) server, allowing AI agents in IDEs like Cursor to use it as their memory system.
+```python
+import asyncio
+from dotenv import load_dotenv
+from remind import create_memory
 
-```bash
-# Start the MCP server
-remind-mcp --port 8765
+load_dotenv()  # Load .env file
 
-# With custom providers
-remind-mcp --port 8765 --llm anthropic --embedding openai
+async def main():
+    memory = create_memory(
+        llm_provider="openai",          # or "anthropic", "azure_openai", "ollama"
+        embedding_provider="openai",    # or "azure_openai", "ollama"
+    )
+
+    # Log experiences (episodes) - fast, no LLM calls
+    memory.remember("User mentioned they prefer Python for backend work")
+    memory.remember("User is building a distributed system")
+    memory.remember("User values type safety")
+
+    # Run consolidation - this is where LLM work happens
+    result = await memory.consolidate(force=True)
+    print(f"Created {result.concepts_created} concepts")
+
+    # Retrieve relevant concepts
+    context = await memory.recall("What programming preferences?")
+    print(context)
+
+asyncio.run(main())
 ```
-
-Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "remind": {
-      "url": "http://127.0.0.1:8765/sse?db=my-project"
-    }
-  }
-}
-```
-
-#### Database Names
-
-The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`:
-
-```
-my-project → ~/.remind/my-project.db
-```
-
-Each project can have its own database. A single MCP server instance (SSE mode) can serve multiple projects with different databases.
-
-**Available MCP Tools:**
-- `remember` - Store experiences/observations
-- `recall` - Retrieve relevant memories
-- `consolidate` - Process episodes into concepts
-- `inspect` - View concepts or episodes
-- `stats` - Memory statistics
-
-**Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
 
 ## Core Concepts
 
@@ -318,35 +278,6 @@ Retrieval that goes beyond keyword matching:
 3. Activation spreads with decay over multiple hops
 4. Highest-activation concepts are returned
 
-## Provider Configuration
-
-### Anthropic (Claude)
-```python
-from remind import AnthropicLLM
-llm = AnthropicLLM(model="claude-sonnet-4-20250514")
-```
-
-### OpenAI
-```python
-from remind import OpenAILLM, OpenAIEmbedding
-llm = OpenAILLM(model="gpt-4o")
-embedding = OpenAIEmbedding(model="text-embedding-3-small")
-```
-
-### Azure OpenAI
-```python
-from remind import AzureOpenAILLM, AzureOpenAIEmbedding
-llm = AzureOpenAILLM()  # Uses AZURE_OPENAI_* env vars
-embedding = AzureOpenAIEmbedding()
-```
-
-### Ollama (Local)
-```python
-from remind import OllamaLLM, OllamaEmbedding
-llm = OllamaLLM(model="llama3.2")
-embedding = OllamaEmbedding(model="nomic-embed-text")
-```
-
 ## Database
 
 Remind uses SQLite for storage. All databases are stored in `~/.remind/`. By default, the database is `~/.remind/memory.db`.
@@ -359,6 +290,19 @@ memory = create_memory()
 memory = create_memory(db_path="my-project")
 ```
 
+## Installation
+
+For a global `remind` command (optional - `uv run remind` works without installing):
+
+```bash
+# Using pipx (recommended)
+pipx install .
+
+# Or for development
+pip install -e .
+```
+
 ## License
 
-MIT
+Apache 2.0 ([LICENSE](./LICENSE))
+

@@ -20,6 +20,7 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-cov>=4.1.0",
 ]
 
 [project.scripts]
@@ -32,4 +33,32 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/remind"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = [
+    "-v",
+    "--cov=src/remind",
+    "--cov-report=term-missing",
+    "--cov-fail-under=80",
+]
+
+[tool.coverage.run]
+source = ["src/remind"]
+branch = true
+omit = [
+    "src/remind/__init__.py",
+    "src/remind/cli.py",
+    "src/remind/mcp_server.py",
+    "src/remind/providers/anthropic.py",
+    "src/remind/providers/openai.py",
+    "src/remind/providers/azure_openai.py",
+    "src/remind/providers/ollama.py",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
 
