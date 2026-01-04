@@ -1,6 +1,7 @@
 """Ollama provider implementation for local LLMs."""
 
 import json
+import os
 import re
 from typing import Optional
 
@@ -18,12 +19,12 @@ class OllamaLLM(LLMProvider):
     
     def __init__(
         self,
-        model: str = "llama3.2",
-        base_url: str = "http://localhost:11434",
+        model: str | None = None,
+        base_url: str | None = None,
         timeout: float = 120.0,
     ):
-        self.model = model
-        self.base_url = base_url.rstrip("/")
+        self.model = model or os.environ.get("OLLAMA_LLM_MODEL", "llama3.2")
+        self.base_url = (base_url or os.environ.get("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
         self.timeout = timeout
     
     async def complete(
@@ -118,14 +119,14 @@ class OllamaEmbedding(EmbeddingProvider):
     
     def __init__(
         self,
-        model: str = "nomic-embed-text",
-        base_url: str = "http://localhost:11434",
+        model: str | None = None,
+        base_url: str | None = None,
         timeout: float = 60.0,
     ):
-        self.model = model
-        self.base_url = base_url.rstrip("/")
+        self.model = model or os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+        self.base_url = (base_url or os.environ.get("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
         self.timeout = timeout
-        self._dimensions = self.MODEL_DIMENSIONS.get(model, 768)
+        self._dimensions = self.MODEL_DIMENSIONS.get(self.model, 768)
         self._actual_dimensions: Optional[int] = None
     
     async def embed(self, text: str) -> list[float]:
