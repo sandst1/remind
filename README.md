@@ -1,5 +1,9 @@
 # Remind
 
+[![PyPI version](https://img.shields.io/pypi/v/remind-mcp.svg)](https://pypi.org/project/remind-mcp/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 Generalization-capable memory layer for LLMs. Unlike simple RAG systems that store verbatim text, Remind extracts and maintains *generalized concepts* from experiences, mimicking how human memory consolidates specific episodes into abstract knowledge.
 
 ## Key Features
@@ -121,10 +125,12 @@ EMBEDDING_PROVIDER=ollama
 
 Remind can run as an MCP (Model Context Protocol) server, allowing AI agents in IDEs like Cursor to use it as their memory system.
 
-Using [uv](https://docs.astral.sh/uv/), no installation needed:
-
 ```bash
-uv run remind-mcp --port 8765
+# After pip install
+remind-mcp --port 8765
+
+# Or with uv (no install needed)
+uvx remind-mcp --port 8765
 ```
 
 Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
@@ -152,15 +158,17 @@ The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`
 
 ### CLI
 
-Run with [uv](https://docs.astral.sh/uv/) (no install needed):
-
 ```bash
-uv run remind remember "User likes Python and Rust"
-uv run remind consolidate
-uv run remind recall "What languages does the user know?"
+# After pip install
+remind remember "User likes Python and Rust"
+remind consolidate
+remind recall "What languages does the user know?"
+
+# Or with uvx (no install needed)
+uvx --from remind-mcp remind remember "User likes Python and Rust"
 ```
 
-Or install globally for a `remind` command (see [Installation](#installation)).
+Full CLI examples:
 
 ```bash
 # Add episodes
@@ -295,14 +303,22 @@ memory = create_memory(db_path="my-project")
 
 ## Installation
 
-For a global `remind` command (optional - `uv run remind` works without installing):
+```bash
+pip install remind-mcp
+```
+
+Or with [pipx](https://pipx.pypa.io/) for an isolated install:
 
 ```bash
-# Using pipx (recommended)
-pipx install .
+pipx install remind-mcp
+```
 
-# Or for development
-pip install -e .
+For development:
+
+```bash
+git clone https://github.com/YOUR_USERNAME/remind.git
+cd remind
+pip install -e ".[dev]"
 ```
 
 ## License
