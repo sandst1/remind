@@ -23,7 +23,7 @@ Generalization-capable memory layer for LLMs. Unlike simple RAG systems that sto
                       ▼                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      MEMORY INTERFACE                           │
-│              remember() / recall() / reflect()                  │
+│                   remember() / recall()                         │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
         ┌─────────────┼─────────────┐
@@ -147,10 +147,6 @@ async def main():
     # Retrieve relevant concepts
     context = await memory.recall("What programming preferences?")
     print(context)
-    
-    # Let the LLM reflect on its memory
-    reflection = await memory.reflect("What do I know about this user?")
-    print(reflection)
 
 asyncio.run(main())
 ```
@@ -178,9 +174,6 @@ remind stats
 # Export/Import
 remind export memory-backup.json
 remind import memory-backup.json
-
-# Reflect
-remind reflect "What are the key themes in my memory?"
 
 # Entity management
 remind entities                  # List all entities

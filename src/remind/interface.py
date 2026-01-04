@@ -5,7 +5,6 @@ This is the main entry point for applications integrating Remind.
 It provides a simple interface for:
 - remember() - log experiences/interactions
 - recall() - retrieve relevant concepts
-- reflect() - let the LLM reason about its own memory
 """
 
 from datetime import datetime
@@ -308,55 +307,6 @@ class MemoryInterface:
         - Custom filtering logic
         """
         return self.store.get_unconsolidated_episodes(limit=limit)
-    
-    async def reflect(self, prompt: str) -> str:
-        """
-        Let the LLM reason about its own memory.
-        
-        Useful for meta-cognitive operations like:
-        - "What do I know about this user?"
-        - "What are the main themes in my memory?"
-        - "What gaps exist in my understanding?"
-        
-        Args:
-            prompt: The reflection prompt
-            
-        Returns:
-            The LLM's reflection response
-        """
-        all_concepts = self.store.get_concepts_summary()
-        
-        if not all_concepts:
-            return "My memory is empty - no concepts have been formed yet."
-        
-        # Format concepts for the prompt
-        concept_text = self._format_concepts_for_reflection(all_concepts)
-        
-        reflection_prompt = f"""Examine your conceptual memory and respond to this prompt:
-
-{prompt}
-
-YOUR MEMORY:
-{concept_text}
-
-Respond thoughtfully, acknowledging what you know, what you're uncertain about,
-and what gaps might exist in your understanding."""
-        
-        return await self.llm.complete(
-            prompt=reflection_prompt,
-            system="You are reflecting on your own memory and knowledge. Be honest about uncertainty.",
-            temperature=0.5,
-        )
-    
-    def _format_concepts_for_reflection(self, concepts: list[dict]) -> str:
-        """Format concepts for reflection prompt."""
-        lines = []
-        for c in concepts:
-            line = f"• [{c['id']}] {c['summary']}"
-            if c.get('confidence'):
-                line += f" (confidence: {c['confidence']:.2f})"
-            lines.append(line)
-        return "\n".join(lines)
     
     # Direct access methods
     

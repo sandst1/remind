@@ -444,22 +444,6 @@ def import_cmd(ctx, file: str):
 
 
 @main.command()
-@click.argument("prompt")
-@click.pass_context
-def reflect(ctx, prompt: str):
-    """Let the LLM reflect on its memory."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-    
-    async def _reflect():
-        return await memory.reflect(prompt)
-    
-    with console.status("[bold cyan]Reflecting..."):
-        result = run_async(_reflect())
-    
-    console.print(Panel(result, title="Reflection", border_style="magenta"))
-
-
-@main.command()
 @click.argument("query")
 @click.pass_context
 def search(ctx, query: str):
