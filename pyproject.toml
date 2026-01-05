@@ -71,6 +71,7 @@ omit = [
     "src/remind/__init__.py",
     "src/remind/cli.py",
     "src/remind/mcp_server.py",
+    "src/remind/api/*",
     "src/remind/providers/anthropic.py",
     "src/remind/providers/openai.py",
     "src/remind/providers/azure_openai.py",

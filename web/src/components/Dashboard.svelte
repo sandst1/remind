@@ -60,18 +60,18 @@
     <div class="error">{$statsError}</div>
   {:else if $stats}
     <div class="stats-summary">
-      <span class="stat-item"><strong>{$stats.concept_count}</strong> concepts</span>
-      <span class="stat-item"><strong>{$stats.episode_count}</strong> episodes</span>
-      <span class="stat-item"><strong>{$stats.entity_count}</strong> entities</span>
-      <span class="stat-item"><strong>{$stats.relation_count}</strong> relations</span>
+      <span class="stat-item"><strong>{$stats.concepts}</strong> concepts</span>
+      <span class="stat-item"><strong>{$stats.episodes}</strong> episodes</span>
+      <span class="stat-item"><strong>{$stats.entities}</strong> entities</span>
+      <span class="stat-item"><strong>{$stats.relations}</strong> relations</span>
     </div>
 
     <div class="section">
       <h3>Consolidation Status</h3>
       <div class="consolidation-status">
-        {#if $stats.unconsolidated_count > 0}
+        {#if $stats.unconsolidated_episodes > 0}
           <div class="status-item pending">
-            <span class="status-count">{$stats.unconsolidated_count}</span>
+            <span class="status-count">{$stats.unconsolidated_episodes}</span>
             <span class="status-label">episodes pending consolidation</span>
           </div>
         {:else}

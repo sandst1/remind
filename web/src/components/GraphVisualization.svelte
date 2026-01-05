@@ -5,7 +5,6 @@
     graphData,
     graphLoading,
     graphError,
-    expandedNodeIds,
     currentDb,
   } from '../lib/stores';
   import { fetchGraph } from '../lib/api';
@@ -13,9 +12,12 @@
 
   let container: HTMLDivElement;
   let svg: SVGSVGElement;
-  let simulation: d3.Simulation<GraphNode, GraphLink> | null = null;
-  let transform = d3.zoomIdentity;
   let mounted = false;
+
+  // State
+  let selectedNodeId: string | null = null;
+  let searchQuery = '';
+  let simulation: d3.Simulation<GraphNode, GraphLink> | null = null;
 
   const relationColors: Record<RelationType, string> = {
     implies: '#28a745',
@@ -28,9 +30,8 @@
     context_of: '#17a2b8',
   };
 
-  const nodeWidth = 200;
-  const nodeHeightCollapsed = 60;
-  const nodeHeightExpanded = 280;
+  const NODE_WIDTH = 180;
+  const NODE_HEIGHT = 56;
 
   onMount(() => {
     mounted = true;
@@ -58,8 +59,8 @@
     try {
       const data = await fetchGraph();
       graphData.set(data);
+
       if (data.nodes.length > 0 && mounted) {
-        // Wait for DOM to update with SVG element before initializing
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         if (svg && container) {
           initializeGraph(data);
@@ -76,60 +77,58 @@
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    // Clear existing
-    d3.select(svg).selectAll('*').remove();
+    // Stop existing simulation
+    if (simulation) {
+      simulation.stop();
+    }
 
     const svgEl = d3.select(svg)
       .attr('width', width)
       .attr('height', height);
 
-    // Create defs for arrow markers
-    const defs = svgEl.append('defs');
-
-    Object.entries(relationColors).forEach(([type, color]) => {
-      defs.append('marker')
-        .attr('id', `arrow-${type}`)
-        .attr('viewBox', '0 -5 10 10')
-        .attr('refX', 15)
-        .attr('refY', 0)
-        .attr('markerWidth', 6)
-        .attr('markerHeight', 6)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('fill', color)
-        .attr('d', 'M0,-5L10,0L0,5');
-    });
+    // Clear existing
+    svgEl.selectAll('*').remove();
 
     // Create main group for zoom/pan
     const g = svgEl.append('g').attr('class', 'graph-container');
 
     // Zoom behavior
     const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.1, 4])
+      .scaleExtent([0.1, 3])
       .on('zoom', (event) => {
-        transform = event.transform;
         g.attr('transform', event.transform.toString());
       });
 
     svgEl.call(zoom);
 
-    // Create links group
-    const linksGroup = g.append('g').attr('class', 'links');
+    // Initial zoom to fit
+    const initialScale = Math.min(width, height) / 1000;
+    svgEl.call(
+      zoom.transform,
+      d3.zoomIdentity.translate(width / 2, height / 2).scale(Math.max(0.3, initialScale))
+    );
 
-    // Create link labels group
-    const linkLabelsGroup = g.append('g').attr('class', 'link-labels');
+    // Create links group (drawn first, behind nodes)
+    const linksGroup = g.append('g').attr('class', 'links');
 
     // Create nodes group
     const nodesGroup = g.append('g').attr('class', 'nodes');
 
-    // Initialize simulation
+    // Initialize force simulation
     simulation = d3.forceSimulation<GraphNode>(data.nodes)
       .force('link', d3.forceLink<GraphNode, GraphLink>(data.links)
         .id((d) => d.id)
-        .distance(200))
-      .force('charge', d3.forceManyBody().strength(-500))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(120));
+        .distance(250)
+        .strength(0.3))
+      .force('charge', d3.forceManyBody()
+        .strength(-800)
+        .distanceMax(600))
+      .force('center', d3.forceCenter(0, 0))
+      .force('collision', d3.forceCollide()
+        .radius(NODE_WIDTH / 2 + 40)
+        .strength(0.8))
+      .force('x', d3.forceX(0).strength(0.02))
+      .force('y', d3.forceY(0).strength(0.02));
 
     // Create links
     const links = linksGroup.selectAll('.link')
@@ -137,23 +136,23 @@
       .join('path')
       .attr('class', 'link')
       .attr('stroke', (d) => relationColors[d.type as RelationType] || '#999')
-      .attr('stroke-width', (d) => 1 + d.strength * 2)
-      .attr('stroke-opacity', 0.6)
-      .attr('fill', 'none')
-      .attr('marker-end', (d) => `url(#arrow-${d.type})`);
+      .attr('stroke-width', (d) => 1.5 + d.strength)
+      .attr('stroke-opacity', 0.5)
+      .attr('fill', 'none');
 
     // Create link labels
-    const linkLabels = linkLabelsGroup.selectAll('.link-label')
+    const linkLabels = linksGroup.selectAll('.link-label')
       .data(data.links)
       .join('text')
       .attr('class', 'link-label')
-      .attr('font-size', 10)
+      .attr('font-size', 9)
       .attr('fill', (d) => relationColors[d.type as RelationType] || '#666')
       .attr('text-anchor', 'middle')
-      .attr('dy', -5)
-      .text((d) => d.type.toUpperCase().replace('_', ' '));
+      .attr('dy', -4)
+      .attr('opacity', 0.7)
+      .text((d) => d.type.replace('_', ' '));
 
-    // Create nodes using foreignObject for HTML content
+    // Create node groups
     const nodes = nodesGroup.selectAll('.node')
       .data(data.nodes)
       .join('g')
@@ -164,51 +163,107 @@
         .on('end', dragended)
       );
 
-    // Add foreignObject for each node
-    nodes.each(function (d) {
+    // Node background
+    nodes.append('rect')
+      .attr('class', 'node-bg')
+      .attr('width', NODE_WIDTH)
+      .attr('height', NODE_HEIGHT)
+      .attr('x', -NODE_WIDTH / 2)
+      .attr('y', -NODE_HEIGHT / 2)
+      .attr('rx', 6)
+      .attr('fill', 'white')
+      .attr('stroke', (d) => getNodeBorderColor(d))
+      .attr('stroke-width', 2)
+      .style('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))')
+      .style('cursor', 'grab');
+
+    // Node content using foreignObject
+    nodes.each(function(d) {
       const node = d3.select(this);
-      const isExpanded = $expandedNodeIds.has(d.id);
 
-      // Background rect for interaction
-      node.append('rect')
-        .attr('class', 'node-bg')
-        .attr('width', nodeWidth)
-        .attr('height', isExpanded ? nodeHeightExpanded : nodeHeightCollapsed)
-        .attr('x', -nodeWidth / 2)
-        .attr('y', isExpanded ? -nodeHeightExpanded / 2 : -nodeHeightCollapsed / 2)
-        .attr('rx', 8)
-        .attr('fill', 'white')
-        .attr('stroke', getNodeBorderColor(d))
-        .attr('stroke-width', 2)
-        .style('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))');
-
-      // ForeignObject for HTML content
       const fo = node.append('foreignObject')
-        .attr('width', nodeWidth - 16)
-        .attr('height', (isExpanded ? nodeHeightExpanded : nodeHeightCollapsed) - 16)
-        .attr('x', -nodeWidth / 2 + 8)
-        .attr('y', (isExpanded ? -nodeHeightExpanded / 2 : -nodeHeightCollapsed / 2) + 8);
+        .attr('width', NODE_WIDTH - 12)
+        .attr('height', NODE_HEIGHT - 8)
+        .attr('x', -NODE_WIDTH / 2 + 6)
+        .attr('y', -NODE_HEIGHT / 2 + 4);
 
       const div = fo.append('xhtml:div')
-        .attr('class', `node-content ${isExpanded ? 'expanded' : ''}`)
         .style('font-family', '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif')
-        .style('font-size', '12px')
-        .style('line-height', '1.4')
+        .style('font-size', '11px')
+        .style('line-height', '1.3')
+        .style('height', '100%')
+        .style('display', 'flex')
+        .style('flex-direction', 'column')
         .style('overflow', 'hidden')
-        .style('height', '100%');
+        .style('pointer-events', 'none');
 
-      updateNodeContent(div, d, isExpanded);
+      // Header
+      const header = div.append('div')
+        .style('display', 'flex')
+        .style('justify-content', 'space-between')
+        .style('align-items', 'center')
+        .style('margin-bottom', '2px');
 
-      // Click handler
-      node.on('click', (event: MouseEvent) => {
-        event.stopPropagation();
-        toggleNode(d.id);
-      });
+      header.append('span')
+        .style('font-weight', '600')
+        .style('font-size', '10px')
+        .style('padding', '1px 5px')
+        .style('border-radius', '8px')
+        .style('background', getConfidenceBackground(d.confidence))
+        .style('color', 'white')
+        .text(`${Math.round(d.confidence * 100)}%`);
+
+      header.append('span')
+        .style('color', '#8b949e')
+        .style('font-size', '10px')
+        .text(`${d.instance_count}x`);
+
+      // Summary
+      div.append('div')
+        .style('color', '#24292f')
+        .style('flex', '1')
+        .style('overflow', 'hidden')
+        .style('text-overflow', 'ellipsis')
+        .style('display', '-webkit-box')
+        .style('-webkit-line-clamp', '2')
+        .style('-webkit-box-orient', 'vertical')
+        .style('font-size', '10px')
+        .text(d.summary);
     });
+
+    // Click handler
+    nodes.on('click', (event: MouseEvent, d: GraphNode) => {
+      event.stopPropagation();
+      selectNode(d.id);
+    });
+
+    // Hover effects
+    nodes
+      .on('mouseenter', function() {
+        d3.select(this).select('.node-bg')
+          .transition()
+          .duration(100)
+          .attr('stroke-width', 3)
+          .style('filter', 'drop-shadow(0 4px 8px rgba(0,0,0,0.15))');
+      })
+      .on('mouseleave', function() {
+        d3.select(this).select('.node-bg')
+          .transition()
+          .duration(100)
+          .attr('stroke-width', 2)
+          .style('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))');
+      });
+
+    // Update selection highlight
+    function updateSelection() {
+      nodes.select('.node-bg')
+        .attr('fill', (d: GraphNode) => d.id === selectedNodeId ? '#e8f4fd' : 'white')
+        .attr('stroke-width', (d: GraphNode) => d.id === selectedNodeId ? 3 : 2);
+    }
 
     // Simulation tick
     simulation.on('tick', () => {
-      links.attr('d', (d) => {
+      links.attr('d', (d: any) => {
         const source = d.source as GraphNode;
         const target = d.target as GraphNode;
         const dx = (target.x || 0) - (source.x || 0);
@@ -218,36 +273,71 @@
       });
 
       linkLabels
-        .attr('x', (d) => {
+        .attr('x', (d: any) => {
           const source = d.source as GraphNode;
           const target = d.target as GraphNode;
           return ((source.x || 0) + (target.x || 0)) / 2;
         })
-        .attr('y', (d) => {
+        .attr('y', (d: any) => {
           const source = d.source as GraphNode;
           const target = d.target as GraphNode;
           return ((source.y || 0) + (target.y || 0)) / 2;
         });
 
-      nodes.attr('transform', (d) => `translate(${d.x},${d.y})`);
+      nodes.attr('transform', (d: GraphNode) => `translate(${d.x},${d.y})`);
     });
 
-    // Double-click to fit
-    svgEl.on('dblclick.zoom', () => {
+    // Click background to deselect
+    svgEl.on('click', () => {
+      selectedNodeId = null;
+    });
+
+    // Drag functions
+    function dragstarted(event: d3.D3DragEvent<SVGGElement, GraphNode, GraphNode>) {
+      if (!event.active && simulation) simulation.alphaTarget(0.3).restart();
+      event.subject.fx = event.subject.x;
+      event.subject.fy = event.subject.y;
+      d3.select(event.sourceEvent.target.closest('.node')).select('.node-bg').style('cursor', 'grabbing');
+    }
+
+    function dragged(event: d3.D3DragEvent<SVGGElement, GraphNode, GraphNode>) {
+      event.subject.fx = event.x;
+      event.subject.fy = event.y;
+    }
+
+    function dragended(event: d3.D3DragEvent<SVGGElement, GraphNode, GraphNode>) {
+      if (!event.active && simulation) simulation.alphaTarget(0);
+      // Keep node fixed where user dropped it
+      // event.subject.fx = null;
+      // event.subject.fy = null;
+      d3.select(event.sourceEvent.target.closest('.node')).select('.node-bg').style('cursor', 'grab');
+    }
+
+    // Double-click to release node
+    nodes.on('dblclick', (event: MouseEvent, d: GraphNode) => {
+      event.stopPropagation();
+      d.fx = null;
+      d.fy = null;
+      if (simulation) simulation.alpha(0.3).restart();
+    });
+
+    // Double-click background to reset view
+    svgEl.on('dblclick', () => {
       svgEl.transition().duration(500).call(
         zoom.transform,
-        d3.zoomIdentity
+        d3.zoomIdentity.translate(width / 2, height / 2).scale(Math.max(0.3, initialScale))
       );
     });
   }
 
   function getNodeBorderColor(node: GraphNode): string {
-    // Use the most common relation type's color
-    if (node.relations.length === 0) return '#e1e4e8';
+    if (node.relations.length === 0) return '#d0d7de';
+
     const typeCounts = new Map<string, number>();
     node.relations.forEach((r) => {
       typeCounts.set(r.type, (typeCounts.get(r.type) || 0) + 1);
     });
+
     let maxType = node.relations[0].type;
     let maxCount = 0;
     typeCounts.forEach((count, type) => {
@@ -256,211 +346,165 @@
         maxType = type;
       }
     });
-    return relationColors[maxType as RelationType] || '#e1e4e8';
+
+    return relationColors[maxType as RelationType] || '#d0d7de';
   }
 
-  function updateNodeContent(div: d3.Selection<HTMLDivElement, unknown, null, undefined>, node: GraphNode, isExpanded: boolean) {
-    div.html('');
+  function getConfidenceBackground(confidence: number): string {
+    if (confidence >= 0.7) return '#1a7f37';
+    if (confidence >= 0.4) return '#bf8700';
+    return '#cf222e';
+  }
 
-    // Header with confidence
-    const header = div.append('div')
-      .style('display', 'flex')
-      .style('justify-content', 'space-between')
-      .style('margin-bottom', '4px');
+  function selectNode(nodeId: string) {
+    selectedNodeId = selectedNodeId === nodeId ? null : nodeId;
+  }
 
-    header.append('span')
-      .style('font-weight', '500')
-      .style('color', getConfidenceColor(node.confidence))
-      .text(`${Math.round(node.confidence * 100)}%`);
+  function handleSearch() {
+    if (!$graphData || !searchQuery.trim()) return;
 
-    header.append('span')
-      .style('color', '#6a737d')
-      .style('font-size', '11px')
-      .text(`${node.instance_count}x`);
+    const query = searchQuery.toLowerCase();
+    const found = $graphData.nodes.find(n =>
+      n.summary.toLowerCase().includes(query)
+    );
 
-    // Summary
-    const summary = div.append('div')
-      .style('color', '#24292e')
-      .style('overflow', 'hidden')
-      .style('text-overflow', 'ellipsis')
-      .text(isExpanded ? node.summary : truncate(node.summary, 60));
-
-    if (isExpanded) {
-      summary.style('margin-bottom', '8px');
-
-      // Conditions
-      if (node.conditions && node.conditions.length > 0) {
-        div.append('div')
-          .style('font-size', '10px')
-          .style('color', '#586069')
-          .style('margin-bottom', '4px')
-          .style('font-weight', '500')
-          .text('Conditions:');
-
-        const condList = div.append('div')
-          .style('font-size', '10px')
-          .style('color', '#6a737d')
-          .style('margin-bottom', '8px');
-
-        node.conditions.forEach((c) => {
-          condList.append('div').text(`• ${c}`);
-        });
-      }
-
-      // Source episodes
-      if (node.source_episodes.length > 0) {
-        div.append('div')
-          .style('font-size', '10px')
-          .style('color', '#586069')
-          .style('margin-bottom', '4px')
-          .style('font-weight', '500')
-          .text(`Episodes (${node.source_episodes.length}):`);
-
-        const epList = div.append('div')
-          .style('font-size', '10px')
-          .style('max-height', '80px')
-          .style('overflow-y', 'auto');
-
-        node.source_episodes.slice(0, 3).forEach((ep) => {
-          epList.append('div')
-            .style('padding', '2px 4px')
-            .style('margin-bottom', '2px')
-            .style('background', '#f6f8fa')
-            .style('border-radius', '3px')
-            .style('color', '#24292e')
-            .text(truncate(ep.content, 80));
-        });
-      }
-
-      // Relations
-      if (node.relations.length > 0) {
-        div.append('div')
-          .style('font-size', '10px')
-          .style('color', '#586069')
-          .style('margin-top', '8px')
-          .style('margin-bottom', '4px')
-          .style('font-weight', '500')
-          .text(`Relations (${node.relations.length}):`);
-
-        const relList = div.append('div')
-          .style('font-size', '10px');
-
-        node.relations.slice(0, 3).forEach((rel) => {
-          const relDiv = relList.append('div')
-            .style('display', 'flex')
-            .style('align-items', 'center')
-            .style('gap', '4px')
-            .style('margin-bottom', '2px');
-
-          relDiv.append('span')
-            .style('color', relationColors[rel.type as RelationType] || '#666')
-            .style('font-weight', '500')
-            .text(rel.type.toUpperCase());
-
-          relDiv.append('span')
-            .style('color', '#6a737d')
-            .text(truncate(rel.target_summary || rel.target_id, 30));
-        });
-      }
+    if (found) {
+      selectedNodeId = found.id;
+      // TODO: could pan to the node here
     }
   }
 
-  function getConfidenceColor(confidence: number): string {
-    if (confidence >= 0.7) return '#28a745';
-    if (confidence >= 0.4) return '#ffc107';
-    return '#dc3545';
-  }
+  function resetSimulation() {
+    if (!$graphData) return;
 
-  function truncate(text: string, maxLength: number): string {
-    if (text.length <= maxLength) return text;
-    return text.slice(0, maxLength - 3) + '...';
-  }
-
-  function toggleNode(nodeId: string) {
-    const newExpanded = new Set($expandedNodeIds);
-    if (newExpanded.has(nodeId)) {
-      newExpanded.delete(nodeId);
-    } else {
-      newExpanded.add(nodeId);
-    }
-    expandedNodeIds.set(newExpanded);
-
-    // Update the node visually
-    if ($graphData) {
-      const node = $graphData.nodes.find((n) => n.id === nodeId);
-      if (node) {
-        const isExpanded = newExpanded.has(nodeId);
-        const nodeEl = d3.select(svg).select(`.node`).filter((d: any) => d.id === nodeId);
-
-        nodeEl.select('.node-bg')
-          .transition()
-          .duration(200)
-          .attr('height', isExpanded ? nodeHeightExpanded : nodeHeightCollapsed)
-          .attr('y', isExpanded ? -nodeHeightExpanded / 2 : -nodeHeightCollapsed / 2);
-
-        nodeEl.select('foreignObject')
-          .transition()
-          .duration(200)
-          .attr('height', (isExpanded ? nodeHeightExpanded : nodeHeightCollapsed) - 16)
-          .attr('y', (isExpanded ? -nodeHeightExpanded / 2 : -nodeHeightCollapsed / 2) + 8);
-
-        const div = nodeEl.select('.node-content') as unknown as d3.Selection<HTMLDivElement, unknown, null, undefined>;
-        div.classed('expanded', isExpanded);
-        updateNodeContent(div, node, isExpanded);
-      }
+    // Unfix all nodes
+    for (const node of $graphData.nodes) {
+      node.fx = null;
+      node.fy = null;
     }
 
-    // Update collision radius
     if (simulation) {
-      simulation.force('collision', d3.forceCollide().radius((d: any) => {
-        return newExpanded.has(d.id) ? 160 : 80;
-      }));
-      simulation.alpha(0.3).restart();
+      simulation.alpha(1).restart();
     }
   }
 
-  function dragstarted(event: d3.D3DragEvent<SVGGElement, GraphNode, GraphNode>) {
-    if (!event.active && simulation) simulation.alphaTarget(0.3).restart();
-    event.subject.fx = event.subject.x;
-    event.subject.fy = event.subject.y;
-  }
-
-  function dragged(event: d3.D3DragEvent<SVGGElement, GraphNode, GraphNode>) {
-    event.subject.fx = event.x;
-    event.subject.fy = event.y;
-  }
-
-  function dragended(event: d3.D3DragEvent<SVGGElement, GraphNode, GraphNode>) {
-    if (!event.active && simulation) simulation.alphaTarget(0);
-    event.subject.fx = null;
-    event.subject.fy = null;
-  }
+  // Get selected node for details panel
+  $: selectedNode = selectedNodeId && $graphData
+    ? $graphData.nodes.find(n => n.id === selectedNodeId)
+    : null;
 </script>
 
 <div class="graph-visualization">
   <div class="header">
     <h2>Concept Graph</h2>
-    <div class="legend">
-      {#each Object.entries(relationColors) as [type, color]}
-        <div class="legend-item">
-          <span class="legend-color" style="background: {color}"></span>
-          <span class="legend-label">{type.replace('_', ' ')}</span>
-        </div>
-      {/each}
+    <div class="controls">
+      <div class="search-box">
+        <input
+          type="text"
+          placeholder="Search concepts..."
+          bind:value={searchQuery}
+          on:keydown={(e) => e.key === 'Enter' && handleSearch()}
+        />
+        <button class="btn" on:click={handleSearch}>Search</button>
+      </div>
+      <button class="btn" on:click={resetSimulation}>Reset Layout</button>
     </div>
   </div>
 
-  <div class="graph-container" bind:this={container}>
-    {#if $graphLoading}
-      <div class="loading">Loading graph...</div>
-    {:else if $graphError}
-      <div class="error">{$graphError}</div>
-    {:else if !$graphData || $graphData.nodes.length === 0}
-      <div class="empty">No concepts to display</div>
-    {:else}
-      <svg bind:this={svg}></svg>
-      <div class="controls">
-        <div class="hint">Click nodes to expand. Drag to move. Scroll to zoom. Double-click to reset.</div>
+  <div class="legend">
+    {#each Object.entries(relationColors) as [type, color]}
+      <div class="legend-item">
+        <span class="legend-color" style="background: {color}"></span>
+        <span class="legend-label">{type.replace('_', ' ')}</span>
+      </div>
+    {/each}
+  </div>
+
+  <div class="main-content">
+    <div class="graph-container" bind:this={container}>
+      {#if $graphLoading}
+        <div class="message">Loading graph...</div>
+      {:else if $graphError}
+        <div class="message error">{$graphError}</div>
+      {:else if !$graphData || $graphData.nodes.length === 0}
+        <div class="message">No concepts to display</div>
+      {:else}
+        <svg bind:this={svg}></svg>
+        <div class="hint">
+          Drag nodes to move. Double-click node to release. Double-click background to reset view. Scroll to zoom.
+        </div>
+        <div class="node-count">{$graphData.nodes.length} concepts</div>
+      {/if}
+    </div>
+
+    {#if selectedNode}
+      <div class="details-panel">
+        <div class="details-header">
+          <h3>Selected Concept</h3>
+          <button class="close-btn" on:click={() => selectedNodeId = null}>×</button>
+        </div>
+
+        <div class="details-content">
+          <div class="detail-row">
+            <span class="confidence-badge" style="background: {getConfidenceBackground(selectedNode.confidence)}">
+              {Math.round(selectedNode.confidence * 100)}% confidence
+            </span>
+            <span class="instance-count">{selectedNode.instance_count} instances</span>
+          </div>
+
+          <p class="summary">{selectedNode.summary}</p>
+
+          {#if selectedNode.conditions && selectedNode.conditions.length > 0}
+            <div class="detail-section">
+              <h4>Conditions</h4>
+              <ul>
+                {#each selectedNode.conditions as condition}
+                  <li>{condition}</li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
+
+          {#if selectedNode.tags && selectedNode.tags.length > 0}
+            <div class="detail-section">
+              <h4>Tags</h4>
+              <div class="tags">
+                {#each selectedNode.tags as tag}
+                  <span class="tag">{tag}</span>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          {#if selectedNode.relations && selectedNode.relations.length > 0}
+            <div class="detail-section">
+              <h4>Relations ({selectedNode.relations.length})</h4>
+              <div class="relations-list">
+                {#each selectedNode.relations as rel}
+                  <div class="relation-item">
+                    <span class="relation-type" style="color: {relationColors[rel.type]}">{rel.type.replace('_', ' ')}</span>
+                    <span class="relation-arrow">→</span>
+                    <span class="relation-target">{rel.target_summary || rel.target_id}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          {#if selectedNode.source_episodes && selectedNode.source_episodes.length > 0}
+            <div class="detail-section">
+              <h4>Source Episodes ({selectedNode.source_episodes.length})</h4>
+              <div class="episodes-list">
+                {#each selectedNode.source_episodes.slice(0, 3) as ep}
+                  <div class="episode-item">
+                    <span class="episode-type">{ep.type}</span>
+                    <span class="episode-content">{ep.content}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
       </div>
     {/if}
   </div>
@@ -476,37 +520,81 @@
   .header {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: var(--space-md);
+    align-items: center;
+    margin-bottom: var(--space-sm);
+    flex-wrap: wrap;
+    gap: var(--space-sm);
   }
 
   h2 {
-    font-size: var(--font-size-2xl);
+    font-size: var(--font-size-xl);
+    margin: 0;
+  }
+
+  .controls {
+    display: flex;
+    gap: var(--space-xs);
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .search-box {
+    display: flex;
+    gap: 4px;
+  }
+
+  .search-box input {
+    padding: 5px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    width: 180px;
+  }
+
+  .btn {
+    padding: 5px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .btn:hover {
+    background: #f3f4f6;
   }
 
   .legend {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-sm);
-    max-width: 500px;
+    margin-bottom: var(--space-sm);
   }
 
   .legend-item {
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: var(--font-size-xs);
+    font-size: 11px;
   }
 
   .legend-color {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     border-radius: 2px;
   }
 
   .legend-label {
     color: var(--color-text-secondary);
     text-transform: capitalize;
+  }
+
+  .main-content {
+    flex: 1;
+    display: flex;
+    gap: var(--space-md);
+    min-height: 0;
   }
 
   .graph-container {
@@ -523,27 +611,32 @@
     height: 100%;
   }
 
-  .controls {
-    position: absolute;
-    bottom: var(--space-md);
-    left: var(--space-md);
-    right: var(--space-md);
-    display: flex;
-    justify-content: center;
-  }
-
   .hint {
-    padding: var(--space-xs) var(--space-md);
-    background: rgba(255, 255, 255, 0.9);
+    position: absolute;
+    bottom: var(--space-sm);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 12px;
+    background: rgba(255, 255, 255, 0.95);
     border-radius: var(--radius-md);
-    font-size: var(--font-size-sm);
+    font-size: 11px;
     color: var(--color-text-muted);
     box-shadow: var(--shadow-sm);
   }
 
-  .loading,
-  .error,
-  .empty {
+  .node-count {
+    position: absolute;
+    top: var(--space-sm);
+    left: var(--space-sm);
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+
+  .message {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -551,24 +644,177 @@
     color: var(--color-text-secondary);
   }
 
-  .error {
+  .message.error {
     color: var(--color-contradicts);
   }
 
-  :global(.node) {
+  /* Details Panel */
+  .details-panel {
+    width: 320px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .details-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    border-bottom: 1px solid var(--color-border);
+    background: #f6f8fa;
+  }
+
+  .details-header h3 {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 20px;
     cursor: pointer;
+    color: var(--color-text-secondary);
+    padding: 0;
+    line-height: 1;
   }
 
-  :global(.node:hover .node-bg) {
-    stroke-width: 3px;
+  .details-content {
+    padding: var(--space-md);
+    overflow-y: auto;
+    flex: 1;
   }
 
-  :global(.link) {
-    pointer-events: none;
+  .detail-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
   }
 
-  :global(.link-label) {
-    pointer-events: none;
-    font-weight: 500;
+  .confidence-badge {
+    padding: 2px 8px;
+    border-radius: 12px;
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .instance-count {
+    color: var(--color-text-secondary);
+    font-size: 12px;
+  }
+
+  .summary {
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    color: var(--color-text);
+    margin: 0 0 var(--space-md);
+  }
+
+  .detail-section {
+    margin-bottom: var(--space-md);
+  }
+
+  .detail-section h4 {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    margin: 0 0 var(--space-xs);
+  }
+
+  .detail-section ul {
+    margin: 0;
+    padding-left: var(--space-md);
+    font-size: var(--font-size-sm);
+  }
+
+  .detail-section li {
+    margin-bottom: 4px;
+  }
+
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .tag {
+    padding: 2px 8px;
+    background: #e8f4fd;
+    border-radius: 12px;
+    font-size: 11px;
+    color: #0366d6;
+  }
+
+  .relations-list,
+  .episodes-list {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .relation-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    padding: 4px 0;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  .relation-type {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+
+  .relation-arrow {
+    color: #8b949e;
+  }
+
+  .relation-target {
+    flex: 1;
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .episode-item {
+    padding: 6px;
+    margin-bottom: 4px;
+    background: #f6f8fa;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+
+  .episode-type {
+    display: inline-block;
+    padding: 1px 6px;
+    background: #e1e4e8;
+    border-radius: 8px;
+    font-size: 10px;
+    margin-right: 6px;
+    text-transform: uppercase;
+  }
+
+  .episode-content {
+    color: var(--color-text-secondary);
+  }
+
+  :global(.node) {
+    cursor: grab;
+  }
+
+  :global(.node:active) {
+    cursor: grabbing;
   }
 </style>

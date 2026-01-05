@@ -926,13 +926,15 @@ class SQLiteMemoryStore(MemoryStore):
             ).fetchone()[0]
             
             return {
-                "concept_count": concept_count,
-                "episode_count": episode_count,
-                "entity_count": entity_count,
-                "relation_count": relation_count,
-                "unconsolidated_count": unconsolidated_count,
-                "unextracted_count": unextracted_count,
+                "concepts": concept_count,
+                "episodes": episode_count,
+                "entities": entity_count,
+                "mentions": mention_count,
+                "relations": relation_count,
+                "unconsolidated_episodes": unconsolidated_count,
+                "unextracted_episodes": unextracted_count,
                 "relation_types": {row["type"]: row["count"] for row in relation_types},
+                "entity_types": {row["type"]: row["count"] for row in entity_types},
                 "episode_types": {
                     (row["type"] or "observation"): row["count"]
                     for row in episode_types
