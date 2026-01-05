@@ -7,6 +7,7 @@ its database via URL query parameter.
 Usage:
     remind-mcp --port 8765
     Connect: http://127.0.0.1:8765/sse?db=my-project
+    Web UI:  http://127.0.0.1:8765/ui/?db=my-project
 """
 
 import asyncio
@@ -509,19 +510,53 @@ def create_mcp_server():
     return mcp
 
 
+def get_static_directory() -> Optional[Path]:
+    """Get the path to static files, handling both dev and installed scenarios."""
+    import importlib.resources
+
+    # Try package resources first (when installed)
+    try:
+        with importlib.resources.as_file(
+            importlib.resources.files("remind") / "static"
+        ) as static_path:
+            if static_path.exists() and static_path.is_dir():
+                # Check if it has files (not just an empty dir)
+                if any(static_path.iterdir()):
+                    return static_path
+    except (TypeError, FileNotFoundError, StopIteration):
+        pass
+
+    # Development fallback - check relative to this file
+    dev_path = Path(__file__).parent / "static"
+    if dev_path.exists() and dev_path.is_dir():
+        if any(dev_path.iterdir()):
+            return dev_path
+
+    return None
+
+
 def run_server_sse(host: str = "127.0.0.1", port: int = 8765):
-    """Run the MCP server with SSE (HTTP) transport."""
+    """Run the MCP server with SSE (HTTP) transport and Web UI."""
     import uvicorn
     from fastmcp.server.http import create_sse_app
-    
+    from starlette.applications import Starlette
+    from starlette.routing import Mount, Route
+    from starlette.staticfiles import StaticFiles
+    from starlette.responses import RedirectResponse
+
+    from remind.api.routes import api_routes
+
     mcp = create_mcp_server()
-    
+
     # Create the SSE app with FastMCP
     sse_app = create_sse_app(
         server=mcp,
         sse_path="/sse",
         message_path="/messages",
     )
+
+    # Check for static files
+    static_dir = get_static_directory()
     
     # Create custom ASGI middleware to inject db context
     async def app(scope, receive, send):
@@ -544,7 +579,69 @@ def run_server_sse(host: str = "127.0.0.1", port: int = 8765):
             method = scope.get('method', 'GET')
             query_string = scope.get('query_string', b'').decode()
             params = parse_qs(query_string)
-            
+
+            # Handle root redirect to UI
+            if path == '/' and method == 'GET':
+                db = params.get('db', [''])[0]
+                redirect_url = f'/ui/?db={db}' if db else '/ui/'
+                await send({
+                    'type': 'http.response.start',
+                    'status': 302,
+                    'headers': [
+                        (b'location', redirect_url.encode()),
+                        (b'content-type', b'text/plain'),
+                    ],
+                })
+                await send({
+                    'type': 'http.response.body',
+                    'body': b'',
+                })
+                return
+
+            # Handle API routes
+            if path.startswith('/api/'):
+                # Create a Starlette app for API routes
+                from starlette.applications import Starlette
+                from starlette.routing import Router
+                api_app = Router(routes=api_routes)
+                await api_app(scope, receive, send)
+                return
+
+            # Handle static files for UI
+            if path.startswith('/ui'):
+                if static_dir:
+                    # Serve static files
+                    static_app = StaticFiles(directory=str(static_dir), html=True)
+                    # Adjust path for static files
+                    scope = dict(scope)
+                    # Remove /ui prefix for static files lookup
+                    if path == '/ui' or path == '/ui/':
+                        scope['path'] = '/index.html'
+                    else:
+                        scope['path'] = path[3:]  # Remove '/ui'
+                    try:
+                        await static_app(scope, receive, send)
+                        return
+                    except Exception as e:
+                        # If file not found, serve index.html for SPA routing
+                        scope['path'] = '/index.html'
+                        try:
+                            await static_app(scope, receive, send)
+                            return
+                        except Exception:
+                            pass
+                # No static files available
+                await send({
+                    'type': 'http.response.start',
+                    'status': 503,
+                    'headers': [(b'content-type', b'text/plain')],
+                })
+                await send({
+                    'type': 'http.response.body',
+                    'body': b'Web UI not available. Build with: cd web && npm install && npm run build',
+                })
+                return
+
             # Extract db from query params
             db_list = params.get('db', [])
             session_list = params.get('session_id', [])
@@ -649,9 +746,14 @@ def run_server_sse(host: str = "127.0.0.1", port: int = 8765):
     print(f"Starting Remind MCP server (SSE) on {host}:{port}")
     print(f"Database resolution:")
     print(f"  ?db=my-project      → ~/.remind/my-project.db")
-    print(f"  ?db=./memory.db     → ./memory.db (relative to cwd)")
-    print(f"  ?db=/full/path.db   → /full/path.db (absolute)")
-    print(f"\nConnect with: http://{host}:{port}/sse?db=<name>")
+    print(f"\nEndpoints:")
+    print(f"  MCP SSE:  http://{host}:{port}/sse?db=<name>")
+    print(f"  Web UI:   http://{host}:{port}/ui/?db=<name>")
+    print(f"  REST API: http://{host}:{port}/api/v1/...")
+    if static_dir:
+        print(f"\nWeb UI available at: {static_dir}")
+    else:
+        print(f"\nWeb UI not built. Run: cd web && npm install && npm run build")
     
     uvicorn.run(app, host=host, port=port, log_level="info")
 

@@ -50,3 +50,8 @@ htmlcov/
 # ruff
 .ruff_cache/
 
+# Web UI
+web/node_modules/
+web/dist/
+src/remind/static/*
+!src/remind/static/.gitkeep
