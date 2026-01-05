@@ -16,12 +16,16 @@
   let k = 5;
   let chatInput = '';
   let chatMessagesContainer: HTMLDivElement;
+  let wasLoading = false;
 
-  // Auto-scroll chat to bottom when messages change
-  $: if ($chatMessages.length > 0 && chatMessagesContainer) {
-    setTimeout(() => {
-      chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-    }, 0);
+  // Scroll to bottom once when assistant finishes responding
+  $: {
+    if (wasLoading && !$chatLoading && chatMessagesContainer) {
+      setTimeout(() => {
+        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+      }, 0);
+    }
+    wasLoading = $chatLoading;
   }
 
   async function handleQuery() {
@@ -648,6 +652,7 @@ Examples:
 
   .chat-messages {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: var(--space-md);
     display: flex;
