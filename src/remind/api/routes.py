@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from remind.models import EpisodeType
@@ -440,6 +440,74 @@ async def execute_query(request: Request) -> JSONResponse:
 
 
 # =============================================================================
+# Chat
+# =============================================================================
+
+CHAT_SYSTEM_PROMPT = """You are a helpful assistant with access to the user's memory system.
+Answer questions based on the provided memory context.
+Be concise and direct. If the memory doesn't contain relevant information, say so.
+Do not make up information that isn't in the provided context."""
+
+
+async def stream_chat(request: Request):
+    """Stream a chat response using the LLM with memory context."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        body = await request.json()
+        messages = body.get("messages", [])
+        context = body.get("context", "")
+
+        if not messages:
+            return JSONResponse(
+                {"error": "Missing 'messages' in request body"},
+                status_code=400,
+            )
+
+        # Build the system prompt with memory context
+        system_prompt = CHAT_SYSTEM_PROMPT
+        if context:
+            system_prompt += f"\n\n{context}"
+
+        # Convert messages to the format expected by the LLM provider
+        chat_messages = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in messages
+        ]
+
+        async def generate():
+            try:
+                async for chunk in memory.llm.complete_stream(
+                    messages=chat_messages,
+                    system=system_prompt,
+                    temperature=0.7,
+                    max_tokens=2048,
+                ):
+                    # Send as SSE format
+                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                # Signal completion
+                yield f"data: {json.dumps({'done': True})}\n\n"
+            except Exception as e:
+                logger.exception("Error during chat streaming")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except Exception as e:
+        logger.exception("Failed to start chat stream")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# =============================================================================
 # Databases
 # =============================================================================
 
@@ -479,5 +547,6 @@ api_routes = [
     Route("/api/v1/entities/{id:path}/episodes", get_entity_episodes, methods=["GET"]),
     Route("/api/v1/graph", get_graph, methods=["GET"]),
     Route("/api/v1/query", execute_query, methods=["POST"]),
+    Route("/api/v1/chat", stream_chat, methods=["POST"]),
     Route("/api/v1/databases", list_databases, methods=["GET"]),
 ]

@@ -3,9 +3,9 @@
 import os
 import json
 import re
-from typing import Optional
+from typing import Optional, AsyncIterator
 
-from remind.providers.base import LLMProvider, EmbeddingProvider
+from remind.providers.base import LLMProvider, EmbeddingProvider, ChatMessage
 
 
 class OpenAILLM(LLMProvider):
@@ -104,6 +104,36 @@ class OpenAILLM(LLMProvider):
     @property
     def name(self) -> str:
         return f"openai/{self.model}"
+
+    async def complete_stream(
+        self,
+        messages: list[ChatMessage],
+        system: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[str]:
+        """Generate a streaming completion using GPT."""
+        client = self._get_client()
+
+        # Build messages list
+        openai_messages = []
+        if system:
+            openai_messages.append({"role": "system", "content": system})
+
+        for msg in messages:
+            openai_messages.append({"role": msg["role"], "content": msg["content"]})
+
+        stream = await client.chat.completions.create(
+            model=self.model,
+            messages=openai_messages,
+            temperature=temperature,
+            max_completion_tokens=max_tokens,
+            stream=True,
+        )
+
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
 
 class OpenAIEmbedding(EmbeddingProvider):

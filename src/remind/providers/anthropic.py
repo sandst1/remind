@@ -3,9 +3,9 @@
 import os
 import json
 import re
-from typing import Optional
+from typing import Optional, AsyncIterator
 
-from remind.providers.base import LLMProvider, EmbeddingProvider
+from remind.providers.base import LLMProvider, EmbeddingProvider, ChatMessage
 
 
 class AnthropicLLM(LLMProvider):
@@ -93,6 +93,36 @@ class AnthropicLLM(LLMProvider):
     @property
     def name(self) -> str:
         return f"anthropic/{self.model}"
+
+    async def complete_stream(
+        self,
+        messages: list[ChatMessage],
+        system: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[str]:
+        """Generate a streaming completion using Claude."""
+        client = self._get_client()
+
+        # Convert messages to Anthropic format
+        anthropic_messages = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in messages
+        ]
+
+        kwargs = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": anthropic_messages,
+        }
+
+        if system:
+            kwargs["system"] = system
+
+        async with client.messages.stream(**kwargs) as stream:
+            async for text in stream.text_stream:
+                yield text
 
 
 class AnthropicEmbedding(EmbeddingProvider):

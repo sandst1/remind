@@ -4,11 +4,25 @@
     queryLoading,
     queryError,
     currentDb,
+    chatMessages,
+    chatLoading,
+    chatError,
+    chatContext,
   } from '../lib/stores';
-  import { executeQuery } from '../lib/api';
+  import { executeQuery, streamChat } from '../lib/api';
+  import type { ChatMessage } from '../lib/types';
 
   let queryText = '';
   let k = 5;
+  let chatInput = '';
+  let chatMessagesContainer: HTMLDivElement;
+
+  // Auto-scroll chat to bottom when messages change
+  $: if ($chatMessages.length > 0 && chatMessagesContainer) {
+    setTimeout(() => {
+      chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+    }, 0);
+  }
 
   async function handleQuery() {
     if (!queryText.trim() || !$currentDb) return;
@@ -16,14 +30,80 @@
     queryLoading.set(true);
     queryError.set(null);
     queryResult.set(null);
+    // Reset chat when starting a new query
+    chatMessages.set([]);
+    chatError.set(null);
+    chatContext.set('');
 
     try {
       const result = await executeQuery(queryText, { k });
       queryResult.set(result);
+
+      // Auto-answer: start chat with the query if we have results
+      if (result.concepts.length > 0 && result.formatted) {
+        chatContext.set(result.formatted);
+        await sendChatMessage(queryText, true);
+      }
     } catch (e) {
       queryError.set(e instanceof Error ? e.message : 'Query failed');
     } finally {
       queryLoading.set(false);
+    }
+  }
+
+  async function sendChatMessage(message: string, isInitial = false) {
+    if (!message.trim()) return;
+
+    // Add user message
+    const userMessage: ChatMessage = { role: 'user', content: message };
+    chatMessages.update(msgs => [...msgs, userMessage]);
+
+    if (!isInitial) {
+      chatInput = '';
+    }
+
+    // Add empty assistant message for streaming
+    const assistantMessage: ChatMessage = { role: 'assistant', content: '' };
+    chatMessages.update(msgs => [...msgs, assistantMessage]);
+
+    chatLoading.set(true);
+    chatError.set(null);
+
+    try {
+      const allMessages = [...$chatMessages.slice(0, -1)]; // Exclude the empty assistant message
+      await streamChat(
+        allMessages,
+        { context: $chatContext },
+        (chunk) => {
+          chatMessages.update(msgs => {
+            const updated = [...msgs];
+            const lastMsg = updated[updated.length - 1];
+            if (lastMsg.role === 'assistant') {
+              lastMsg.content += chunk;
+            }
+            return updated;
+          });
+        }
+      );
+    } catch (e) {
+      chatError.set(e instanceof Error ? e.message : 'Chat failed');
+      // Remove the empty assistant message on error
+      chatMessages.update(msgs => {
+        const last = msgs[msgs.length - 1];
+        if (last.role === 'assistant' && !last.content) {
+          return msgs.slice(0, -1);
+        }
+        return msgs;
+      });
+    } finally {
+      chatLoading.set(false);
+    }
+  }
+
+  function handleChatKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendChatMessage(chatInput);
     }
   }
 
@@ -55,140 +135,186 @@
   };
 </script>
 
-<div class="query-interface">
-  <div class="header">
-    <h2>Query Memory</h2>
-  </div>
+<div class="query-interface" class:has-results={$queryResult && $queryResult.concepts.length > 0}>
+  <div class="main-content">
+    <div class="header">
+      <h2>Query Memory</h2>
+    </div>
 
-  <div class="query-form">
-    <div class="query-input-wrapper">
-      <textarea
-        class="query-input"
-        bind:value={queryText}
-        onkeydown={handleKeydown}
-        placeholder="Ask a question about your memories...
+    <div class="query-form">
+      <div class="query-input-wrapper">
+        <textarea
+          class="query-input"
+          bind:value={queryText}
+          onkeydown={handleKeydown}
+          placeholder="Ask a question about your memories...
 
 Examples:
 - What programming languages does the user prefer?
 - How does the authentication system work?
 - What decisions have been made about caching?"
-        rows="4"
-      ></textarea>
-    </div>
-
-    <div class="query-options">
-      <div class="option">
-        <label for="k-value">Results:</label>
-        <input
-          id="k-value"
-          type="number"
-          bind:value={k}
-          min="1"
-          max="20"
-        />
+          rows="4"
+        ></textarea>
       </div>
 
-      <button
-        class="query-button"
-        onclick={handleQuery}
-        disabled={$queryLoading || !queryText.trim()}
-      >
-        {$queryLoading ? 'Searching...' : 'Search'}
-      </button>
-    </div>
-
-    <div class="shortcut-hint">
-      Press <kbd>Cmd</kbd>+<kbd>Enter</kbd> to search
-    </div>
-  </div>
-
-  {#if $queryError}
-    <div class="error-message">{$queryError}</div>
-  {/if}
-
-  {#if $queryResult}
-    <div class="results">
-      <h3>Results ({$queryResult.concepts.length} concepts found)</h3>
-
-      {#if $queryResult.concepts.length === 0}
-        <div class="no-results">
-          No relevant concepts found. Try a different query or check if the database has been consolidated.
+      <div class="query-options">
+        <div class="option">
+          <label for="k-value">Results:</label>
+          <input
+            id="k-value"
+            type="number"
+            bind:value={k}
+            min="1"
+            max="20"
+          />
         </div>
-      {:else}
-        <div class="concept-results">
-          {#each $queryResult.concepts as result, i}
-            <div class="result-item">
-              <div class="result-header">
-                <span class="result-rank">#{i + 1}</span>
-                <span class="result-activation">
-                  Activation: {formatActivation(result.activation)}
-                </span>
-                <span class="result-source source-{result.source}">
-                  {result.source === 'embedding' ? 'Direct match' : `Via association (${result.hops} hop${result.hops > 1 ? 's' : ''})`}
-                </span>
-              </div>
 
-              <div class="result-body">
-                <div class="result-meta">
-                  <span class="confidence confidence-{getConfidenceClass(result.concept.confidence)}">
-                    {Math.round(result.concept.confidence * 100)}% confidence
+        <button
+          class="query-button"
+          onclick={handleQuery}
+          disabled={$queryLoading || !queryText.trim()}
+        >
+          {$queryLoading ? 'Searching...' : 'Search'}
+        </button>
+      </div>
+
+      <div class="shortcut-hint">
+        Press <kbd>Cmd</kbd>+<kbd>Enter</kbd> to search
+      </div>
+    </div>
+
+    {#if $queryError}
+      <div class="error-message">{$queryError}</div>
+    {/if}
+
+    {#if $queryResult}
+      <div class="results">
+        <h3>Results ({$queryResult.concepts.length} concepts found)</h3>
+
+        {#if $queryResult.concepts.length === 0}
+          <div class="no-results">
+            No relevant concepts found. Try a different query or check if the database has been consolidated.
+          </div>
+        {:else}
+          <div class="concept-results">
+            {#each $queryResult.concepts as result, i}
+              <div class="result-item">
+                <div class="result-header">
+                  <span class="result-rank">#{i + 1}</span>
+                  <span class="result-activation">
+                    Activation: {formatActivation(result.activation)}
                   </span>
-                  <span class="instance-count">
-                    {result.concept.instance_count} instance{result.concept.instance_count > 1 ? 's' : ''}
+                  <span class="result-source source-{result.source}">
+                    {result.source === 'embedding' ? 'Direct match' : `Via association (${result.hops} hop${result.hops > 1 ? 's' : ''})`}
                   </span>
                 </div>
 
-                <div class="result-summary">{result.concept.summary}</div>
-
-                {#if result.concept.conditions}
-                  <div class="result-conditions">
-                    <strong>Applies when:</strong> {result.concept.conditions}
+                <div class="result-body">
+                  <div class="result-meta">
+                    <span class="confidence confidence-{getConfidenceClass(result.concept.confidence)}">
+                      {Math.round(result.concept.confidence * 100)}% confidence
+                    </span>
+                    <span class="instance-count">
+                      {result.concept.instance_count} instance{result.concept.instance_count > 1 ? 's' : ''}
+                    </span>
                   </div>
-                {/if}
 
-                {#if result.concept.exceptions.length > 0}
-                  <div class="result-exceptions">
-                    <strong>Exceptions:</strong>
-                    <ul>
-                      {#each result.concept.exceptions as exception}
-                        <li>{exception}</li>
-                      {/each}
-                    </ul>
-                  </div>
-                {/if}
+                  <div class="result-summary">{result.concept.summary}</div>
 
-                {#if result.concept.relations.length > 0}
-                  <div class="result-relations">
-                    <strong>Related concepts:</strong>
-                    <div class="relations-list">
-                      {#each result.concept.relations.slice(0, 5) as rel}
-                        <span class="relation-badge relation-{rel.type}">
-                          {relationTypeLabels[rel.type]} → {rel.target_id}
-                        </span>
+                  {#if result.concept.conditions}
+                    <div class="result-conditions">
+                      <strong>Applies when:</strong> {result.concept.conditions}
+                    </div>
+                  {/if}
+
+                  {#if result.concept.exceptions.length > 0}
+                    <div class="result-exceptions">
+                      <strong>Exceptions:</strong>
+                      <ul>
+                        {#each result.concept.exceptions as exception}
+                          <li>{exception}</li>
+                        {/each}
+                      </ul>
+                    </div>
+                  {/if}
+
+                  {#if result.concept.relations.length > 0}
+                    <div class="result-relations">
+                      <strong>Related concepts:</strong>
+                      <div class="relations-list">
+                        {#each result.concept.relations.slice(0, 5) as rel}
+                          <span class="relation-badge relation-{rel.type}">
+                            {relationTypeLabels[rel.type]} → {rel.target_id}
+                          </span>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+
+                  {#if result.concept.tags.length > 0}
+                    <div class="result-tags">
+                      {#each result.concept.tags as tag}
+                        <span class="tag">{tag}</span>
                       {/each}
                     </div>
-                  </div>
-                {/if}
-
-                {#if result.concept.tags.length > 0}
-                  <div class="result-tags">
-                    {#each result.concept.tags as tag}
-                      <span class="tag">{tag}</span>
-                    {/each}
-                  </div>
-                {/if}
+                  {/if}
+                </div>
               </div>
-            </div>
-          {/each}
-        </div>
-
-        {#if $queryResult.formatted}
-          <div class="formatted-output">
-            <h4>Formatted for LLM</h4>
-            <pre>{$queryResult.formatted}</pre>
+            {/each}
           </div>
+
+          {#if $queryResult.formatted}
+            <details class="formatted-output">
+              <summary>Formatted for LLM</summary>
+              <pre>{$queryResult.formatted}</pre>
+            </details>
+          {/if}
         {/if}
-      {/if}
+      </div>
+    {/if}
+  </div>
+
+  <!-- Chat Panel - appears when results are available -->
+  {#if $queryResult && $queryResult.concepts.length > 0}
+    <div class="chat-panel">
+      <div class="chat-header">
+        <h3>Chat</h3>
+      </div>
+
+      <div class="chat-messages" bind:this={chatMessagesContainer}>
+        {#each $chatMessages as message}
+          <div class="chat-message chat-message-{message.role}">
+            <div class="chat-message-role">
+              {message.role === 'user' ? 'You' : 'Assistant'}
+            </div>
+            <div class="chat-message-content">
+              {message.content}{#if message.role === 'assistant' && $chatLoading && message === $chatMessages[$chatMessages.length - 1]}<span class="typing-cursor">|</span>{/if}
+            </div>
+          </div>
+        {/each}
+
+        {#if $chatError}
+          <div class="chat-error">{$chatError}</div>
+        {/if}
+      </div>
+
+      <div class="chat-input-area">
+        <textarea
+          class="chat-input"
+          bind:value={chatInput}
+          onkeydown={handleChatKeydown}
+          placeholder="Ask a follow-up question..."
+          rows="2"
+          disabled={$chatLoading}
+        ></textarea>
+        <button
+          class="chat-send-button"
+          onclick={() => sendChatMessage(chatInput)}
+          disabled={$chatLoading || !chatInput.trim()}
+        >
+          Send
+        </button>
+      </div>
     </div>
   {/if}
 </div>
@@ -196,6 +322,17 @@ Examples:
 <style>
   .query-interface {
     max-width: 900px;
+  }
+
+  .query-interface.has-results {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: var(--space-lg);
+    max-width: 1400px;
+  }
+
+  .main-content {
+    min-width: 0;
   }
 
   .header {
@@ -461,24 +598,169 @@ Examples:
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
-    padding: var(--space-md);
   }
 
-  .formatted-output h4 {
-    margin-bottom: var(--space-sm);
+  .formatted-output summary {
+    padding: var(--space-md);
+    cursor: pointer;
     font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
+    user-select: none;
+  }
+
+  .formatted-output summary:hover {
+    color: var(--color-text);
   }
 
   .formatted-output pre {
     margin: 0;
     padding: var(--space-md);
     background: var(--color-bg);
-    border-radius: var(--radius-md);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  /* Chat Panel Styles */
+  .chat-panel {
+    display: flex;
+    flex-direction: column;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    height: calc(100vh - 120px);
+    position: sticky;
+    top: var(--space-lg);
+  }
+
+  .chat-header {
+    padding: var(--space-md);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .chat-header h3 {
+    margin: 0;
+    font-size: var(--font-size-lg);
+  }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .chat-message {
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+  }
+
+  .chat-message-user {
+    background: var(--color-primary);
+    color: white;
+    margin-left: var(--space-xl);
+  }
+
+  .chat-message-assistant {
+    background: var(--color-bg);
+    margin-right: var(--space-xl);
+  }
+
+  .chat-message-role {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    margin-bottom: var(--space-xs);
+    opacity: 0.8;
+  }
+
+  .chat-message-content {
+    font-size: var(--font-size-sm);
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+
+  .typing-cursor {
+    animation: blink 1s step-end infinite;
+  }
+
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  .chat-error {
+    padding: var(--space-sm) var(--space-md);
+    background: #ffeef0;
+    border: 1px solid #ffc8cf;
+    border-radius: var(--radius-md);
+    color: #c00;
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-input-area {
+    padding: var(--space-md);
+    border-top: 1px solid var(--color-border);
+    display: flex;
+    gap: var(--space-sm);
+    align-items: flex-end;
+  }
+
+  .chat-input {
+    flex: 1;
+    padding: var(--space-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+    resize: none;
+    min-height: 40px;
+    max-height: 120px;
+  }
+
+  .chat-input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+  }
+
+  .chat-input:disabled {
+    opacity: 0.6;
+    background: var(--color-bg);
+  }
+
+  .chat-send-button {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-primary);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .chat-send-button:hover:not(:disabled) {
+    background: var(--color-primary-hover);
+  }
+
+  .chat-send-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* Responsive: stack on smaller screens */
+  @media (max-width: 1024px) {
+    .query-interface.has-results {
+      grid-template-columns: 1fr;
+    }
+
+    .chat-panel {
+      position: relative;
+      top: 0;
+      height: 500px;
+    }
   }
 </style>

@@ -1,7 +1,13 @@
 """Abstract base classes for LLM and Embedding providers."""
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, AsyncIterator, TypedDict
+
+
+class ChatMessage(TypedDict):
+    """A message in a chat conversation."""
+    role: str  # 'user' or 'assistant'
+    content: str
 
 
 class LLMProvider(ABC):
@@ -61,6 +67,44 @@ class LLMProvider(ABC):
     def name(self) -> str:
         """Return the provider name."""
         ...
+
+    async def complete_stream(
+        self,
+        messages: list[ChatMessage],
+        system: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[str]:
+        """
+        Generate a streaming completion for chat messages.
+
+        This method supports multi-turn conversations. Override in subclasses
+        for true streaming support. Default implementation falls back to
+        non-streaming complete().
+
+        Args:
+            messages: List of chat messages with role and content
+            system: Optional system message for context
+            temperature: Sampling temperature (0.0 = deterministic, 1.0 = creative)
+            max_tokens: Maximum tokens in response
+
+        Yields:
+            Text chunks as they are generated
+        """
+        # Default fallback: use complete() with last user message
+        last_user_msg = ""
+        for msg in reversed(messages):
+            if msg["role"] == "user":
+                last_user_msg = msg["content"]
+                break
+
+        result = await self.complete(
+            prompt=last_user_msg,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        yield result
 
 
 class EmbeddingProvider(ABC):
