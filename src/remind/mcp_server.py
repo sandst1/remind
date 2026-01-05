@@ -4,11 +4,6 @@ Remind MCP Server - Memory system exposed via Model Context Protocol.
 Single server instance supporting multiple databases. Each client specifies
 its database via URL query parameter.
 
-Database path resolution:
-    - Absolute path (/path/to/db.db or ~/path/to/db.db) - used as-is
-    - Relative path (./memory.db or subdir/memory.db) - resolved against cwd
-    - Simple name (my-project) - resolved to ~/.remind/my-project.db
-
 Usage:
     remind-mcp --port 8765
     Connect: http://127.0.0.1:8765/sse?db=my-project

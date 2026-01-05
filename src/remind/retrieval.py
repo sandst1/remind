@@ -328,7 +328,7 @@ class MemoryRetriever:
         self,
         activated: list[ActivatedConcept],
         include_relations: bool = True,
-        max_relations: int = 3,
+        max_relations: int = 5,
     ) -> str:
         """
         Format retrieved concepts for injection into an LLM prompt.
@@ -357,7 +357,7 @@ class MemoryRetriever:
             if c.conditions:
                 lines.append(f"  → Applies when: {c.conditions}")
             if c.exceptions:
-                lines.append(f"  → Exceptions: {', '.join(c.exceptions[:3])}")
+                lines.append(f"  → Exceptions: {', '.join(c.exceptions)}")
             
             # Key relations
             if include_relations and c.relations:
@@ -369,9 +369,7 @@ class MemoryRetriever:
                     # Get target concept summary
                     target = self.store.get_concept(rel.target_id)
                     if target:
-                        rel_str = f"  → {rel.type.value}: {target.summary[:60]}"
-                        if len(target.summary) > 60:
-                            rel_str += "..."
+                        rel_str = f"  → {rel.type.value}: {target.summary}"
                         lines.append(rel_str)
                         shown += 1
             
@@ -421,22 +419,16 @@ class MemoryRetriever:
                 
                 type_episodes = by_type[type_name]
                 lines.append(f"[{type_name.upper()}S]")
-                
-                for ep in type_episodes[:5]:  # Limit per type
+
+                for ep in type_episodes:
                     lines.append(f"  • {ep.content}")
-                
-                if len(type_episodes) > 5:
-                    lines.append(f"  ... and {len(type_episodes) - 5} more")
-                
+
                 lines.append("")
         else:
             # Simple chronological list
-            for ep in episodes[:15]:
+            for ep in episodes:
                 type_label = f"[{ep.episode_type.value[:3]}]"
                 lines.append(f"  {type_label} {ep.content}")
-            
-            if len(episodes) > 15:
-                lines.append(f"  ... and {len(episodes) - 15} more")
         
         return "\n".join(lines)
 

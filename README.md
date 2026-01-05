@@ -321,6 +321,12 @@ cd remind
 pip install -e ".[dev]"
 ```
 
+## Testing
+
+```bash
+PYTHONPATH=src pytest tests/
+```
+
 ## License
 
 Apache 2.0 ([LICENSE](./LICENSE))
