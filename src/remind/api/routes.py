@@ -115,7 +115,32 @@ async def get_concept_detail(request: Request) -> JSONResponse:
         if not concept:
             return JSONResponse({"error": "Concept not found"}, status_code=404)
 
-        return JSONResponse(concept.to_dict())
+        result = concept.to_dict()
+
+        # Add source episode data with content summaries
+        source_episodes_data = []
+        for ep_id in concept.source_episodes[:10]:  # Limit to 10
+            episode = memory.store.get_episode(ep_id)
+            if episode:
+                source_episodes_data.append({
+                    "id": episode.id,
+                    "content": episode.content[:150],  # Truncated preview
+                    "type": episode.episode_type.value,
+                })
+        result["source_episodes_data"] = source_episodes_data
+
+        # Add target summaries for relations and filter out invalid ones
+        concept_map = {c.id: c for c in memory.store.get_all_concepts()}
+        valid_relations = []
+        for rel in result.get("relations", []):
+            target = concept_map.get(rel["target_id"])
+            if target:
+                rel["target_summary"] = target.summary[:100]
+                valid_relations.append(rel)
+            # Skip relations to non-existent concepts (data integrity issue)
+        result["relations"] = valid_relations
+
+        return JSONResponse(result)
     except Exception as e:
         logger.exception("Failed to get concept")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -139,6 +164,7 @@ async def get_episodes(request: Request) -> JSONResponse:
         consolidated = request.query_params.get("consolidated")
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
+        search = request.query_params.get("search", "")
 
         # Get episodes based on filters
         if episode_type:
@@ -163,6 +189,14 @@ async def get_episodes(request: Request) -> JSONResponse:
         if consolidated is not None:
             is_consolidated = consolidated.lower() == "true"
             all_episodes = [e for e in all_episodes if e.consolidated == is_consolidated]
+
+        # Filter by search term (fulltext search on content)
+        if search:
+            search_lower = search.lower()
+            all_episodes = [
+                e for e in all_episodes
+                if search_lower in e.content.lower()
+            ]
 
         total = len(all_episodes)
         episodes = all_episodes[offset : offset + limit]

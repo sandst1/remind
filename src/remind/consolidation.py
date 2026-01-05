@@ -369,13 +369,18 @@ class Consolidator:
         # Generate embedding for the summary
         embedding = await self.embedding.embed(data["summary"])
         
-        # Build relations
+        # Build relations - only include ones with valid targets
         relations = []
         for rel_data in data.get("relations", []):
+            target_id = rel_data.get("target_id")
+            # Validate target exists before adding relation
+            if not target_id or not self.store.get_concept(target_id):
+                logger.warning(f"Skipping relation to non-existent concept: {target_id}")
+                continue
             try:
                 relations.append(Relation(
                     type=RelationType(rel_data["type"]),
-                    target_id=rel_data["target_id"],
+                    target_id=target_id,
                     strength=rel_data.get("strength", 0.5),
                     context=rel_data.get("context"),
                 ))

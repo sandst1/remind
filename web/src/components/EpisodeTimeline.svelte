@@ -12,6 +12,7 @@
 
   let filterType: EpisodeType | '' = '';
   let filterConsolidated: boolean | null = null;
+  let search = '';
   let page = 0;
   const pageSize = 20;
   let mounted = false;
@@ -38,6 +39,7 @@
         limit: pageSize,
         type: filterType || undefined,
         consolidated: filterConsolidated ?? undefined,
+        search: search || undefined,
       });
       episodes.set(response.episodes);
       episodesTotal.set(response.total);
@@ -97,6 +99,15 @@
   <div class="header">
     <h2>Episodes</h2>
     <div class="filters">
+      <div class="search-bar">
+        <input
+          type="text"
+          placeholder="Search episodes..."
+          bind:value={search}
+          onkeydown={(e) => e.key === 'Enter' && applyFilters()}
+        />
+        <button onclick={applyFilters}>Search</button>
+      </div>
       <select bind:value={filterType} onchange={applyFilters}>
         <option value="">All types</option>
         <option value="observation">Observations</option>
@@ -188,6 +199,32 @@
   .filters {
     display: flex;
     gap: var(--space-sm);
+    align-items: center;
+  }
+
+  .search-bar {
+    display: flex;
+    gap: var(--space-xs);
+  }
+
+  .search-bar input {
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    width: 200px;
+  }
+
+  .search-bar button {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-primary);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+
+  .search-bar button:hover {
+    opacity: 0.9;
   }
 
   .filters select {

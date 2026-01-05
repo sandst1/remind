@@ -5,7 +5,6 @@
   import Dashboard from './components/Dashboard.svelte';
   import ConceptList from './components/ConceptList.svelte';
   import EpisodeTimeline from './components/EpisodeTimeline.svelte';
-  import GraphVisualization from './components/GraphVisualization.svelte';
   import QueryInterface from './components/QueryInterface.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import DatabaseSelector from './components/DatabaseSelector.svelte';
@@ -32,7 +31,6 @@
     { view: 'dashboard', label: 'Dashboard', icon: 'home' },
     { view: 'concepts', label: 'Concepts', icon: 'lightbulb' },
     { view: 'episodes', label: 'Episodes', icon: 'history' },
-    { view: 'graph', label: 'Graph', icon: 'share' },
     { view: 'query', label: 'Query', icon: 'search' },
   ];
 </script>
@@ -75,8 +73,6 @@
         <ConceptList />
       {:else if $currentView === 'episodes'}
         <EpisodeTimeline />
-      {:else if $currentView === 'graph'}
-        <GraphVisualization />
       {:else if $currentView === 'query'}
         <QueryInterface />
       {/if}
