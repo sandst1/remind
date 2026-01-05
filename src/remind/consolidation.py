@@ -72,6 +72,7 @@ Respond with this exact JSON structure:
       "concept_id": "existing concept ID",
       "new_summary": "refined/updated summary (or null to keep existing)",
       "confidence_delta": 0.1,
+      "source_episodes": ["episode_id1", "episode_id2"],
       "add_exceptions": ["new exception if any"],
       "add_tags": ["new tag if any"],
       "reasoning": "why this update"
@@ -354,7 +355,12 @@ class Consolidator:
         for tag in update.get("add_tags", []):
             if tag not in concept.tags:
                 concept.tags.append(tag)
-        
+
+        # Add source episodes
+        for ep_id in update.get("source_episodes", []):
+            if ep_id not in concept.source_episodes:
+                concept.source_episodes.append(ep_id)
+
         concept.updated_at = datetime.now()
         self.store.update_concept(concept)
     

@@ -329,52 +329,62 @@ class MemoryRetriever:
         activated: list[ActivatedConcept],
         include_relations: bool = True,
         max_relations: int = 5,
+        include_episodes: bool = True,
     ) -> str:
         """
         Format retrieved concepts for injection into an LLM prompt.
-        
+
         This is the "recall" output that gets added to context.
         """
         if not activated:
             return "(No relevant memories found)"
-        
+
         lines = ["RELEVANT MEMORY:\n"]
-        
+
         for ac in activated:
             c = ac.concept
-            
+
             # Header with ID and confidence
             header = f"[{c.id}] (confidence: {c.confidence:.2f}"
             if ac.source == "spread":
                 header += f", via association"
             header += ")"
             lines.append(header)
-            
+
             # Summary
             lines.append(f"  {c.summary}")
-            
+
             # Conditions/Exceptions
             if c.conditions:
                 lines.append(f"  → Applies when: {c.conditions}")
             if c.exceptions:
                 lines.append(f"  → Exceptions: {', '.join(c.exceptions)}")
-            
+
             # Key relations
             if include_relations and c.relations:
                 shown = 0
                 for rel in c.relations:
                     if shown >= max_relations:
                         break
-                    
+
                     # Get target concept summary
                     target = self.store.get_concept(rel.target_id)
                     if target:
                         rel_str = f"  → {rel.type.value}: {target.summary}"
                         lines.append(rel_str)
                         shown += 1
-            
+
+            # Source episodes - full content, no truncation
+            if include_episodes and c.source_episodes:
+                lines.append("")
+                lines.append("  Source episodes:")
+                for ep_id in c.source_episodes:
+                    episode = self.store.get_episode(ep_id)
+                    if episode:
+                        lines.append(f"    • {episode.content}")
+
             lines.append("")  # Blank line between concepts
-        
+
         return "\n".join(lines)
     
     def format_entity_context(
