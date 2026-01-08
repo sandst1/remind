@@ -20,6 +20,12 @@ src/remind/
 ├── retrieval.py       # Spreading activation retrieval
 ├── cli.py             # Command-line interface
 ├── mcp_server.py      # MCP (Model Context Protocol) server
+├── api/               # REST API for web UI
+│   ├── __init__.py    # Exports api_routes
+│   └── routes.py      # Starlette route handlers
+├── static/            # Web UI assets (compiled)
+│   ├── index.html     # Entry point
+│   └── assets/        # CSS/JS bundles
 └── providers/         # LLM and embedding provider implementations
     ├── base.py        # Abstract base classes
     ├── anthropic.py   # Claude
@@ -191,6 +197,27 @@ pytest -v                   # Verbose
 2. Document in `docs/AGENTS.md`
 3. Test via MCP client
 
+### Adding a New REST API Endpoint
+
+1. Add route handler function to `api/routes.py`
+2. Add route to `api_routes` list at bottom of file
+3. Use `_get_memory_from_request()` helper to get MemoryInterface
+4. Return `JSONResponse` for data or `StreamingResponse` for SSE
+
+The REST API uses Starlette and serves the web UI. Endpoints:
+- `GET /api/v1/stats` - Memory statistics
+- `GET /api/v1/concepts` - Paginated concepts list
+- `GET /api/v1/concepts/{id}` - Concept detail with source episodes
+- `GET /api/v1/episodes` - Paginated episodes with filters
+- `GET /api/v1/episodes/{id}` - Episode detail
+- `GET /api/v1/entities` - All entities with mention counts
+- `GET /api/v1/entities/{id}` - Entity detail
+- `GET /api/v1/entities/{id}/episodes` - Episodes mentioning entity
+- `GET /api/v1/graph` - Full concept graph for D3 visualization
+- `POST /api/v1/query` - Execute recall query
+- `POST /api/v1/chat` - Streaming chat with memory context (SSE)
+- `GET /api/v1/databases` - List available databases
+
 ## Development Setup
 
 ```bash
@@ -215,6 +242,25 @@ remind --help
 remind-mcp --port 8765
 ```
 
+### Using uv (Recommended)
+
+[uv](https://docs.astral.sh/uv/) is a fast Python package manager that simplifies development:
+
+```bash
+# Install dependencies and run tests
+uv run pytest
+
+# Run CLI commands
+uv run remind --help
+uv run remind remember "Some observation"
+uv run remind recall "query"
+
+# Run MCP server
+uv run remind-mcp --port 8765
+```
+
+With `uv`, you don't need to manually create a virtual environment or install dependencies - it handles everything automatically.
+
 ## Design Principles
 
 1. **Separation of concerns**: Storage, providers, consolidation, retrieval are independent
@@ -236,6 +282,7 @@ When making changes, these files are most commonly modified together:
 | Retrieval behavior | `retrieval.py` |
 | CLI commands | `cli.py` |
 | MCP tools | `mcp_server.py`, `docs/AGENTS.md` |
+| REST API endpoints | `api/routes.py` |
 | Public API | `interface.py`, `__init__.py`, `README.md` |
 
 ## Debugging Tips

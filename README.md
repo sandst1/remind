@@ -321,10 +321,30 @@ cd remind
 pip install -e ".[dev]"
 ```
 
+### Using uv (Recommended)
+
+[uv](https://docs.astral.sh/uv/) is a fast Python package manager. For development:
+
+```bash
+git clone https://github.com/YOUR_USERNAME/remind.git
+cd remind
+
+# Run commands directly (uv handles dependencies automatically)
+uv run remind --help
+uv run remind-mcp --port 8765
+
+# Run tests
+uv run pytest
+```
+
 ## Testing
 
 ```bash
-PYTHONPATH=src pytest tests/
+# With pip install
+pytest
+
+# With uv (recommended)
+uv run pytest
 ```
 
 ## License
