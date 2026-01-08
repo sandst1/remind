@@ -344,8 +344,11 @@ class MemoryRetriever:
         for ac in activated:
             c = ac.concept
 
-            # Header with ID and confidence
-            header = f"[{c.id}] (confidence: {c.confidence:.2f}"
+            # Header with ID, title (if present), and confidence
+            if c.title:
+                header = f"[{c.id}] {c.title} (confidence: {c.confidence:.2f}"
+            else:
+                header = f"[{c.id}] (confidence: {c.confidence:.2f}"
             if ac.source == "spread":
                 header += f", via association"
             header += ")"

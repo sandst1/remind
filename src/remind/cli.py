@@ -298,6 +298,8 @@ def inspect(ctx, concept_id: Optional[str], episodes: bool, limit: int):
             return
         
         tree = Tree(f"[bold cyan]{concept_id}[/bold cyan]")
+        if concept.title:
+            tree.add(f"[bold]Title:[/bold] {concept.title}")
         tree.add(f"[bold]Summary:[/bold] {concept.summary}")
         tree.add(f"Confidence: {concept.confidence:.2f}")
         tree.add(f"Instances: {concept.instance_count}")
@@ -340,19 +342,22 @@ def inspect(ctx, concept_id: Optional[str], episodes: bool, limit: int):
         
         table = Table(title=f"All Concepts ({len(concepts)})")
         table.add_column("ID", style="cyan")
+        table.add_column("Title")
         table.add_column("Summary")
         table.add_column("Conf", justify="right")
         table.add_column("N", justify="right")
         table.add_column("Relations", justify="right")
         table.add_column("Tags", style="dim")
-        
+
         for c in concepts:
-            summary = c.summary[:50] + "..." if len(c.summary) > 50 else c.summary
+            title = c.title or "-"
+            summary = c.summary[:40] + "..." if len(c.summary) > 40 else c.summary
             tags = ", ".join(c.tags[:3]) if c.tags else ""
             if len(c.tags) > 3:
                 tags += "..."
             table.add_row(
                 c.id,
+                title,
                 summary,
                 f"{c.confidence:.2f}",
                 str(c.instance_count),

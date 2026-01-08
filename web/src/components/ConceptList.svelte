@@ -211,6 +211,9 @@
                 </span>
                 <span class="concept-count">{concept.instance_count}x</span>
               </div>
+              {#if concept.title}
+                <div class="concept-title">{concept.title}</div>
+              {/if}
               <div class="concept-summary">{concept.summary}</div>
               {#if concept.tags.length > 0}
                 <div class="concept-tags">
@@ -245,7 +248,7 @@
                   {#if index > 0}
                     <button class="back-btn" onclick={() => truncatePath(index - 1)}>←</button>
                   {/if}
-                  Concept Details
+                  {concept.title || 'Concept Details'}
                 </h3>
                 <button class="close-btn" onclick={() => closePath(index)}>×</button>
               </div>
@@ -495,6 +498,12 @@
   .concept-count {
     color: var(--color-text-muted);
     font-family: var(--font-mono);
+  }
+
+  .concept-title {
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: var(--space-xs);
   }
 
   .concept-summary {

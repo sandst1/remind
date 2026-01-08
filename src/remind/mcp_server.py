@@ -278,6 +278,8 @@ async def tool_inspect(
             return f"Concept {concept_id} not found."
         
         lines = [f"Concept: {concept.id}"]
+        if concept.title:
+            lines.append(f"  Title: {concept.title}")
         lines.append(f"  Summary: {concept.summary}")
         lines.append(f"  Confidence: {concept.confidence:.2f}")
         lines.append(f"  Instances: {concept.instance_count}")
@@ -308,8 +310,8 @@ async def tool_inspect(
     lines = [f"All Concepts ({len(concepts)}):"]
     for c in concepts[:limit]:
         tags = f" [{', '.join(c.tags)}]" if c.tags else ""
-        lines.append(f"  [{c.id}] (conf: {c.confidence:.2f}, n={c.instance_count}){tags}")
-        lines.append(f"      {c.summary}")
+        title_display = c.title or c.summary[:50] + ("..." if len(c.summary) > 50 else "")
+        lines.append(f"  [{c.id}] {title_display} (conf: {c.confidence:.2f}, n={c.instance_count}){tags}")
     
     if len(concepts) > limit:
         lines.append(f"  ... and {len(concepts) - limit} more")

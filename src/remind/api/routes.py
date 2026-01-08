@@ -84,6 +84,7 @@ async def get_concepts(request: Request) -> JSONResponse:
             all_concepts = [
                 c for c in all_concepts
                 if search_lower in c.summary.lower()
+                or (c.title and search_lower in c.title.lower())
                 or any(search_lower in tag.lower() for tag in c.tags)
             ]
 
@@ -404,6 +405,7 @@ async def get_graph(request: Request) -> JSONResponse:
 
             nodes.append({
                 "id": concept.id,
+                "title": concept.title,
                 "summary": concept.summary,
                 "confidence": concept.confidence,
                 "instance_count": concept.instance_count,

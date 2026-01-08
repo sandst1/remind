@@ -70,6 +70,7 @@ Respond with this exact JSON structure:
   "updates": [
     {{
       "concept_id": "existing concept ID",
+      "new_title": "updated short title (5-10 words) or null to keep existing",
       "new_summary": "refined/updated summary (or null to keep existing)",
       "confidence_delta": 0.1,
       "source_episodes": ["episode_id1", "episode_id2"],
@@ -78,9 +79,10 @@ Respond with this exact JSON structure:
       "reasoning": "why this update"
     }}
   ],
-  
+
   "new_concepts": [
     {{
+      "title": "short descriptive title (5-10 words)",
       "summary": "the generalized understanding - be specific and actionable",
       "confidence": 0.6,
       "source_episodes": ["episode_id1", "episode_id2"],
@@ -287,16 +289,19 @@ class Consolidator:
         """Format existing concepts for the prompt."""
         if not concepts:
             return "(No existing concepts yet)"
-        
+
         lines = []
         for c in concepts:
             tags = ", ".join(c.get("tags", [])) if c.get("tags") else ""
             line = f"[{c['id']}] (conf: {c.get('confidence', 0.5):.2f}, n={c.get('instance_count', 1)})"
             if tags:
                 line += f" [{tags}]"
+            # Include title if present
+            if c.get("title"):
+                line += f"\n  Title: {c['title']}"
             line += f"\n  {c['summary']}"
             lines.append(line)
-        
+
         return "\n\n".join(lines)
     
     def _format_episodes(self, episodes: list[Episode]) -> str:
@@ -333,6 +338,10 @@ class Consolidator:
             logger.warning(f"Concept {concept_id} not found for update")
             return
         
+        # Update title if provided
+        if update.get("new_title"):
+            concept.title = update["new_title"]
+
         # Update summary if provided
         if update.get("new_summary"):
             concept.summary = update["new_summary"]
@@ -394,6 +403,7 @@ class Consolidator:
                 logger.warning(f"Invalid relation data: {e}")
         
         concept = Concept(
+            title=data.get("title"),
             summary=data["summary"],
             confidence=confidence,
             instance_count=len(data.get("source_episodes", [])) or 1,

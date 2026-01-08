@@ -223,6 +223,9 @@ Examples:
                     </span>
                   </div>
 
+                  {#if result.concept.title}
+                    <div class="result-title">{result.concept.title}</div>
+                  {/if}
                   <div class="result-summary">{result.concept.summary}</div>
 
                   {#if result.concept.conditions}
@@ -528,6 +531,12 @@ Examples:
 
   .instance-count {
     color: var(--color-text-muted);
+  }
+
+  .result-title {
+    font-weight: 600;
+    font-size: var(--font-size-lg);
+    margin-bottom: var(--space-xs);
   }
 
   .result-summary {

@@ -180,7 +180,10 @@ class Concept:
     """
     
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    
+
+    # Short title for the concept (5-10 words)
+    title: Optional[str] = None
+
     # The generalized understanding in natural language
     summary: str = ""
     
@@ -210,6 +213,7 @@ class Concept:
         """Serialize to dictionary for storage."""
         return {
             "id": self.id,
+            "title": self.title,
             "summary": self.summary,
             "confidence": self.confidence,
             "instance_count": self.instance_count,
@@ -228,6 +232,7 @@ class Concept:
         """Deserialize from dictionary."""
         return cls(
             id=data["id"],
+            title=data.get("title"),
             summary=data["summary"],
             confidence=data.get("confidence", 0.5),
             instance_count=data.get("instance_count", 1),

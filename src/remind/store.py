@@ -239,6 +239,7 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS concepts (
                     id TEXT PRIMARY KEY,
+                    title TEXT,
                     summary TEXT,
                     data JSON NOT NULL,
                     embedding BLOB,
@@ -350,7 +351,15 @@ class SQLiteMemoryStore(MemoryStore):
         # Check if episodes table has the entities_extracted indicator in data
         # This is handled via JSON in the data column, so no schema migration needed
         # The Episode.from_dict() handles missing fields with defaults
-        
+
+        # Migration: Add title column to concepts table if it doesn't exist
+        try:
+            conn.execute("SELECT title FROM concepts LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE concepts ADD COLUMN title TEXT")
+            conn.commit()
+            logger.info("Migration: Added title column to concepts table")
+
         # Log migration status
         try:
             entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
@@ -373,11 +382,12 @@ class SQLiteMemoryStore(MemoryStore):
             
             conn.execute(
                 """
-                INSERT INTO concepts (id, summary, data, embedding, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO concepts (id, title, summary, data, embedding, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     concept.id,
+                    concept.title,
                     concept.summary,
                     json.dumps(data),
                     embedding_blob,
@@ -442,11 +452,12 @@ class SQLiteMemoryStore(MemoryStore):
             
             conn.execute(
                 """
-                UPDATE concepts 
-                SET summary = ?, data = ?, embedding = ?, updated_at = ?
+                UPDATE concepts
+                SET title = ?, summary = ?, data = ?, embedding = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
+                    concept.title,
                     concept.summary,
                     json.dumps(data),
                     embedding_blob,
@@ -493,17 +504,18 @@ class SQLiteMemoryStore(MemoryStore):
         try:
             rows = conn.execute(
                 """
-                SELECT id, summary, 
+                SELECT id, title, summary,
                        json_extract(data, '$.confidence') as confidence,
                        json_extract(data, '$.instance_count') as instance_count,
                        json_extract(data, '$.tags') as tags
                 FROM concepts
                 """
             ).fetchall()
-            
+
             return [
                 {
                     "id": row["id"],
+                    "title": row["title"],
                     "summary": row["summary"],
                     "confidence": row["confidence"],
                     "instance_count": row["instance_count"],
