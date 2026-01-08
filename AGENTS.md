@@ -213,6 +213,7 @@ The REST API uses Starlette and serves the web UI. Endpoints:
 - `GET /api/v1/entities` - All entities with mention counts
 - `GET /api/v1/entities/{id}` - Entity detail
 - `GET /api/v1/entities/{id}/episodes` - Episodes mentioning entity
+- `GET /api/v1/entities/{id}/concepts` - Concepts derived from entity's episodes
 - `GET /api/v1/graph` - Full concept graph for D3 visualization
 - `POST /api/v1/query` - Execute recall query
 - `POST /api/v1/chat` - Streaming chat with memory context (SSE)

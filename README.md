@@ -152,6 +152,7 @@ The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`
 - `recall` - Retrieve relevant memories
 - `consolidate` - Process episodes into concepts
 - `inspect` - View concepts or episodes
+- `entities` - List entities in memory
 - `stats` - Memory statistics
 
 **Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.

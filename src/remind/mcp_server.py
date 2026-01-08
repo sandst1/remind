@@ -358,7 +358,53 @@ async def tool_stats() -> str:
     
     lines.append("")
     lines.append(f"Database: {db_path}")
-    
+
+    return "\n".join(lines)
+
+
+async def tool_entities(
+    entity_type: Optional[str] = None,
+    limit: int = 50,
+) -> str:
+    """List entities in memory with mention counts."""
+    from remind.models import EntityType
+
+    memory = await get_memory()
+    store = memory.store
+
+    # Get entities with mention counts
+    entity_counts = store.get_entity_mention_counts()
+
+    if not entity_counts:
+        return "No entities in memory."
+
+    # Filter by type if specified
+    if entity_type:
+        try:
+            ent_type = EntityType(entity_type)
+            entity_counts = [(e, c) for e, c in entity_counts if e.type == ent_type]
+        except ValueError:
+            valid_types = ", ".join(t.value for t in EntityType)
+            return f"Invalid entity_type: {entity_type}. Valid: {valid_types}"
+
+    if not entity_counts:
+        return f"No entities of type '{entity_type}' in memory."
+
+    # Apply limit
+    total = len(entity_counts)
+    entity_counts = entity_counts[:limit]
+
+    # Format output
+    lines = [f"Entities ({total} total):"]
+    for entity, count in entity_counts:
+        display = entity.display_name or entity.id.split(":", 1)[1] if ":" in entity.id else entity.id
+        lines.append(f"  {entity.id} ({count} mentions)")
+        if entity.display_name and entity.display_name != display:
+            lines.append(f"      Display: {entity.display_name}")
+
+    if total > limit:
+        lines.append(f"  ... and {total - limit} more")
+
     return "\n".join(lines)
 
 
@@ -496,17 +542,41 @@ def create_mcp_server():
     @mcp.tool()
     async def stats() -> str:
         """Get memory statistics.
-        
+
         Shows overview of memory contents including:
         - Number of concepts and episodes
         - Consolidation status
         - Relation type distribution
-        
+
         Returns:
             Formatted statistics summary
         """
         return await tool_stats()
-    
+
+    @mcp.tool()
+    async def entities(
+        entity_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> str:
+        """List entities (files, functions, people, etc.) in memory.
+
+        Entities are external referents that are mentioned in episodes.
+        They help organize memories around specific things like files,
+        people, tools, and concepts.
+
+        Use this to discover what entities exist in memory before using
+        recall with entity-based lookup.
+
+        Args:
+            entity_type: Optional filter by type: file, function, class,
+                         module, concept, person, project, tool, other
+            limit: Maximum number of entities to show (default: 50)
+
+        Returns:
+            List of entities with their mention counts
+        """
+        return await tool_entities(entity_type, limit)
+
     return mcp
 
 

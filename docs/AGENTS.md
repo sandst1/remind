@@ -19,6 +19,7 @@ Remind is your external memory layer. Unlike your context window (which resets e
 | `recall` | Retrieve relevant memories |
 | `consolidate` | Extract entities + process episodes into concepts |
 | `inspect` | View concepts or episodes |
+| `entities` | List entities in memory |
 | `stats` | Memory statistics |
 
 ---
@@ -129,6 +130,16 @@ inspect()                    # List all concepts
 inspect(concept_id="abc123") # Specific concept
 inspect(show_episodes=True)  # Recent episodes
 ```
+
+### entities - List Entities
+
+```
+entities()                   # List all entities with mention counts
+entities(entity_type="file") # Filter by type
+entities(limit=20)           # Limit results
+```
+
+Use this to discover what entities exist before using `recall(entity="...")`.
 
 ### stats - Memory Statistics
 

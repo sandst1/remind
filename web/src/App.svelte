@@ -3,6 +3,7 @@
   import { currentDb, currentView, databases, hasDatabase, type View } from './lib/stores';
   import { fetchDatabases, getDbParam } from './lib/api';
   import Dashboard from './components/Dashboard.svelte';
+  import EntityList from './components/EntityList.svelte';
   import ConceptList from './components/ConceptList.svelte';
   import EpisodeTimeline from './components/EpisodeTimeline.svelte';
   import QueryInterface from './components/QueryInterface.svelte';
@@ -29,8 +30,9 @@
 
   const navItems: Array<{ view: View; label: string; icon: string }> = [
     { view: 'dashboard', label: 'Dashboard', icon: 'home' },
-    { view: 'concepts', label: 'Concepts', icon: 'lightbulb' },
+    { view: 'entities', label: 'Entities', icon: 'tag' },
     { view: 'episodes', label: 'Episodes', icon: 'history' },
+    { view: 'concepts', label: 'Concepts', icon: 'lightbulb' },
     { view: 'query', label: 'Query', icon: 'search' },
   ];
 </script>
@@ -69,10 +71,12 @@
     {:else}
       {#if $currentView === 'dashboard'}
         <Dashboard />
-      {:else if $currentView === 'concepts'}
-        <ConceptList />
+      {:else if $currentView === 'entities'}
+        <EntityList />
       {:else if $currentView === 'episodes'}
         <EpisodeTimeline />
+      {:else if $currentView === 'concepts'}
+        <ConceptList />
       {:else if $currentView === 'query'}
         <QueryInterface />
       {/if}

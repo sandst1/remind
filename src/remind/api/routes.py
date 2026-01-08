@@ -311,6 +311,26 @@ async def get_entity_episodes(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def get_entity_concepts(request: Request) -> JSONResponse:
+    """Get concepts derived from episodes mentioning a specific entity."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    from urllib.parse import unquote
+    entity_id = unquote(request.path_params.get("id", ""))
+    limit = int(request.query_params.get("limit", 50))
+
+    try:
+        concepts = memory.store.get_concepts_for_entity(entity_id, limit=limit)
+        return JSONResponse({
+            "concepts": [c.to_dict() for c in concepts],
+        })
+    except Exception as e:
+        logger.exception("Failed to get entity concepts")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # =============================================================================
 # Graph
 # =============================================================================
@@ -545,6 +565,7 @@ api_routes = [
     Route("/api/v1/entities", get_entities, methods=["GET"]),
     Route("/api/v1/entities/{id:path}", get_entity_detail, methods=["GET"]),
     Route("/api/v1/entities/{id:path}/episodes", get_entity_episodes, methods=["GET"]),
+    Route("/api/v1/entities/{id:path}/concepts", get_entity_concepts, methods=["GET"]),
     Route("/api/v1/graph", get_graph, methods=["GET"]),
     Route("/api/v1/query", execute_query, methods=["POST"]),
     Route("/api/v1/chat", stream_chat, methods=["POST"]),

@@ -878,7 +878,48 @@ class SQLiteMemoryStore(MemoryStore):
             ]
         finally:
             conn.close()
-    
+
+    def get_concepts_for_entity(self, entity_id: str, limit: int = 50) -> list[Concept]:
+        """Get concepts derived from episodes mentioning an entity.
+
+        Finds concepts whose source_episodes overlap with episodes that mention
+        this entity, sorted by relevance (number of overlapping episodes).
+
+        Args:
+            entity_id: The entity ID (e.g., "file:src/auth.ts")
+            limit: Maximum number of concepts to return
+
+        Returns:
+            List of concepts sorted by relevance
+        """
+        conn = self._get_conn()
+        try:
+            # Get episode IDs that mention this entity
+            episode_rows = conn.execute(
+                "SELECT episode_id FROM mentions WHERE entity_id = ?",
+                (entity_id,)
+            ).fetchall()
+            episode_ids = {row["episode_id"] for row in episode_rows}
+
+            if not episode_ids:
+                return []
+
+            # Get all concepts and check which ones have overlapping source_episodes
+            all_concepts = self.get_all_concepts()
+
+            matching_concepts = []
+            for concept in all_concepts:
+                overlap = set(concept.source_episodes) & episode_ids
+                if overlap:
+                    matching_concepts.append((concept, len(overlap)))
+
+            # Sort by number of overlapping episodes (most relevant first)
+            matching_concepts.sort(key=lambda x: x[1], reverse=True)
+
+            return [c for c, _ in matching_concepts[:limit]]
+        finally:
+            conn.close()
+
     # Statistics
     
     def get_stats(self) -> dict:
