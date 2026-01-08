@@ -6,8 +6,10 @@
   import EntityList from './components/EntityList.svelte';
   import ConceptList from './components/ConceptList.svelte';
   import EpisodeTimeline from './components/EpisodeTimeline.svelte';
-  import Sidebar from './components/Sidebar.svelte';
   import DatabaseSelector from './components/DatabaseSelector.svelte';
+  
+  // Icons
+  import { Home, Tag, History, Lightbulb } from 'lucide-svelte';
 
   let initialized = false;
 
@@ -27,17 +29,17 @@
     initialized = true;
   });
 
-  const navItems: Array<{ view: View; label: string; icon: string }> = [
-    { view: 'dashboard', label: 'Dashboard', icon: 'home' },
-    { view: 'entities', label: 'Entities', icon: 'tag' },
-    { view: 'episodes', label: 'Episodes', icon: 'history' },
-    { view: 'concepts', label: 'Concepts', icon: 'lightbulb' },
+  const navItems: Array<{ view: View; label: string; icon: any }> = [
+    { view: 'dashboard', label: 'Dashboard', icon: Home },
+    { view: 'entities', label: 'Entities', icon: Tag },
+    { view: 'episodes', label: 'Episodes', icon: History },
+    { view: 'concepts', label: 'Concepts', icon: Lightbulb },
   ];
 </script>
 
 <div class="app">
   <aside class="sidebar">
-    <div class="sidebar-header">
+    <div class="sidebar-header glass">
       <h1 class="logo">Remind</h1>
       <DatabaseSelector />
     </div>
@@ -50,7 +52,9 @@
             class:active={$currentView === item.view}
             onclick={() => currentView.set(item.view)}
           >
-            <span class="nav-icon">{item.icon === 'home' ? '🏠' : item.icon === 'lightbulb' ? '💡' : item.icon === 'history' ? '📜' : item.icon === 'tag' ? '🏷️' : '🕸️'}</span>
+            <span class="nav-icon">
+              <svelte:component this={item.icon} size={18} />
+            </span>
             <span class="nav-label">{item.label}</span>
           </button>
         {/each}
@@ -85,6 +89,7 @@
     display: flex;
     height: 100vh;
     overflow: hidden;
+    background: var(--color-bg);
   }
 
   .sidebar {
@@ -94,26 +99,30 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    z-index: 20;
   }
 
   .sidebar-header {
-    padding: var(--space-md);
+    padding: var(--space-lg);
     border-bottom: 1px solid var(--color-border);
+    background: rgba(255, 255, 255, 0.9); /* Fallback for glass */
   }
 
   .logo {
     font-size: var(--font-size-xl);
-    font-weight: 600;
-    margin-bottom: var(--space-sm);
-    color: var(--color-primary);
+    font-weight: 700;
+    margin-bottom: var(--space-md);
+    color: var(--color-text);
+    letter-spacing: -0.025em;
   }
 
   .nav {
     flex: 1;
-    padding: var(--space-sm);
+    padding: var(--space-md);
     display: flex;
     flex-direction: column;
     gap: var(--space-xs);
+    overflow-y: auto;
   }
 
   .nav-item {
@@ -121,36 +130,47 @@
     align-items: center;
     gap: var(--space-sm);
     padding: var(--space-sm) var(--space-md);
-    border: none;
+    border: 1px solid transparent; /* Reserve space for border */
     background: transparent;
     border-radius: var(--radius-md);
     color: var(--color-text-secondary);
     text-align: left;
     transition: all 0.15s ease;
+    font-weight: 500;
+    position: relative;
   }
 
   .nav-item:hover {
-    background: var(--color-bg);
+    background: var(--color-zinc-100);
     color: var(--color-text);
   }
 
   .nav-item.active {
-    background: var(--color-primary);
-    color: white;
+    background: var(--color-primary-bg);
+    color: var(--color-primary);
+    border-color: rgba(37, 99, 235, 0.1); /* Subtle border for active state */
   }
 
   .nav-icon {
-    font-size: var(--font-size-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease;
+  }
+  
+  .nav-item:hover .nav-icon {
+    transform: scale(1.05);
   }
 
   .nav-label {
-    font-size: var(--font-size-base);
+    font-size: var(--font-size-sm);
   }
 
   .main {
     flex: 1;
     overflow: auto;
-    padding: var(--space-lg);
+    padding: var(--space-2xl);
+    background: var(--color-bg);
   }
 
   .loading,
@@ -166,5 +186,6 @@
   .no-db h2 {
     margin-bottom: var(--space-sm);
     color: var(--color-text);
+    font-weight: 600;
   }
 </style>

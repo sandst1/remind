@@ -9,6 +9,27 @@
   } from '../lib/stores';
   import { fetchEntities, fetchEntity, fetchEntityEpisodes, fetchEntityConcepts, fetchEpisode, fetchConcept } from '../lib/api';
   import type { Entity, Episode, Concept, EntityType, EntityRelation } from '../lib/types';
+  import {
+    File,
+    Code,
+    Box,
+    Folder,
+    Lightbulb,
+    User,
+    Briefcase,
+    Wrench,
+    Paperclip,
+    Eye,
+    Zap,
+    CircleHelp,
+    Brain,
+    Heart,
+    Search,
+    ChevronRight,
+    ChevronDown,
+    X,
+    ArrowRight
+  } from 'lucide-svelte';
 
   let filterType: EntityType | '' = '';
   let search = '';
@@ -150,24 +171,24 @@
     other: 'Other',
   };
 
-  const entityTypeIcons: Record<EntityType, string> = {
-    file: '📄',
-    function: '⚡',
-    class: '📦',
-    module: '📁',
-    concept: '💡',
-    person: '👤',
-    project: '🏗️',
-    tool: '🔧',
-    other: '📎',
+  const entityTypeIcons: Record<EntityType, any> = {
+    file: File,
+    function: Code,
+    class: Box,
+    module: Folder,
+    concept: Lightbulb,
+    person: User,
+    project: Briefcase,
+    tool: Wrench,
+    other: Paperclip,
   };
 
-  const episodeTypeIcons: Record<string, string> = {
-    observation: '👁️',
-    decision: '⚡',
-    question: '❓',
-    meta: '🧠',
-    preference: '❤️',
+  const episodeTypeIcons: Record<string, any> = {
+    observation: Eye,
+    decision: Zap,
+    question: CircleHelp,
+    meta: Brain,
+    preference: Heart,
   };
 
   function formatDate(isoDate: string): string {
@@ -193,12 +214,15 @@
   <div class="header">
     <h2>Entities</h2>
     <div class="filters">
-      <input
-        type="text"
-        placeholder="Search entities..."
-        bind:value={search}
-        class="search-input"
-      />
+      <div class="search-bar">
+        <Search size={14} class="search-icon" />
+        <input
+          type="text"
+          placeholder="Search entities..."
+          bind:value={search}
+          class="search-input"
+        />
+      </div>
       <select bind:value={filterType} onchange={applyFilter}>
         <option value="">All types</option>
         <option value="file">Files</option>
@@ -230,7 +254,9 @@
               class:selected={selectedEntity?.id === entity.id}
               onclick={() => selectEntity(entity)}
             >
-              <span class="entity-icon">{entityTypeIcons[entity.type]}</span>
+              <span class="entity-icon icon-{entity.type}">
+                <svelte:component this={entityTypeIcons[entity.type]} size={16} />
+              </span>
               <div class="entity-info">
                 <div class="entity-id">{entity.id}</div>
                 {#if entity.display_name && entity.display_name !== entity.id}
@@ -253,10 +279,14 @@
         <div class="detail-content">
           <div class="panel-header">
             <h3>
-              <span class="entity-type-icon">{entityTypeIcons[selectedEntity.type]}</span>
+              <span class="entity-type-icon icon-{selectedEntity.type}">
+                <svelte:component this={entityTypeIcons[selectedEntity.type]} size={24} />
+              </span>
               {selectedEntity.display_name || selectedEntity.id}
             </h3>
-            <button class="close-btn" onclick={clearSelection}>×</button>
+            <button class="close-btn" onclick={clearSelection}>
+              <X size={20} />
+            </button>
           </div>
 
           <div class="detail-meta">
@@ -288,12 +318,20 @@
                         onclick={() => navigateToRelatedEntity(relation.related_entity)}
                       >
                         <div class="relation-header">
-                          <span class="relation-direction">{relation.direction === 'outgoing' ? '→' : '←'}</span>
+                          <span class="relation-direction">
+                            {#if relation.direction === 'outgoing'}
+                              <ArrowRight size={14} />
+                            {:else}
+                              <ArrowRight size={14} style="transform: rotate(180deg)" />
+                            {/if}
+                          </span>
                           <span class="relation-type">{relation.relation_type}</span>
                           <span class="relation-strength">{Math.round(relation.strength * 100)}%</span>
                         </div>
                         <div class="related-entity-info">
-                          <span class="entity-icon">{entityTypeIcons[relation.related_entity.type]}</span>
+                          <span class="entity-icon icon-{relation.related_entity.type}">
+                            <svelte:component this={entityTypeIcons[relation.related_entity.type]} size={14} />
+                          </span>
                           <span class="entity-name">{relation.related_entity.display_name || relation.related_entity.id}</span>
                         </div>
                       </button>
@@ -320,7 +358,9 @@
                         <span class="related-meta confidence {getConfidenceClass(concept.confidence)}">
                           {formatConfidence(concept.confidence)} confidence
                         </span>
-                        <span class="open-indicator">View →</span>
+                        <span class="open-indicator">
+                          View <ArrowRight size={12} style="display: inline-block; vertical-align: middle;" />
+                        </span>
                       </div>
                     </button>
                   {/each}
@@ -339,8 +379,16 @@
                       onclick={() => toggleEpisodeExpand(episode.id)}
                     >
                       <div class="episode-header">
-                        <span class="expand-indicator">{expandedEpisodes[episode.id] ? '▼' : '▶'}</span>
-                        <span class="episode-type-icon">{episodeTypeIcons[episode.episode_type] || '📝'}</span>
+                        <span class="expand-indicator">
+                          {#if expandedEpisodes[episode.id]}
+                            <ChevronDown size={14} />
+                          {:else}
+                            <ChevronRight size={14} />
+                          {/if}
+                        </span>
+                        <span class="episode-type-icon">
+                          <svelte:component this={episodeTypeIcons[episode.episode_type]} size={14} />
+                        </span>
                         <span class="episode-date">{formatDate(episode.timestamp)}</span>
                         {#if episode.consolidated}
                           <span class="episode-status consolidated">Consolidated</span>
@@ -384,7 +432,9 @@
     {#if selectedConcept}
       <div class="concept-side-panel">
         <div class="side-panel-header">
-          <button class="back-btn" onclick={closeConceptPanel}>← Close</button>
+          <button class="back-btn" onclick={closeConceptPanel}>
+            <ArrowRight size={16} style="transform: rotate(180deg)" /> Close
+          </button>
           <h3>{selectedConcept.title || 'Concept Detail'}</h3>
         </div>
 
@@ -465,7 +515,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    max-height: calc(100vh - var(--space-lg) * 2);
+    max-height: calc(100vh - var(--space-2xl) * 2);
   }
 
   .header {
@@ -478,7 +528,8 @@
 
   .header h2 {
     margin: 0;
-    font-size: var(--font-size-xl);
+    font-size: var(--font-size-2xl);
+    font-weight: 700;
   }
 
   .filters {
@@ -486,13 +537,32 @@
     gap: var(--space-sm);
   }
 
+  .search-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: var(--space-sm);
+    color: var(--color-text-muted);
+    pointer-events: none;
+  }
+
   .search-input {
-    padding: var(--space-xs) var(--space-sm);
+    padding: var(--space-xs) var(--space-sm) var(--space-xs) 30px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-surface);
     font-size: var(--font-size-sm);
     width: 200px;
+    transition: all 0.15s ease;
+  }
+  
+  .search-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-primary-bg);
   }
 
   .filters select {
@@ -501,6 +571,11 @@
     border-radius: var(--radius-md);
     background: var(--color-surface);
     font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+  
+  .filters select:hover {
+    border-color: var(--color-zinc-400);
   }
 
   .content {
@@ -511,12 +586,14 @@
   }
 
   .list-panel {
-    width: 400px;
+    width: 350px;
     flex-shrink: 0;
     overflow-y: auto;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     background: var(--color-surface);
+    display: flex;
+    flex-direction: column;
   }
 
   .entity-items {
@@ -530,7 +607,7 @@
     gap: var(--space-sm);
     padding: var(--space-sm) var(--space-md);
     border: none;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-zinc-100);
     background: transparent;
     text-align: left;
     cursor: pointer;
@@ -542,24 +619,42 @@
   }
 
   .entity-item:hover {
-    background: var(--color-bg);
+    background: var(--color-zinc-50);
   }
 
   .entity-item.selected {
-    background: var(--color-primary);
-    color: white;
+    background: var(--color-primary-bg);
+    border-left: 3px solid var(--color-primary);
+    padding-left: calc(var(--space-md) - 3px);
   }
 
-  .entity-item.selected .entity-id,
-  .entity-item.selected .entity-name,
-  .entity-item.selected .entity-count {
-    color: white;
+  .entity-item.selected .entity-id {
+    color: var(--color-primary);
+    font-weight: 500;
   }
 
   .entity-icon {
-    font-size: var(--font-size-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-secondary);
     flex-shrink: 0;
   }
+  
+  .entity-item.selected .entity-icon {
+    color: var(--color-primary);
+  }
+
+  /* Entity Type Colors */
+  .icon-file { color: var(--color-blue); }
+  .icon-function { color: var(--color-violet); }
+  .icon-class { color: var(--color-amber); }
+  .icon-module { color: var(--color-indigo); }
+  .icon-concept { color: var(--color-orange); }
+  .icon-person { color: var(--color-green); }
+  .icon-project { color: var(--color-primary); }
+  .icon-tool { color: var(--color-rose); }
+  .icon-other { color: var(--color-text-secondary); }
 
   .entity-info {
     flex: 1;
@@ -582,16 +677,19 @@
   }
 
   .entity-count {
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
-    background: var(--color-bg);
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
+    background: var(--color-zinc-100);
+    padding: 2px 6px;
+    border-radius: var(--radius-full);
     flex-shrink: 0;
+    min-width: 20px;
+    text-align: center;
   }
-
+  
   .entity-item.selected .entity-count {
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--color-surface);
+    color: var(--color-primary);
   }
 
   .detail-panel {
@@ -612,67 +710,77 @@
   }
 
   .detail-content {
-    padding: var(--space-md);
+    padding: var(--space-lg);
   }
 
   .panel-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    margin-bottom: var(--space-md);
+    margin-bottom: var(--space-lg);
   }
 
   .panel-header h3 {
     margin: 0;
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-xl);
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--space-sm);
+    font-weight: 600;
   }
 
   .entity-type-icon {
-    font-size: var(--font-size-xl);
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
   }
 
   .close-btn {
     background: none;
     border: none;
-    font-size: var(--font-size-xl);
     color: var(--color-text-secondary);
     cursor: pointer;
-    padding: 0;
-    line-height: 1;
+    padding: var(--space-xs);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .close-btn:hover {
+    background: var(--color-zinc-100);
     color: var(--color-text);
   }
 
   .detail-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-md);
-    margin-bottom: var(--space-lg);
-    padding: var(--space-sm);
-    background: var(--color-bg);
+    gap: var(--space-lg);
+    margin-bottom: var(--space-xl);
+    padding: var(--space-md);
+    background: var(--color-zinc-50);
     border-radius: var(--radius-md);
+    border: 1px solid var(--color-zinc-100);
   }
 
   .meta-item {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
   }
 
   .meta-label {
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
     text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.05em;
   }
 
   .meta-value {
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-base);
     color: var(--color-text);
+    font-weight: 500;
   }
 
   .meta-value.mono {
@@ -680,13 +788,16 @@
   }
 
   .detail-section {
-    margin-bottom: var(--space-lg);
+    margin-bottom: var(--space-xl);
   }
 
   .detail-section h4 {
     margin: 0 0 var(--space-sm) 0;
-    font-size: var(--font-size-base);
+    font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.05em;
   }
 
   .related-list {
@@ -696,15 +807,16 @@
   }
 
   .related-item {
-    padding: var(--space-sm);
-    background: var(--color-bg);
+    padding: var(--space-md);
+    background: var(--color-surface);
     border-radius: var(--radius-md);
     border: 1px solid var(--color-border);
+    transition: all 0.15s ease;
   }
 
   .concept-item .related-title {
     font-weight: 600;
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-base);
     color: var(--color-text);
     margin-bottom: var(--space-xs);
   }
@@ -712,37 +824,31 @@
   .concept-item .related-summary {
     font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
-    margin-bottom: var(--space-xs);
+    margin-bottom: var(--space-sm);
+    line-height: 1.5;
   }
 
   .related-meta {
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
+    font-weight: 500;
   }
 
-  .confidence.high {
-    color: var(--color-success);
-  }
-
-  .confidence.medium {
-    color: var(--color-warning);
-  }
-
-  .confidence.low {
-    color: var(--color-error);
-  }
+  .confidence.high { color: var(--color-success); }
+  .confidence.medium { color: var(--color-warning); }
+  .confidence.low { color: var(--color-error); }
 
   /* Entity relation item styles */
   .entity-relation-item {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    gap: var(--space-sm);
     cursor: pointer;
-    transition: background-color 0.15s ease;
   }
 
   .entity-relation-item:hover {
-    background: var(--color-surface);
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow-sm);
   }
 
   .relation-header {
@@ -753,35 +859,37 @@
   }
 
   .relation-direction {
-    color: var(--color-text-secondary);
-    font-weight: 500;
+    color: var(--color-text-muted);
+    display: flex;
+    align-items: center;
   }
 
   .relation-type {
     color: var(--color-primary);
-    font-weight: 500;
+    font-weight: 600;
+    background: var(--color-primary-bg);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
   }
 
   .relation-strength {
     margin-left: auto;
     font-size: var(--font-size-xs);
-    color: var(--color-text-secondary);
+    color: var(--color-text-muted);
   }
 
   .related-entity-info {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
-    padding-left: var(--space-md);
-  }
-
-  .related-entity-info .entity-icon {
-    font-size: var(--font-size-sm);
+    gap: var(--space-sm);
+    padding-left: var(--space-sm);
   }
 
   .related-entity-info .entity-name {
     font-size: var(--font-size-sm);
     color: var(--color-text);
+    font-weight: 500;
   }
 
   .episode-item .episode-header {
@@ -792,34 +900,39 @@
   }
 
   .episode-type-icon {
-    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
   }
 
   .episode-date {
     font-size: var(--font-size-xs);
-    color: var(--color-text-secondary);
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
   }
 
   .episode-status {
     font-size: var(--font-size-xs);
-    padding: 1px 6px;
-    border-radius: var(--radius-sm);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    font-weight: 500;
   }
 
   .episode-status.consolidated {
-    background: var(--color-success-bg, #e6f4ea);
-    color: var(--color-success, #1e7e34);
+    background: var(--color-success-bg);
+    color: var(--color-success);
   }
 
   .episode-status.pending {
-    background: var(--color-warning-bg, #fff8e6);
-    color: var(--color-warning, #bf8c00);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
   }
 
   .episode-preview {
     font-size: var(--font-size-sm);
     color: var(--color-text);
-    line-height: 1.4;
+    line-height: 1.5;
+    padding-left: 24px; /* Align with text after chevron */
   }
 
   .more-items {
@@ -827,6 +940,8 @@
     color: var(--color-text-secondary);
     text-align: center;
     padding: var(--space-sm);
+    background: var(--color-zinc-50);
+    border-radius: var(--radius-md);
   }
 
   .loading,
@@ -847,15 +962,15 @@
   .concept-item.clickable {
     cursor: pointer;
     transition: all 0.15s ease;
-    border: none;
+    border: 1px solid var(--color-border);
     width: 100%;
     text-align: left;
     font-family: inherit;
   }
 
   .concept-item.clickable:hover {
-    background: var(--color-border);
     border-color: var(--color-primary);
+    box-shadow: var(--shadow-sm);
   }
 
   .concept-footer {
@@ -868,7 +983,11 @@
   .open-indicator {
     font-size: var(--font-size-xs);
     color: var(--color-primary);
-    opacity: 0.7;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .concept-item.clickable:hover .open-indicator {
@@ -886,19 +1005,22 @@
   }
 
   .episode-item.expandable:hover {
-    background: var(--color-border);
+    background: var(--color-zinc-50);
   }
 
   .episode-item.expanded {
     border-color: var(--color-primary);
     background: var(--color-surface);
+    box-shadow: var(--shadow-sm);
   }
 
   .expand-indicator {
-    font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
-    width: 1em;
-    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
   }
 
   .episode-full-content {
@@ -921,8 +1043,8 @@
   .entity-tag {
     display: inline-block;
     padding: 2px 8px;
-    background: var(--color-primary-bg, #e3f2fd);
-    color: var(--color-primary);
+    background: var(--color-zinc-100);
+    color: var(--color-text-secondary);
     border-radius: var(--radius-sm);
     font-size: var(--font-size-xs);
     font-family: var(--font-mono);
@@ -938,7 +1060,7 @@
 
   .episode-id {
     font-size: var(--font-size-xs);
-    color: var(--color-text-secondary);
+    color: var(--color-text-muted);
     font-family: var(--font-mono);
   }
 
@@ -950,6 +1072,8 @@
     border-radius: var(--radius-lg);
     background: var(--color-surface);
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .side-panel-header {
@@ -961,12 +1085,14 @@
     position: sticky;
     top: 0;
     background: var(--color-surface);
+    z-index: 10;
   }
 
   .side-panel-header h3 {
     margin: 0;
     font-size: var(--font-size-base);
     color: var(--color-text);
+    font-weight: 600;
   }
 
   .back-btn {
@@ -978,48 +1104,56 @@
     font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
     transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
   }
 
   .back-btn:hover {
-    background: var(--color-bg);
+    background: var(--color-zinc-50);
     color: var(--color-text);
+    border-color: var(--color-zinc-300);
   }
 
   .side-panel-content {
-    padding: var(--space-md);
+    padding: var(--space-lg);
   }
 
   .concept-summary {
     font-size: var(--font-size-base);
     line-height: 1.6;
     color: var(--color-text);
-    margin-bottom: var(--space-md);
+    margin-bottom: var(--space-lg);
   }
 
   .concept-meta {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-md);
-    padding: var(--space-sm);
-    background: var(--color-bg);
+    padding: var(--space-md);
+    background: var(--color-zinc-50);
     border-radius: var(--radius-md);
-    margin-bottom: var(--space-md);
+    margin-bottom: var(--space-lg);
+    border: 1px solid var(--color-zinc-100);
   }
 
   .concept-section {
-    margin-bottom: var(--space-md);
+    margin-bottom: var(--space-lg);
   }
 
   .concept-section h4 {
     margin: 0 0 var(--space-xs) 0;
     font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
+    text-transform: uppercase;
+    font-weight: 600;
   }
 
   .concept-section p {
     margin: 0;
     font-size: var(--font-size-sm);
     color: var(--color-text);
+    line-height: 1.5;
   }
 
   .concept-section ul {
@@ -1037,7 +1171,7 @@
 
   .tag {
     padding: 2px 8px;
-    background: var(--color-bg);
+    background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     font-size: var(--font-size-xs);
@@ -1053,16 +1187,18 @@
     display: flex;
     gap: var(--space-sm);
     padding: var(--space-xs) var(--space-sm);
-    background: var(--color-bg);
+    background: var(--color-zinc-50);
     border-radius: var(--radius-sm);
     border-left: 3px solid var(--color-border);
     font-size: var(--font-size-sm);
+    align-items: center;
   }
 
   .relation-type {
     color: var(--color-text-secondary);
     font-size: var(--font-size-xs);
     text-transform: uppercase;
+    font-weight: 600;
   }
 
   .relation-target {
@@ -1071,8 +1207,8 @@
     font-size: var(--font-size-xs);
   }
 
-  .relation-implies { border-color: var(--color-success, #28a745); }
-  .relation-contradicts { border-color: var(--color-error, #dc3545); }
+  .relation-implies { border-color: var(--color-success); }
+  .relation-contradicts { border-color: var(--color-error); }
   .relation-specializes { border-color: var(--color-primary); }
-  .relation-generalizes { border-color: var(--color-warning, #ffc107); }
+  .relation-generalizes { border-color: var(--color-warning); }
 </style>

@@ -9,6 +9,7 @@
   } from '../lib/stores';
   import { fetchEpisodes } from '../lib/api';
   import type { Episode, EpisodeType } from '../lib/types';
+  import { Eye, Zap, CircleHelp, Brain, Heart, Search, Filter } from 'lucide-svelte';
 
   let filterType: EpisodeType | '' = '';
   let filterConsolidated: boolean | null = null;
@@ -86,12 +87,12 @@
     preference: 'Preference',
   };
 
-  const episodeTypeIcons: Record<EpisodeType, string> = {
-    observation: '👁️',
-    decision: '⚡',
-    question: '❓',
-    meta: '🧠',
-    preference: '❤️',
+  const episodeTypeIcons: Record<EpisodeType, any> = {
+    observation: Eye,
+    decision: Zap,
+    question: CircleHelp,
+    meta: Brain,
+    preference: Heart,
   };
 </script>
 
@@ -100,31 +101,39 @@
     <h2>Episodes</h2>
     <div class="filters">
       <div class="search-bar">
+        <div class="search-icon">
+          <Search size={16} />
+        </div>
         <input
           type="text"
           placeholder="Search episodes..."
           bind:value={search}
           onkeydown={(e) => e.key === 'Enter' && applyFilters()}
         />
-        <button onclick={applyFilters}>Search</button>
       </div>
-      <select bind:value={filterType} onchange={applyFilters}>
-        <option value="">All types</option>
-        <option value="observation">Observations</option>
-        <option value="decision">Decisions</option>
-        <option value="question">Questions</option>
-        <option value="meta">Meta</option>
-        <option value="preference">Preferences</option>
-      </select>
+      
+      <div class="select-wrapper">
+        <Filter size={14} class="select-icon" />
+        <select bind:value={filterType} onchange={applyFilters}>
+          <option value="">All types</option>
+          <option value="observation">Observations</option>
+          <option value="decision">Decisions</option>
+          <option value="question">Questions</option>
+          <option value="meta">Meta</option>
+          <option value="preference">Preferences</option>
+        </select>
+      </div>
 
-      <select
-        bind:value={filterConsolidated}
-        onchange={applyFilters}
-      >
-        <option value={null}>All status</option>
-        <option value={true}>Consolidated</option>
-        <option value={false}>Pending</option>
-      </select>
+      <div class="select-wrapper">
+        <select
+          bind:value={filterConsolidated}
+          onchange={applyFilters}
+        >
+          <option value={null}>All status</option>
+          <option value={true}>Consolidated</option>
+          <option value={false}>Pending</option>
+        </select>
+      </div>
     </div>
   </div>
 
@@ -139,7 +148,9 @@
       {#each $episodes as episode}
         <div class="timeline-item" class:consolidated={episode.consolidated}>
           <div class="timeline-marker">
-            <span class="episode-icon">{episodeTypeIcons[episode.episode_type]}</span>
+            <span class="episode-icon">
+              <svelte:component this={episodeTypeIcons[episode.episode_type]} size={16} />
+            </span>
           </div>
           <div class="timeline-content">
             <div class="episode-header">
@@ -183,17 +194,20 @@
 <style>
   .episode-timeline {
     max-width: 800px;
+    margin: 0 auto;
   }
 
   .header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: var(--space-lg);
+    margin-bottom: var(--space-xl);
   }
 
   h2 {
     font-size: var(--font-size-2xl);
+    font-weight: 700;
+    color: var(--color-text);
   }
 
   .filters {
@@ -203,40 +217,70 @@
   }
 
   .search-bar {
+    position: relative;
     display: flex;
-    gap: var(--space-xs);
+    align-items: center;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: var(--space-sm);
+    color: var(--color-text-muted);
+    pointer-events: none;
   }
 
   .search-bar input {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-sm) var(--space-md) var(--space-sm) 32px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    width: 200px;
+    width: 240px;
+    font-size: var(--font-size-sm);
+    background: var(--color-surface);
+    transition: all 0.15s ease;
   }
 
-  .search-bar button {
-    padding: var(--space-sm) var(--space-md);
-    background: var(--color-primary);
-    color: white;
-    border: none;
-    border-radius: var(--radius-md);
-    cursor: pointer;
+  .search-bar input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-primary-bg);
   }
 
-  .search-bar button:hover {
-    opacity: 0.9;
+  .select-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .select-icon {
+    position: absolute;
+    left: var(--space-sm);
+    color: var(--color-text-muted);
+    pointer-events: none;
+    z-index: 1;
   }
 
   .filters select {
     padding: var(--space-sm) var(--space-md);
+    padding-left: 30px; /* Make room for icon if needed, though only one has icon */
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-surface);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  
+  /* Helper for the one without icon */
+  .select-wrapper:last-child select {
+    padding-left: var(--space-md);
+  }
+
+  .filters select:hover {
+    border-color: var(--color-zinc-400);
   }
 
   .timeline {
     position: relative;
-    padding-left: 40px;
+    padding-left: 32px;
   }
 
   .timeline::before {
@@ -246,7 +290,7 @@
     top: 0;
     bottom: 0;
     width: 2px;
-    background: var(--color-border);
+    background: var(--color-zinc-200);
   }
 
   .timeline-item {
@@ -256,68 +300,84 @@
 
   .timeline-marker {
     position: absolute;
-    left: -40px;
-    width: 30px;
-    height: 30px;
+    left: -32px;
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--color-surface);
     border: 2px solid var(--color-border);
     border-radius: 50%;
-    font-size: var(--font-size-base);
+    color: var(--color-text-secondary);
+    z-index: 2;
+    transition: all 0.2s ease;
   }
 
   .timeline-item.consolidated .timeline-marker {
-    border-color: var(--color-implies);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background: var(--color-primary-bg);
   }
 
   .timeline-content {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
-    padding: var(--space-md);
+    padding: var(--space-lg);
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.2s ease;
+  }
+  
+  .timeline-content:hover {
+    box-shadow: var(--shadow-md);
   }
 
   .episode-header {
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-    margin-bottom: var(--space-sm);
+    margin-bottom: var(--space-md);
   }
 
   .episode-type {
     font-size: var(--font-size-xs);
-    font-weight: 500;
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
     text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
-  .type-observation { background: #e3f2fd; color: #1565c0; }
-  .type-decision { background: #fff3e0; color: #e65100; }
-  .type-question { background: #f3e5f5; color: #7b1fa2; }
-  .type-meta { background: #e8f5e9; color: #2e7d32; }
-  .type-preference { background: #fce4ec; color: #c2185b; }
+  /* Refined type colors using variables */
+  .type-observation { background: var(--color-blue-bg); color: var(--color-blue); }
+  .type-decision { background: var(--color-orange-bg); color: var(--color-orange); }
+  .type-question { background: var(--color-purple-bg); color: var(--color-purple); }
+  .type-meta { background: var(--color-green-bg); color: var(--color-green); }
+  .type-preference { background: var(--color-pink-bg); color: var(--color-pink); }
 
   .episode-date {
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
     color: var(--color-text-muted);
     margin-left: auto;
+    font-family: var(--font-mono);
   }
 
   .pending-badge {
     font-size: var(--font-size-xs);
-    padding: 2px 6px;
-    background: #fff3cd;
-    color: #856404;
-    border-radius: var(--radius-sm);
+    padding: 2px 8px;
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-full);
+    font-weight: 500;
   }
 
   .episode-content {
     line-height: 1.6;
     color: var(--color-text);
     white-space: pre-wrap;
+    font-size: var(--font-size-base);
   }
 
   .episode-entities {
@@ -328,56 +388,81 @@
   }
 
   .entity-tag {
-    padding: 2px 8px;
-    background: var(--color-bg);
+    padding: 4px 10px;
+    background: var(--color-zinc-100);
     border-radius: var(--radius-sm);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
     font-family: var(--font-mono);
+    color: var(--color-text-secondary);
+    border: 1px solid transparent;
+  }
+  
+  .entity-tag:hover {
+    border-color: var(--color-zinc-300);
   }
 
   .episode-footer {
     display: flex;
     gap: var(--space-md);
     margin-top: var(--space-md);
-    padding-top: var(--space-sm);
-    border-top: 1px solid var(--color-border);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--color-zinc-100);
     font-size: var(--font-size-xs);
     color: var(--color-text-muted);
+  }
+  
+  .episode-id {
+    font-family: var(--font-mono);
   }
 
   .pagination {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-top: var(--space-lg);
+    margin-top: var(--space-xl);
     padding: var(--space-md);
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
   }
 
   .pagination button {
     padding: var(--space-xs) var(--space-md);
-    background: var(--color-bg);
+    background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    cursor: pointer;
+    color: var(--color-text);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .pagination button:hover:not(:disabled) {
+    background: var(--color-zinc-50);
+    border-color: var(--color-zinc-300);
   }
 
   .pagination button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    background: var(--color-zinc-50);
   }
 
   .loading,
   .error,
   .empty {
-    padding: var(--space-xl);
+    padding: var(--space-2xl);
     text-align: center;
     color: var(--color-text-secondary);
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
   }
 
   .error {
-    color: var(--color-contradicts);
+    color: var(--color-error);
+    background: var(--color-error-bg);
+    border-color: var(--color-error);
   }
 </style>

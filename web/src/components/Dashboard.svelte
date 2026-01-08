@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { stats, statsLoading, statsError, currentDb } from '../lib/stores';
   import { fetchStats } from '../lib/api';
+  import { Lightbulb, History, Tag, Network, AlertCircle, CheckCircle } from 'lucide-svelte';
 
   let mounted = false;
 
@@ -59,11 +60,46 @@
   {:else if $statsError}
     <div class="error">{$statsError}</div>
   {:else if $stats}
-    <div class="stats-summary">
-      <span class="stat-item"><strong>{$stats.concepts}</strong> concepts</span>
-      <span class="stat-item"><strong>{$stats.episodes}</strong> episodes</span>
-      <span class="stat-item"><strong>{$stats.entities}</strong> entities</span>
-      <span class="stat-item"><strong>{$stats.relations}</strong> relations</span>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon icon-concepts">
+          <Lightbulb size={24} />
+        </div>
+        <div class="stat-content">
+          <span class="stat-value">{$stats.concepts}</span>
+          <span class="stat-label">Concepts</span>
+        </div>
+      </div>
+      
+      <div class="stat-card">
+        <div class="stat-icon icon-episodes">
+          <History size={24} />
+        </div>
+        <div class="stat-content">
+          <span class="stat-value">{$stats.episodes}</span>
+          <span class="stat-label">Episodes</span>
+        </div>
+      </div>
+      
+      <div class="stat-card">
+        <div class="stat-icon icon-entities">
+          <Tag size={24} />
+        </div>
+        <div class="stat-content">
+          <span class="stat-value">{$stats.entities}</span>
+          <span class="stat-label">Entities</span>
+        </div>
+      </div>
+      
+      <div class="stat-card">
+        <div class="stat-icon icon-relations">
+          <Network size={24} />
+        </div>
+        <div class="stat-content">
+          <span class="stat-value">{$stats.relations}</span>
+          <span class="stat-label">Relations</span>
+        </div>
+      </div>
     </div>
 
     <div class="section">
@@ -71,19 +107,26 @@
       <div class="consolidation-status">
         {#if $stats.unconsolidated_episodes > 0}
           <div class="status-item pending">
-            <span class="status-count">{$stats.unconsolidated_episodes}</span>
-            <span class="status-label">episodes pending consolidation</span>
+            <AlertCircle size={20} />
+            <div>
+              <span class="status-count">{$stats.unconsolidated_episodes}</span>
+              <span class="status-label">episodes pending consolidation</span>
+            </div>
           </div>
         {:else}
           <div class="status-item ok">
-            All episodes consolidated
+            <CheckCircle size={20} />
+            <span>All episodes consolidated</span>
           </div>
         {/if}
 
         {#if $stats.unextracted_count > 0}
           <div class="status-item pending">
-            <span class="status-count">{$stats.unextracted_count}</span>
-            <span class="status-label">episodes pending entity extraction</span>
+            <AlertCircle size={20} />
+            <div>
+              <span class="status-count">{$stats.unextracted_count}</span>
+              <span class="status-label">episodes pending entity extraction</span>
+            </div>
           </div>
         {/if}
       </div>
@@ -124,37 +167,87 @@
 <style>
   .dashboard {
     max-width: 1000px;
+    margin: 0 auto;
   }
 
   h2 {
-    margin-bottom: var(--space-lg);
+    margin-bottom: var(--space-xl);
     font-size: var(--font-size-2xl);
+    font-weight: 700;
+    color: var(--color-text);
+    letter-spacing: -0.025em;
   }
 
   h3 {
     margin-bottom: var(--space-md);
     font-size: var(--font-size-lg);
     color: var(--color-text-secondary);
+    font-weight: 600;
   }
 
-  .stats-summary {
-    display: flex;
-    flex-wrap: wrap;
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: var(--space-md);
     margin-bottom: var(--space-xl);
-    padding: var(--space-md);
+  }
+
+  .stat-card {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s ease;
+    cursor: default;
+  }
+  
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--color-zinc-300);
   }
 
-  .stat-item {
+  .stat-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+  }
+  
+  .stat-card:hover .stat-icon {
+    transform: scale(1.1);
+  }
+  
+  .icon-concepts { background: var(--color-amber-bg); color: var(--color-amber); }
+  .icon-episodes { background: var(--color-blue-bg); color: var(--color-blue); }
+  .icon-entities { background: var(--color-green-bg); color: var(--color-green); }
+  .icon-relations { background: var(--color-purple-bg); color: var(--color-purple); }
+
+  .stat-content {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .stat-value {
+    font-size: var(--font-size-2xl);
+    font-weight: 700;
+    color: var(--color-text);
+    line-height: 1.2;
+    letter-spacing: -0.025em;
+  }
+
+  .stat-label {
+    font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
-  }
-
-  .stat-item strong {
-    color: var(--color-primary);
-    font-size: var(--font-size-lg);
+    font-weight: 500;
   }
 
   .section {
@@ -163,6 +256,12 @@
     border-radius: var(--radius-lg);
     padding: var(--space-lg);
     margin-bottom: var(--space-lg);
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.2s ease;
+  }
+  
+  .section:hover {
+    box-shadow: var(--shadow-md);
   }
 
   .consolidation-status {
@@ -174,28 +273,35 @@
   .status-item {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-md);
+    gap: var(--space-md);
+    padding: var(--space-md);
     border-radius: var(--radius-md);
+    transition: transform 0.15s ease;
+  }
+  
+  .status-item:hover {
+    transform: scale(1.01);
   }
 
   .status-item.pending {
-    background: #fff3cd;
-    color: #856404;
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
+    border: 1px solid rgba(245, 158, 11, 0.2);
   }
 
   .status-item.ok {
-    background: #d4edda;
-    color: #155724;
+    background: var(--color-success-bg);
+    color: var(--color-success);
+    border: 1px solid rgba(16, 185, 129, 0.2);
   }
 
   .status-count {
-    font-weight: 600;
+    font-weight: 700;
   }
 
   .distributions {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: var(--space-lg);
   }
 
@@ -208,34 +314,53 @@
   .distribution-item {
     display: flex;
     justify-content: space-between;
-    padding: var(--space-sm);
-    background: var(--color-bg);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-zinc-50);
     border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    transition: background 0.15s ease;
+  }
+  
+  .distribution-item:hover {
+    background: var(--color-zinc-100);
+  }
+
+  .distribution-label {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
   }
 
   .distribution-value {
-    font-weight: 500;
+    font-weight: 600;
     font-family: var(--font-mono);
+    color: var(--color-text);
+    font-size: var(--font-size-sm);
   }
 
-  .relation-implies { color: var(--color-implies); }
-  .relation-contradicts { color: var(--color-contradicts); }
-  .relation-specializes { color: var(--color-specializes); }
-  .relation-generalizes { color: var(--color-generalizes); }
-  .relation-causes { color: var(--color-causes); }
-  .relation-correlates { color: var(--color-correlates); }
-  .relation-part_of { color: var(--color-part-of); }
-  .relation-context_of { color: var(--color-context-of); }
+  .relation-implies { color: var(--color-implies); font-weight: 500; }
+  .relation-contradicts { color: var(--color-contradicts); font-weight: 500; }
+  .relation-specializes { color: var(--color-specializes); font-weight: 500; }
+  .relation-generalizes { color: var(--color-generalizes); font-weight: 500; }
+  .relation-causes { color: var(--color-causes); font-weight: 500; }
+  .relation-correlates { color: var(--color-correlates); font-weight: 500; }
+  .relation-part_of { color: var(--color-part-of); font-weight: 500; }
+  .relation-context_of { color: var(--color-context-of); font-weight: 500; }
 
   .loading,
   .error,
   .empty {
-    padding: var(--space-xl);
+    padding: var(--space-2xl);
     text-align: center;
     color: var(--color-text-secondary);
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
   }
 
   .error {
-    color: var(--color-contradicts);
+    color: var(--color-error);
+    background: var(--color-error-bg);
+    border-color: var(--color-error);
   }
 </style>

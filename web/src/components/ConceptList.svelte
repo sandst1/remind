@@ -10,6 +10,18 @@
   } from '../lib/stores';
   import { fetchConcepts, fetchConcept, fetchEpisode } from '../lib/api';
   import type { Concept, Episode, EpisodeType } from '../lib/types';
+  import {
+    Eye,
+    Zap,
+    CircleHelp,
+    Brain,
+    Heart,
+    Search,
+    ChevronRight,
+    ChevronDown,
+    X,
+    ArrowRight
+  } from 'lucide-svelte';
 
   let search = '';
   let page = 0;
@@ -153,12 +165,12 @@
     context_of: 'Context of',
   };
 
-  const episodeTypeIcons: Record<string, string> = {
-    observation: '👁️',
-    decision: '⚡',
-    question: '❓',
-    meta: '🧠',
-    preference: '❤️',
+  const episodeTypeIcons: Record<string, any> = {
+    observation: Eye,
+    decision: Zap,
+    question: CircleHelp,
+    meta: Brain,
+    preference: Heart,
   };
 
   const episodeTypeLabels: Record<EpisodeType, string> = {
@@ -201,13 +213,14 @@
   <div class="header">
     <h2>Concepts</h2>
     <div class="search-bar">
+      <Search size={14} class="search-icon" />
       <input
         type="text"
         placeholder="Search concepts..."
         bind:value={search}
         onkeydown={(e) => e.key === 'Enter' && handleSearch()}
       />
-      <button onclick={handleSearch}>Search</button>
+      <!-- <button onclick={handleSearch}>Search</button> -->
     </div>
   </div>
 
@@ -268,11 +281,15 @@
               <div class="panel-header">
                 <h3>
                   {#if index > 0}
-                    <button class="back-btn" onclick={() => truncatePath(index - 1)}>←</button>
+                    <button class="back-btn" onclick={() => truncatePath(index - 1)}>
+                      <ArrowRight size={16} style="transform: rotate(180deg)" />
+                    </button>
                   {/if}
                   {concept.title || 'Concept Details'}
                 </h3>
-                <button class="close-btn" onclick={() => closePath(index)}>×</button>
+                <button class="close-btn" onclick={() => closePath(index)}>
+                  <X size={20} />
+                </button>
               </div>
 
               <div class="detail-section">
@@ -328,7 +345,9 @@
                         {#if relation.context}
                           <span class="relation-context">({relation.context})</span>
                         {/if}
-                        <span class="relation-arrow">→</span>
+                        <span class="relation-arrow">
+                          <ArrowRight size={14} />
+                        </span>
                       </button>
                     {/each}
                   </div>
@@ -347,9 +366,17 @@
                         onclick={() => toggleEpisodeExpand(episode.id)}
                       >
                         <div class="episode-collapsed">
-                          <span class="episode-icon">{episodeTypeIcons[episode.type] || '📝'}</span>
+                          <span class="episode-icon">
+                            <svelte:component this={episodeTypeIcons[episode.type]} size={16} />
+                          </span>
                           <span class="episode-content" class:expanded={!!expanded}>{episode.content}</span>
-                          <span class="episode-chevron">{expanded ? '▼' : '▶'}</span>
+                          <span class="episode-chevron">
+                            {#if expanded}
+                              <ChevronDown size={14} />
+                            {:else}
+                              <ChevronRight size={14} />
+                            {/if}
+                          </span>
                         </div>
                         {#if expanded}
                           <div class="episode-expanded">
@@ -434,26 +461,35 @@
 
   h2 {
     font-size: var(--font-size-2xl);
+    font-weight: 700;
   }
 
   .search-bar {
+    position: relative;
     display: flex;
-    gap: var(--space-sm);
+    align-items: center;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: var(--space-sm);
+    color: var(--color-text-muted);
+    pointer-events: none;
   }
 
   .search-bar input {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-sm) var(--space-md) var(--space-sm) 30px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     width: 250px;
+    font-size: var(--font-size-sm);
+    background: var(--color-surface);
+    transition: all 0.15s ease;
   }
-
-  .search-bar button {
-    padding: var(--space-sm) var(--space-md);
-    background: var(--color-primary);
-    color: white;
-    border: none;
-    border-radius: var(--radius-md);
+  
+  .search-bar input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-primary-bg);
   }
 
   .content {
@@ -499,7 +535,7 @@
 
   .concept-item.selected {
     border-color: var(--color-primary);
-    background: rgba(3, 102, 214, 0.05);
+    background: var(--color-primary-bg);
   }
 
   .concept-header {
@@ -510,16 +546,20 @@
   }
 
   .concept-confidence {
-    font-weight: 500;
+    font-weight: 600;
   }
 
-  .confidence-high { color: var(--color-confidence-high); }
-  .confidence-medium { color: var(--color-confidence-medium); }
-  .confidence-low { color: var(--color-confidence-low); }
+  .confidence-high { color: var(--color-success); }
+  .confidence-medium { color: var(--color-warning); }
+  .confidence-low { color: var(--color-error); }
 
   .concept-count {
     color: var(--color-text-muted);
     font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    background: var(--color-surface);
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
   }
 
   .concept-title {
@@ -530,11 +570,13 @@
 
   .concept-summary {
     color: var(--color-text);
-    line-height: 1.4;
+    line-height: 1.5;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
   }
 
   .concept-tags {
@@ -544,8 +586,9 @@
   }
 
   .tag {
-    padding: 2px 6px;
-    background: var(--color-border);
+    padding: 2px 8px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
@@ -557,14 +600,21 @@
     align-items: center;
     padding: var(--space-md);
     border-top: 1px solid var(--color-border);
+    background: var(--color-zinc-50);
   }
 
   .pagination button {
     padding: var(--space-xs) var(--space-md);
-    background: var(--color-bg);
+    background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     cursor: pointer;
+    font-size: var(--font-size-sm);
+    transition: all 0.15s ease;
+  }
+  
+  .pagination button:hover:not(:disabled) {
+    background: var(--color-zinc-100);
   }
 
   .pagination button:disabled {
@@ -589,11 +639,14 @@
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .detail-panel.first {
     border-color: var(--color-primary);
-    border-width: 2px;
+    border-width: 1px;
+    box-shadow: var(--shadow-sm);
   }
 
   .detail-content {
@@ -613,33 +666,36 @@
     gap: var(--space-sm);
     font-size: var(--font-size-lg);
     margin: 0;
+    font-weight: 600;
   }
 
   .back-btn {
-    padding: 2px 8px;
-    background: var(--color-bg);
+    padding: var(--space-xs);
+    background: var(--color-zinc-50);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     cursor: pointer;
-    font-size: var(--font-size-base);
-  }
-
-  .close-btn {
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font-size: var(--font-size-lg);
     display: flex;
     align-items: center;
     justify-content: center;
+    color: var(--color-text-secondary);
+  }
+
+  .close-btn {
+    padding: var(--space-xs);
+    background: var(--color-zinc-50);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-secondary);
   }
 
   .close-btn:hover, .back-btn:hover {
-    background: var(--color-border);
+    background: var(--color-zinc-100);
+    color: var(--color-text);
   }
 
   .detail-section {
@@ -651,6 +707,7 @@
     font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
     text-transform: uppercase;
+    font-weight: 600;
   }
 
   .detail-meta {
@@ -658,8 +715,9 @@
     gap: var(--space-lg);
     margin-bottom: var(--space-lg);
     padding: var(--space-md);
-    background: var(--color-bg);
+    background: var(--color-zinc-50);
     border-radius: var(--radius-md);
+    border: 1px solid var(--color-zinc-100);
   }
 
   .meta-item {
@@ -670,18 +728,22 @@
   .meta-label {
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
+    font-weight: 600;
   }
 
   .meta-value {
     font-size: var(--font-size-lg);
     font-weight: 600;
+    color: var(--color-text);
   }
 
   .conditions {
     padding: var(--space-md);
-    background: var(--color-bg);
+    background: var(--color-zinc-50);
     border-radius: var(--radius-md);
     font-style: italic;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-zinc-100);
   }
 
   .exceptions {
@@ -691,6 +753,7 @@
 
   .exceptions li {
     margin-bottom: var(--space-xs);
+    color: var(--color-text);
   }
 
   .relations-list {
@@ -705,8 +768,8 @@
     align-items: center;
     gap: var(--space-xs);
     padding: var(--space-sm) var(--space-md);
-    background: var(--color-bg);
-    border-radius: var(--radius-md);
+    background: var(--color-zinc-50);
+    border-radius: var(--radius-sm);
     border-left: 3px solid;
     cursor: pointer;
     text-align: left;
@@ -715,7 +778,7 @@
   }
 
   .relation-item:hover {
-    background: var(--color-border);
+    background: var(--color-zinc-100);
   }
 
   .relation-implies { border-color: var(--color-implies); }
@@ -728,15 +791,19 @@
   .relation-context_of { border-color: var(--color-context-of); }
 
   .relation-type {
-    font-weight: 500;
+    font-weight: 600;
     flex-shrink: 0;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
   }
 
   .relation-target {
     font-family: var(--font-mono);
     font-size: var(--font-size-xs);
-    color: var(--color-text-muted);
+    color: var(--color-text);
     flex-shrink: 0;
+    font-weight: 500;
   }
 
   .relation-summary {
@@ -773,8 +840,8 @@
     flex-direction: column;
     gap: var(--space-sm);
     padding: var(--space-sm) var(--space-md);
-    background: var(--color-bg);
-    border: 1px solid transparent;
+    background: var(--color-zinc-50);
+    border: 1px solid var(--color-zinc-100);
     border-radius: var(--radius-md);
     width: 100%;
     text-align: left;
@@ -783,12 +850,13 @@
   }
 
   .episode-item:hover {
-    border-color: var(--color-border);
+    border-color: var(--color-zinc-300);
   }
 
   .episode-item.expanded {
     border-color: var(--color-primary);
     background: var(--color-surface);
+    box-shadow: var(--shadow-sm);
   }
 
   .episode-collapsed {
@@ -799,12 +867,13 @@
 
   .episode-icon {
     flex-shrink: 0;
+    color: var(--color-text-secondary);
   }
 
   .episode-content {
     flex: 1;
     font-size: var(--font-size-sm);
-    line-height: 1.4;
+    line-height: 1.5;
     color: var(--color-text-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -818,14 +887,12 @@
 
   .episode-chevron {
     flex-shrink: 0;
-    font-size: var(--font-size-xs);
     color: var(--color-text-muted);
-    transition: transform 0.15s ease;
   }
 
   .episode-expanded {
     padding-top: var(--space-sm);
-    border-top: 1px solid var(--color-border);
+    border-top: 1px solid var(--color-zinc-100);
     margin-top: var(--space-xs);
   }
 
@@ -838,9 +905,9 @@
 
   .episode-type {
     font-size: var(--font-size-xs);
-    font-weight: 500;
+    font-weight: 600;
     padding: 2px 8px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-full);
     text-transform: uppercase;
   }
 
@@ -851,17 +918,19 @@
   .type-preference { background: #fce4ec; color: #c2185b; }
 
   .episode-date {
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
     color: var(--color-text-muted);
     margin-left: auto;
+    font-family: var(--font-mono);
   }
 
   .pending-badge {
     font-size: var(--font-size-xs);
     padding: 2px 6px;
-    background: #fff3cd;
-    color: #856404;
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
     border-radius: var(--radius-sm);
+    font-weight: 500;
   }
 
   .episode-full-content {
@@ -880,18 +949,19 @@
 
   .entity-tag {
     padding: 2px 8px;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
+    background: var(--color-zinc-100);
+    border: 1px solid var(--color-zinc-200);
     border-radius: var(--radius-sm);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
     font-family: var(--font-mono);
+    color: var(--color-text-secondary);
   }
 
   .episode-footer {
     display: flex;
     gap: var(--space-md);
     padding-top: var(--space-sm);
-    border-top: 1px solid var(--color-border);
+    border-top: 1px solid var(--color-zinc-100);
     font-size: var(--font-size-xs);
     color: var(--color-text-muted);
   }
@@ -905,6 +975,8 @@
     text-align: center;
     font-size: var(--font-size-sm);
     color: var(--color-text-muted);
+    background: var(--color-zinc-50);
+    border-radius: var(--radius-md);
   }
 
   .source-episodes-ids {
@@ -915,10 +987,11 @@
 
   .episode-id {
     padding: 2px 6px;
-    background: var(--color-bg);
+    background: var(--color-zinc-100);
     border-radius: var(--radius-sm);
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
   }
 
   .tags {
