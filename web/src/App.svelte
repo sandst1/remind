@@ -6,7 +6,6 @@
   import EntityList from './components/EntityList.svelte';
   import ConceptList from './components/ConceptList.svelte';
   import EpisodeTimeline from './components/EpisodeTimeline.svelte';
-  import QueryInterface from './components/QueryInterface.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import DatabaseSelector from './components/DatabaseSelector.svelte';
 
@@ -33,7 +32,6 @@
     { view: 'entities', label: 'Entities', icon: 'tag' },
     { view: 'episodes', label: 'Episodes', icon: 'history' },
     { view: 'concepts', label: 'Concepts', icon: 'lightbulb' },
-    { view: 'query', label: 'Query', icon: 'search' },
   ];
 </script>
 
@@ -52,7 +50,7 @@
             class:active={$currentView === item.view}
             onclick={() => currentView.set(item.view)}
           >
-            <span class="nav-icon">{item.icon === 'home' ? '🏠' : item.icon === 'lightbulb' ? '💡' : item.icon === 'history' ? '📜' : item.icon === 'tag' ? '🏷️' : item.icon === 'share' ? '🕸️' : '🔍'}</span>
+            <span class="nav-icon">{item.icon === 'home' ? '🏠' : item.icon === 'lightbulb' ? '💡' : item.icon === 'history' ? '📜' : item.icon === 'tag' ? '🏷️' : '🕸️'}</span>
             <span class="nav-label">{item.label}</span>
           </button>
         {/each}
@@ -77,8 +75,6 @@
         <EpisodeTimeline />
       {:else if $currentView === 'concepts'}
         <ConceptList />
-      {:else if $currentView === 'query'}
-        <QueryInterface />
       {/if}
     {/if}
   </main>

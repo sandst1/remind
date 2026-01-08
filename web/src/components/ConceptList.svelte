@@ -17,6 +17,7 @@
   let mounted = false;
   let detailsContainer: HTMLElement;
   let expandedEpisodes: Record<string, Episode | null> = {};
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   onMount(() => {
     mounted = true;
@@ -27,6 +28,26 @@
   $: if (mounted && $currentDb) {
     loadConcepts();
     conceptPath.set([]);
+  }
+
+  // Live filtering: trigger search when typing 2+ characters
+  $: if (mounted && $currentDb && search.length >= 2) {
+    debouncedSearch();
+  }
+
+  // Clear filter when search is emptied
+  $: if (mounted && $currentDb && search === '') {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    page = 0;
+    loadConcepts();
+  }
+
+  function debouncedSearch() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      page = 0;
+      loadConcepts();
+    }, 300);
   }
 
   async function loadConcepts() {
@@ -94,6 +115,7 @@
   }
 
   function handleSearch() {
+    if (debounceTimer) clearTimeout(debounceTimer);
     page = 0;
     loadConcepts();
   }

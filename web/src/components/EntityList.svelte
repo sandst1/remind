@@ -11,6 +11,7 @@
   import type { Entity, Episode, Concept, EntityType, EntityRelation } from '../lib/types';
 
   let filterType: EntityType | '' = '';
+  let search = '';
   let mounted = false;
 
   // Selected entity detail
@@ -38,6 +39,15 @@
     relatedEpisodes = [];
     relatedConcepts = [];
   }
+
+  // Client-side filtering of entities
+  $: filteredEntities = search.length >= 2
+    ? $entities.filter(e => {
+        const searchLower = search.toLowerCase();
+        return e.id.toLowerCase().includes(searchLower) ||
+               (e.display_name && e.display_name.toLowerCase().includes(searchLower));
+      })
+    : $entities;
 
   async function loadEntities() {
     if (!$currentDb) return;
@@ -183,6 +193,12 @@
   <div class="header">
     <h2>Entities</h2>
     <div class="filters">
+      <input
+        type="text"
+        placeholder="Search entities..."
+        bind:value={search}
+        class="search-input"
+      />
       <select bind:value={filterType} onchange={applyFilter}>
         <option value="">All types</option>
         <option value="file">Files</option>
@@ -204,11 +220,11 @@
         <div class="loading">Loading entities...</div>
       {:else if $entitiesError}
         <div class="error">{$entitiesError}</div>
-      {:else if $entities.length === 0}
+      {:else if filteredEntities.length === 0}
         <div class="empty">No entities found</div>
       {:else}
         <div class="entity-items">
-          {#each $entities as entity}
+          {#each filteredEntities as entity}
             <button
               class="entity-item"
               class:selected={selectedEntity?.id === entity.id}
@@ -468,6 +484,15 @@
   .filters {
     display: flex;
     gap: var(--space-sm);
+  }
+
+  .search-input {
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    font-size: var(--font-size-sm);
+    width: 200px;
   }
 
   .filters select {
