@@ -99,6 +99,49 @@ class Entity:
 
 
 @dataclass
+class EntityRelation:
+    """
+    A relationship between two entities, extracted from episode content.
+
+    Unlike concept relations which use typed enums, entity relations use
+    free-form strings since entities can represent anything across domains.
+    """
+
+    source_id: str  # Entity ID (e.g., "person:alice")
+    target_id: str  # Entity ID (e.g., "person:bob")
+    relation_type: str  # Free-form string (e.g., "manages", "imports", "authored")
+    strength: float = 0.5  # 0.0-1.0 confidence
+    context: Optional[str] = None  # When/where this relation holds
+    source_episode_id: Optional[str] = None  # Provenance - which episode established this
+    created_at: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        return {
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "relation_type": self.relation_type,
+            "strength": self.strength,
+            "context": self.context,
+            "source_episode_id": self.source_episode_id,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "EntityRelation":
+        """Deserialize from dictionary."""
+        return cls(
+            source_id=data["source_id"],
+            target_id=data["target_id"],
+            relation_type=data["relation_type"],
+            strength=data.get("strength", 0.5),
+            context=data.get("context"),
+            source_episode_id=data.get("source_episode_id"),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+        )
+
+
+@dataclass
 class Relation:
     """A directed relationship between two concepts."""
     
@@ -245,6 +288,9 @@ class Episode:
     # Has entity extraction been performed on this episode?
     entities_extracted: bool = False
 
+    # Has entity relationship extraction been performed on this episode?
+    relations_extracted: bool = False
+
     # How certain is this information? (0.0-1.0, default 1.0 = fully certain)
     confidence: float = 1.0
 
@@ -263,6 +309,7 @@ class Episode:
             "entity_ids": self.entity_ids,
             "consolidated": self.consolidated,
             "entities_extracted": self.entities_extracted,
+            "relations_extracted": self.relations_extracted,
             "confidence": self.confidence,
             "metadata": self.metadata,
         }
@@ -288,6 +335,7 @@ class Episode:
             entity_ids=data.get("entity_ids", []),
             consolidated=data.get("consolidated", False),
             entities_extracted=data.get("entities_extracted", False),
+            relations_extracted=data.get("relations_extracted", False),
             confidence=data.get("confidence", 1.0),
             metadata=data.get("metadata", {}),
         )
@@ -311,12 +359,13 @@ class ConsolidationResult:
 @dataclass
 class ExtractionResult:
     """Result of entity/type extraction from an episode."""
-    
+
     episode_type: EpisodeType
     entities: list[Entity] = field(default_factory=list)
-    
+    entity_relations: list[EntityRelation] = field(default_factory=list)
+
     @classmethod
-    def from_dict(cls, data: dict) -> "ExtractionResult":
+    def from_dict(cls, data: dict, episode_id: Optional[str] = None) -> "ExtractionResult":
         """Create from LLM extraction response."""
         # Parse episode type
         episode_type = EpisodeType.OBSERVATION
@@ -325,7 +374,7 @@ class ExtractionResult:
                 episode_type = EpisodeType(data["type"])
             except ValueError:
                 pass
-        
+
         # Parse entities
         entities = []
         for e in data.get("entities", []):
@@ -333,14 +382,31 @@ class ExtractionResult:
                 entity_type = EntityType(e.get("type", "other"))
             except ValueError:
                 entity_type = EntityType.OTHER
-            
+
             entity_id = e.get("id") or Entity.make_id(entity_type.value, e.get("name", "unknown"))
             entities.append(Entity(
                 id=entity_id,
                 type=entity_type,
                 display_name=e.get("name"),
             ))
-        
-        return cls(episode_type=episode_type, entities=entities)
+
+        # Parse entity relationships
+        entity_relations = []
+        for rel in data.get("entity_relationships", []):
+            source = rel.get("source")
+            target = rel.get("target")
+            relationship = rel.get("relationship")
+
+            if source and target and relationship:
+                entity_relations.append(EntityRelation(
+                    source_id=source,
+                    target_id=target,
+                    relation_type=relationship,
+                    strength=rel.get("strength", 0.5),
+                    context=rel.get("context"),
+                    source_episode_id=episode_id,
+                ))
+
+        return cls(episode_type=episode_type, entities=entities, entity_relations=entity_relations)
 
 

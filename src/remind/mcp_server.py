@@ -329,6 +329,7 @@ async def tool_stats() -> str:
     lines.append(f"  Episodes: {s['episodes']}")
     lines.append(f"  Relations: {s['relations']}")
     lines.append(f"  Entities: {s.get('entities', 0)}")
+    lines.append(f"  Entity Relations: {s.get('entity_relations', 0)}")
     lines.append(f"  Mentions: {s.get('mentions', 0)}")
     lines.append("")
     lines.append("Consolidation:")
@@ -352,10 +353,16 @@ async def tool_stats() -> str:
     
     if s.get('relation_types'):
         lines.append("")
-        lines.append("Relation Types:")
+        lines.append("Concept Relation Types:")
         for rel_type, count in s['relation_types'].items():
             lines.append(f"  {rel_type}: {count}")
-    
+
+    if s.get('entity_relation_types'):
+        lines.append("")
+        lines.append("Entity Relation Types:")
+        for rel_type, count in s['entity_relation_types'].items():
+            lines.append(f"  {rel_type}: {count}")
+
     lines.append("")
     lines.append(f"Database: {db_path}")
 
@@ -404,6 +411,56 @@ async def tool_entities(
 
     if total > limit:
         lines.append(f"  ... and {total - limit} more")
+
+    return "\n".join(lines)
+
+
+async def tool_inspect_entity(
+    entity_id: str,
+    show_relations: bool = True,
+) -> str:
+    """Inspect an entity and its relationships."""
+    memory = await get_memory()
+    store = memory.store
+
+    entity = store.get_entity(entity_id)
+    if not entity:
+        return f"Entity '{entity_id}' not found."
+
+    # Get mention count
+    entity_counts = store.get_entity_mention_counts()
+    mention_count = next((c for e, c in entity_counts if e.id == entity_id), 0)
+
+    lines = [f"Entity: {entity.id}"]
+    lines.append(f"  Type: {entity.type.value}")
+    if entity.display_name:
+        lines.append(f"  Display: {entity.display_name}")
+    lines.append(f"  Mentions: {mention_count}")
+    lines.append(f"  Created: {entity.created_at.strftime('%Y-%m-%d %H:%M')}")
+
+    if show_relations:
+        relations = store.get_entity_relations(entity_id)
+
+        if relations:
+            # Separate outgoing and incoming
+            outgoing = [r for r in relations if r.source_id == entity_id]
+            incoming = [r for r in relations if r.target_id == entity_id]
+
+            lines.append("")
+            lines.append(f"Relationships ({len(relations)}):")
+
+            for rel in outgoing:
+                target = store.get_entity(rel.target_id)
+                target_name = target.display_name if target else rel.target_id
+                lines.append(f"  → {rel.relation_type} {target_name} ({rel.strength:.0%})")
+
+            for rel in incoming:
+                source = store.get_entity(rel.source_id)
+                source_name = source.display_name if source else rel.source_id
+                lines.append(f"  ← {rel.relation_type} {source_name} ({rel.strength:.0%})")
+        else:
+            lines.append("")
+            lines.append("Relationships: none")
 
     return "\n".join(lines)
 
@@ -576,6 +633,29 @@ def create_mcp_server():
             List of entities with their mention counts
         """
         return await tool_entities(entity_type, limit)
+
+    @mcp.tool()
+    async def inspect_entity(
+        entity_id: str,
+        show_relations: bool = True,
+    ) -> str:
+        """Inspect an entity and its relationships.
+
+        Shows detailed information about an entity including:
+        - Entity type and display name
+        - Number of mentions in episodes
+        - Relationships to other entities (if any)
+
+        Use this to explore how entities relate to each other in memory.
+
+        Args:
+            entity_id: Entity ID to inspect (e.g., "file:src/auth.ts", "person:alice")
+            show_relations: Whether to include relationships (default: True)
+
+        Returns:
+            Entity details with relationships
+        """
+        return await tool_inspect_entity(entity_id, show_relations)
 
     return mcp
 

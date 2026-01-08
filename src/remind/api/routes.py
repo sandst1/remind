@@ -260,7 +260,7 @@ async def get_entities(request: Request) -> JSONResponse:
 
 
 async def get_entity_detail(request: Request) -> JSONResponse:
-    """Get a single entity by ID."""
+    """Get a single entity by ID with relationships."""
     memory, error = await _get_memory_from_request(request)
     if error:
         return error
@@ -284,6 +284,24 @@ async def get_entity_detail(request: Request) -> JSONResponse:
 
         data = entity.to_dict()
         data["mention_count"] = mention_count
+
+        # Get entity relations
+        relations = memory.store.get_entity_relations(entity_id)
+        enriched_relations = []
+        for rel in relations:
+            rel_dict = rel.to_dict()
+            # Determine direction and enrich with related entity info
+            if rel.source_id == entity_id:
+                rel_dict["direction"] = "outgoing"
+                related_entity = memory.store.get_entity(rel.target_id)
+                rel_dict["related_entity"] = related_entity.to_dict() if related_entity else None
+            else:
+                rel_dict["direction"] = "incoming"
+                related_entity = memory.store.get_entity(rel.source_id)
+                rel_dict["related_entity"] = related_entity.to_dict() if related_entity else None
+            enriched_relations.append(rel_dict)
+
+        data["relations"] = enriched_relations
 
         return JSONResponse(data)
     except Exception as e:

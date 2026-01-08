@@ -150,9 +150,10 @@ The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`
 **Available MCP Tools:**
 - `remember` - Store experiences/observations
 - `recall` - Retrieve relevant memories
-- `consolidate` - Process episodes into concepts
+- `consolidate` - Process episodes into concepts (includes entity relationship extraction)
 - `inspect` - View concepts or episodes
 - `entities` - List entities in memory
+- `inspect_entity` - View entity details and relationships
 - `stats` - Memory statistics
 
 **Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
@@ -197,6 +198,11 @@ remind import memory-backup.json
 remind entities                  # List all entities
 remind entities file:src/auth.ts # Show details for a specific entity
 remind mentions file:src/auth.ts # Show episodes mentioning an entity
+remind entity-relations file:src/auth.ts # Show relationships for an entity
+
+# Entity relationship extraction (for existing databases)
+remind extract-relations         # Extract relationships from unprocessed episodes
+remind extract-relations --force # Re-extract for all episodes
 
 # Episode filtering
 remind decisions                 # Show decision-type episodes
@@ -275,6 +281,7 @@ The "sleep" process where episodes are processed into concepts. Runs in two phas
 **Phase 1 - Extraction:**
 - Classifies episode types (observation, decision, question, etc.)
 - Extracts entity mentions (files, people, tools, concepts)
+- Identifies relationships between entities mentioned in the same episode
 
 **Phase 2 - Generalization:**
 - Identifies patterns across episodes
@@ -282,6 +289,9 @@ The "sleep" process where episodes are processed into concepts. Runs in two phas
 - Updates existing concepts
 - Establishes relations
 - Flags contradictions
+
+### Entity Relationships
+When multiple entities are mentioned in the same episode, their relationships are automatically extracted. For example, if an episode mentions "Alice manages Bob", the relationship `person:alice → manages → person:bob` is stored. Use `inspect_entity` or the web UI to explore entity relationships.
 
 ### Spreading Activation
 Retrieval that goes beyond keyword matching:

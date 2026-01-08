@@ -630,25 +630,125 @@ def questions(ctx, limit: int):
     from remind.store import SQLiteMemoryStore
     from remind.models import EpisodeType
     store = SQLiteMemoryStore(ctx.obj["db"])
-    
+
     episodes = store.get_episodes_by_type(EpisodeType.QUESTION, limit=limit)
-    
+
     if not episodes:
         console.print("[yellow]No questions recorded yet[/yellow]")
         return
-    
+
     table = Table(title="Open Questions")
     table.add_column("ID", style="cyan")
     table.add_column("Timestamp", style="dim")
     table.add_column("Content")
     table.add_column("Status", style="yellow")
-    
+
     for ep in episodes:
         content = ep.content[:70] + "..." if len(ep.content) > 70 else ep.content
         status = "✓" if ep.consolidated else "pending"
         table.add_row(ep.id, ep.timestamp.strftime("%Y-%m-%d %H:%M"), content, status)
-    
+
     console.print(table)
+
+
+@main.command("extract-relations")
+@click.option("--batch-size", "-b", default=50, help="Number of episodes to process per batch")
+@click.option("--force", "-f", is_flag=True, help="Re-extract relations for all episodes (including already extracted)")
+@click.pass_context
+def extract_relations(ctx, batch_size: int, force: bool):
+    """Extract entity relationships from existing episodes.
+
+    Processes episodes that have entities but haven't had relationship extraction.
+    This is useful for backfilling entity relationships in existing databases.
+    """
+    from remind.extraction import EntityExtractor
+
+    # Get memory interface (includes LLM provider)
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    # Create extractor using the memory's LLM and store
+    extractor = EntityExtractor(memory.llm, memory.store)
+
+    if force:
+        # Get all episodes with 2+ entities
+        console.print("[yellow]Force mode: re-extracting relations for all episodes with 2+ entities[/yellow]")
+        episodes = memory.store.get_recent_episodes(limit=10000)
+        episodes = [ep for ep in episodes if len(ep.entity_ids) >= 2]
+    else:
+        # Get episodes needing relation extraction
+        episodes = memory.store.get_unextracted_relation_episodes(limit=batch_size)
+
+    if not episodes:
+        console.print("[yellow]No episodes need relation extraction[/yellow]")
+        return
+
+    console.print(f"[cyan]Extracting relations from {len(episodes)} episodes...[/cyan]")
+
+    total_relations = 0
+    processed = 0
+    errors = 0
+
+    async def _extract():
+        nonlocal total_relations, processed, errors
+        for ep in episodes:
+            try:
+                count = await extractor.extract_and_store_relations_only(ep)
+                total_relations += count
+                processed += 1
+            except Exception as e:
+                console.print(f"[red]Error processing {ep.id}: {e}[/red]")
+                errors += 1
+
+    with console.status("[bold cyan]Extracting relationships..."):
+        run_async(_extract())
+
+    console.print(f"\n[green]✓ Relation extraction complete[/green]")
+    console.print(f"  Episodes processed: {processed}")
+    console.print(f"  Relations extracted: {total_relations}")
+    if errors:
+        console.print(f"  [yellow]Errors: {errors}[/yellow]")
+
+
+@main.command("entity-relations")
+@click.argument("entity_id")
+@click.pass_context
+def entity_relations(ctx, entity_id: str):
+    """Show relationships for a specific entity."""
+    from remind.store import SQLiteMemoryStore
+    store = SQLiteMemoryStore(ctx.obj["db"])
+
+    entity = store.get_entity(entity_id)
+    if not entity:
+        console.print(f"[red]Entity {entity_id} not found[/red]")
+        return
+
+    relations = store.get_entity_relations(entity_id)
+
+    if not relations:
+        console.print(f"[yellow]No relationships found for '{entity_id}'[/yellow]")
+        return
+
+    # Separate outgoing and incoming relations
+    outgoing = [r for r in relations if r.source_id == entity_id]
+    incoming = [r for r in relations if r.target_id == entity_id]
+
+    tree = Tree(f"[bold cyan]{entity_id}[/bold cyan]")
+
+    if outgoing:
+        out_branch = tree.add(f"[bold]Outgoing ({len(outgoing)})[/bold]")
+        for rel in outgoing:
+            target = store.get_entity(rel.target_id)
+            target_name = target.display_name if target else rel.target_id
+            out_branch.add(f"[green]→[/green] {rel.relation_type} [cyan]{target_name}[/cyan] ({rel.strength:.0%})")
+
+    if incoming:
+        in_branch = tree.add(f"[bold]Incoming ({len(incoming)})[/bold]")
+        for rel in incoming:
+            source = store.get_entity(rel.source_id)
+            source_name = source.display_name if source else rel.source_id
+            in_branch.add(f"[yellow]←[/yellow] {rel.relation_type} [cyan]{source_name}[/cyan] ({rel.strength:.0%})")
+
+    console.print(tree)
 
 
 if __name__ == "__main__":

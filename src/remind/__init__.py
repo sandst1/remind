@@ -39,6 +39,7 @@ from remind.models import (
     # v2 models
     Entity,
     EntityType,
+    EntityRelation,
     EpisodeType,
     ExtractionResult,
 )
@@ -87,6 +88,7 @@ __all__ = [
     # v2 models
     "Entity",
     "EntityType",
+    "EntityRelation",
     "EpisodeType",
     "ExtractionResult",
     # Storage

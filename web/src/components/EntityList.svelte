@@ -7,8 +7,8 @@
     entitiesError,
     currentDb,
   } from '../lib/stores';
-  import { fetchEntities, fetchEntityEpisodes, fetchEntityConcepts, fetchEpisode, fetchConcept } from '../lib/api';
-  import type { Entity, Episode, Concept, EntityType } from '../lib/types';
+  import { fetchEntities, fetchEntity, fetchEntityEpisodes, fetchEntityConcepts, fetchEpisode, fetchConcept } from '../lib/api';
+  import type { Entity, Episode, Concept, EntityType, EntityRelation } from '../lib/types';
 
   let filterType: EntityType | '' = '';
   let mounted = false;
@@ -59,23 +59,31 @@
   }
 
   async function selectEntity(entity: Entity) {
-    selectedEntity = entity;
     detailLoading = true;
     relatedEpisodes = [];
     relatedConcepts = [];
 
     try {
-      const [episodesRes, conceptsRes] = await Promise.all([
+      // Fetch entity detail with relations, episodes, and concepts in parallel
+      const [entityDetail, episodesRes, conceptsRes] = await Promise.all([
+        fetchEntity(entity.id),
         fetchEntityEpisodes(entity.id),
         fetchEntityConcepts(entity.id),
       ]);
+      selectedEntity = entityDetail;
       relatedEpisodes = episodesRes.episodes;
       relatedConcepts = conceptsRes.concepts;
     } catch (e) {
       console.error('Failed to load entity details:', e);
+      selectedEntity = entity; // Fallback to basic entity data
     } finally {
       detailLoading = false;
     }
+  }
+
+  // Navigate to a related entity
+  async function navigateToRelatedEntity(relatedEntity: Entity) {
+    await selectEntity(relatedEntity);
   }
 
   function applyFilter() {
@@ -253,6 +261,32 @@
           {#if detailLoading}
             <div class="loading">Loading details...</div>
           {:else}
+            {#if selectedEntity?.relations && selectedEntity.relations.length > 0}
+              <div class="detail-section">
+                <h4>Related Entities ({selectedEntity.relations.length})</h4>
+                <div class="related-list">
+                  {#each selectedEntity.relations as relation}
+                    {#if relation.related_entity}
+                      <button
+                        class="related-item entity-relation-item clickable"
+                        onclick={() => navigateToRelatedEntity(relation.related_entity)}
+                      >
+                        <div class="relation-header">
+                          <span class="relation-direction">{relation.direction === 'outgoing' ? '→' : '←'}</span>
+                          <span class="relation-type">{relation.relation_type}</span>
+                          <span class="relation-strength">{Math.round(relation.strength * 100)}%</span>
+                        </div>
+                        <div class="related-entity-info">
+                          <span class="entity-icon">{entityTypeIcons[relation.related_entity.type]}</span>
+                          <span class="entity-name">{relation.related_entity.display_name || relation.related_entity.id}</span>
+                        </div>
+                      </button>
+                    {/if}
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
             {#if relatedConcepts.length > 0}
               <div class="detail-section">
                 <h4>Related Concepts ({relatedConcepts.length})</h4>
@@ -661,6 +695,58 @@
 
   .confidence.low {
     color: var(--color-error);
+  }
+
+  /* Entity relation item styles */
+  .entity-relation-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .entity-relation-item:hover {
+    background: var(--color-surface);
+  }
+
+  .relation-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+  }
+
+  .relation-direction {
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+
+  .relation-type {
+    color: var(--color-primary);
+    font-weight: 500;
+  }
+
+  .relation-strength {
+    margin-left: auto;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .related-entity-info {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding-left: var(--space-md);
+  }
+
+  .related-entity-info .entity-icon {
+    font-size: var(--font-size-sm);
+  }
+
+  .related-entity-info .entity-name {
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
   }
 
   .episode-item .episode-header {

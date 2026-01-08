@@ -17,9 +17,10 @@ Remind is your external memory layer. Unlike your context window (which resets e
 |------|---------|
 | `remember` | Store an experience (fast, no LLM call) |
 | `recall` | Retrieve relevant memories |
-| `consolidate` | Extract entities + process episodes into concepts |
+| `consolidate` | Extract entities, relationships + process episodes into concepts |
 | `inspect` | View concepts or episodes |
 | `entities` | List entities in memory |
+| `inspect_entity` | View entity details and relationships |
 | `stats` | Memory statistics |
 
 ---
@@ -119,6 +120,16 @@ Entities are automatically extracted during consolidation. Format: `type:name`
 
 Use `recall(entity="file:src/auth.ts")` to retrieve memories about a specific entity.
 
+### Entity Relationships
+
+When multiple entities are mentioned in the same episode, their relationships are automatically extracted. These describe how entities relate to each other:
+
+- `file:auth.ts` → **imports** → `file:utils.ts`
+- `person:alice` → **manages** → `person:bob`
+- `class:UserService` → **depends_on** → `class:DatabaseService`
+
+Use `inspect_entity()` to explore entity relationships.
+
 ---
 
 ## Other Tools
@@ -140,6 +151,33 @@ entities(limit=20)           # Limit results
 ```
 
 Use this to discover what entities exist before using `recall(entity="...")`.
+
+### inspect_entity - View Entity Details
+
+```
+inspect_entity(entity_id="file:src/auth.ts")
+inspect_entity(entity_id="person:alice", show_relations=True)
+```
+
+Shows entity details including:
+- Entity type and display name
+- Number of mentions in episodes
+- Relationships to other entities (e.g., "manages", "imports", "depends_on")
+
+**Example output:**
+```
+Entity: person:alice
+  Type: person
+  Display: Alice
+  Mentions: 15
+
+Relationships (3):
+  → manages person:bob (85%)
+  → works_on project:backend (90%)
+  ← reports_to person:carol (75%)
+```
+
+Entity relationships are automatically extracted during consolidation when episodes mention multiple entities.
 
 ### stats - Memory Statistics
 
