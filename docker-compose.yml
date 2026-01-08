@@ -1,0 +1,12 @@
+services:
+  remind:
+    build: .
+    ports:
+      - "${REMIND_PORT:-8765}:${REMIND_PORT:-8765}"
+    volumes:
+      - ~/.remind:/root/.remind
+    env_file:
+      - .env
+    environment:
+      - REMIND_PORT=${REMIND_PORT:-8765}
+    restart: unless-stopped

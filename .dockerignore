@@ -1,0 +1,55 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+env
+.eggs
+*.egg-info
+*.egg
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+.cursor
+
+# Build artifacts
+build
+dist
+*.whl
+
+# Web dependencies (large)
+web/node_modules
+
+# Database files (should not be baked into image)
+*.db
+memory.db
+
+# Environment files (secrets)
+.env
+.env.local
+.env.*.local
+
+# Tests
+tests
+.pytest_cache
+.coverage
+htmlcov
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Other
+.DS_Store
+Thumbs.db

@@ -337,6 +337,43 @@ uv run remind-mcp --port 8765
 uv run pytest
 ```
 
+### Using Docker
+
+Run Remind as a persistent background service with Docker:
+
+```bash
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your API keys
+
+# Start the service (builds on first run)
+docker compose up -d
+
+# View logs
+docker compose logs -f remind
+
+# Stop the service
+docker compose down
+```
+
+The container:
+- Mounts `~/.remind` from your host for database persistence
+- Reads API keys from `.env`
+- Exposes port 8765 for MCP SSE, Web UI, and REST API
+- Restarts automatically on crash/reboot
+
+Access endpoints:
+- MCP SSE: `http://localhost:8765/sse?db=my-project`
+- Web UI: `http://localhost:8765/ui/?db=my-project`
+- REST API: `http://localhost:8765/api/v1/...`
+
+To rebuild after code changes:
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
 ## Testing
 
 ```bash
