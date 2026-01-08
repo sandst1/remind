@@ -296,6 +296,9 @@
                       class="related-item concept-item clickable"
                       onclick={() => openRelatedConcept(concept.id)}
                     >
+                      {#if concept.title}
+                        <div class="related-title">{concept.title}</div>
+                      {/if}
                       <div class="related-summary">{concept.summary}</div>
                       <div class="concept-footer">
                         <span class="related-meta confidence {getConfidenceClass(concept.confidence)}">
@@ -366,7 +369,7 @@
       <div class="concept-side-panel">
         <div class="side-panel-header">
           <button class="back-btn" onclick={closeConceptPanel}>← Close</button>
-          <h3>Concept Detail</h3>
+          <h3>{selectedConcept.title || 'Concept Detail'}</h3>
         </div>
 
         {#if conceptLoading}
@@ -674,9 +677,16 @@
     border: 1px solid var(--color-border);
   }
 
-  .concept-item .related-summary {
+  .concept-item .related-title {
+    font-weight: 600;
     font-size: var(--font-size-sm);
     color: var(--color-text);
+    margin-bottom: var(--space-xs);
+  }
+
+  .concept-item .related-summary {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
     margin-bottom: var(--space-xs);
   }
 
