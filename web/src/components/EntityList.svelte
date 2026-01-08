@@ -7,7 +7,7 @@
     entitiesError,
     currentDb,
   } from '../lib/stores';
-  import { fetchEntities, fetchEntityEpisodes, fetchEntityConcepts } from '../lib/api';
+  import { fetchEntities, fetchEntityEpisodes, fetchEntityConcepts, fetchEpisode, fetchConcept } from '../lib/api';
   import type { Entity, Episode, Concept, EntityType } from '../lib/types';
 
   let filterType: EntityType | '' = '';
@@ -18,6 +18,13 @@
   let relatedEpisodes: Episode[] = [];
   let relatedConcepts: Concept[] = [];
   let detailLoading = false;
+
+  // Expandable episodes state
+  let expandedEpisodes: Record<string, Episode | null> = {};
+
+  // Concept side panel state
+  let selectedConcept: Concept | null = null;
+  let conceptLoading = false;
 
   onMount(() => {
     mounted = true;
@@ -79,6 +86,38 @@
     selectedEntity = null;
     relatedEpisodes = [];
     relatedConcepts = [];
+    expandedEpisodes = {};
+    selectedConcept = null;
+  }
+
+  // Toggle episode expansion
+  async function toggleEpisodeExpand(episodeId: string) {
+    if (expandedEpisodes[episodeId]) {
+      expandedEpisodes = { ...expandedEpisodes, [episodeId]: null };
+    } else {
+      try {
+        const episode = await fetchEpisode(episodeId);
+        expandedEpisodes = { ...expandedEpisodes, [episodeId]: episode };
+      } catch (e) {
+        console.error('Failed to fetch episode:', e);
+      }
+    }
+  }
+
+  // Open concept in side panel
+  async function openRelatedConcept(conceptId: string) {
+    conceptLoading = true;
+    try {
+      selectedConcept = await fetchConcept(conceptId);
+    } catch (e) {
+      console.error('Failed to fetch concept:', e);
+    } finally {
+      conceptLoading = false;
+    }
+  }
+
+  function closeConceptPanel() {
+    selectedConcept = null;
   }
 
   const entityTypeLabels: Record<EntityType, string> = {
@@ -219,12 +258,18 @@
                 <h4>Related Concepts ({relatedConcepts.length})</h4>
                 <div class="related-list">
                   {#each relatedConcepts as concept}
-                    <div class="related-item concept-item">
+                    <button
+                      class="related-item concept-item clickable"
+                      onclick={() => openRelatedConcept(concept.id)}
+                    >
                       <div class="related-summary">{concept.summary}</div>
-                      <span class="related-meta confidence {getConfidenceClass(concept.confidence)}">
-                        {formatConfidence(concept.confidence)} confidence
-                      </span>
-                    </div>
+                      <div class="concept-footer">
+                        <span class="related-meta confidence {getConfidenceClass(concept.confidence)}">
+                          {formatConfidence(concept.confidence)} confidence
+                        </span>
+                        <span class="open-indicator">View →</span>
+                      </div>
+                    </button>
                   {/each}
                 </div>
               </div>
@@ -235,8 +280,13 @@
                 <h4>Mentioning Episodes ({relatedEpisodes.length})</h4>
                 <div class="related-list">
                   {#each relatedEpisodes.slice(0, 20) as episode}
-                    <div class="related-item episode-item">
+                    <button
+                      class="related-item episode-item expandable"
+                      class:expanded={expandedEpisodes[episode.id]}
+                      onclick={() => toggleEpisodeExpand(episode.id)}
+                    >
                       <div class="episode-header">
+                        <span class="expand-indicator">{expandedEpisodes[episode.id] ? '▼' : '▶'}</span>
                         <span class="episode-type-icon">{episodeTypeIcons[episode.episode_type] || '📝'}</span>
                         <span class="episode-date">{formatDate(episode.timestamp)}</span>
                         {#if episode.consolidated}
@@ -245,8 +295,23 @@
                           <span class="episode-status pending">Pending</span>
                         {/if}
                       </div>
-                      <div class="episode-preview">{episode.content.slice(0, 200)}{episode.content.length > 200 ? '...' : ''}</div>
-                    </div>
+
+                      {#if expandedEpisodes[episode.id]}
+                        <div class="episode-full-content">{expandedEpisodes[episode.id].content}</div>
+                        {#if expandedEpisodes[episode.id].entity_ids && expandedEpisodes[episode.id].entity_ids.length > 0}
+                          <div class="episode-entities">
+                            {#each expandedEpisodes[episode.id].entity_ids as entityId}
+                              <span class="entity-tag">{entityId}</span>
+                            {/each}
+                          </div>
+                        {/if}
+                        <div class="episode-footer">
+                          <span class="episode-id">ID: {episode.id.slice(0, 8)}</span>
+                        </div>
+                      {:else}
+                        <div class="episode-preview">{episode.content.slice(0, 200)}{episode.content.length > 200 ? '...' : ''}</div>
+                      {/if}
+                    </button>
                   {/each}
                   {#if relatedEpisodes.length > 20}
                     <div class="more-items">+{relatedEpisodes.length - 20} more episodes</div>
@@ -262,6 +327,83 @@
         </div>
       {/if}
     </div>
+
+    {#if selectedConcept}
+      <div class="concept-side-panel">
+        <div class="side-panel-header">
+          <button class="back-btn" onclick={closeConceptPanel}>← Close</button>
+          <h3>Concept Detail</h3>
+        </div>
+
+        {#if conceptLoading}
+          <div class="loading">Loading concept...</div>
+        {:else}
+          <div class="side-panel-content">
+            <div class="concept-summary">{selectedConcept.summary}</div>
+
+            <div class="concept-meta">
+              <div class="meta-item">
+                <span class="meta-label">Confidence</span>
+                <span class="meta-value confidence {getConfidenceClass(selectedConcept.confidence)}">
+                  {formatConfidence(selectedConcept.confidence)}
+                </span>
+              </div>
+              <div class="meta-item">
+                <span class="meta-label">Instance Count</span>
+                <span class="meta-value">{selectedConcept.instance_count}</span>
+              </div>
+              <div class="meta-item">
+                <span class="meta-label">Created</span>
+                <span class="meta-value">{formatDate(selectedConcept.created_at)}</span>
+              </div>
+            </div>
+
+            {#if selectedConcept.conditions}
+              <div class="concept-section">
+                <h4>Conditions</h4>
+                <p>{selectedConcept.conditions}</p>
+              </div>
+            {/if}
+
+            {#if selectedConcept.exceptions && selectedConcept.exceptions.length > 0}
+              <div class="concept-section">
+                <h4>Exceptions</h4>
+                <ul>
+                  {#each selectedConcept.exceptions as exception}
+                    <li>{exception}</li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+
+            {#if selectedConcept.tags && selectedConcept.tags.length > 0}
+              <div class="concept-section">
+                <h4>Tags</h4>
+                <div class="tags">
+                  {#each selectedConcept.tags as tag}
+                    <span class="tag">{tag}</span>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            {#if selectedConcept.relations && selectedConcept.relations.length > 0}
+              <div class="concept-section">
+                <h4>Relations ({selectedConcept.relations.length})</h4>
+                <div class="relations-list">
+                  {#each selectedConcept.relations as relation}
+                    <div class="relation-item relation-{relation.type}">
+                      <span class="relation-type">{relation.type}</span>
+                      <span class="relation-target">{relation.target_id}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -579,4 +721,237 @@
   .error {
     color: var(--color-error);
   }
+
+  /* Clickable concept items */
+  .concept-item.clickable {
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: none;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+  }
+
+  .concept-item.clickable:hover {
+    background: var(--color-border);
+    border-color: var(--color-primary);
+  }
+
+  .concept-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: var(--space-xs);
+  }
+
+  .open-indicator {
+    font-size: var(--font-size-xs);
+    color: var(--color-primary);
+    opacity: 0.7;
+  }
+
+  .concept-item.clickable:hover .open-indicator {
+    opacity: 1;
+  }
+
+  /* Expandable episode items */
+  .episode-item.expandable {
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: 1px solid var(--color-border);
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+  }
+
+  .episode-item.expandable:hover {
+    background: var(--color-border);
+  }
+
+  .episode-item.expanded {
+    border-color: var(--color-primary);
+    background: var(--color-surface);
+  }
+
+  .expand-indicator {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    width: 1em;
+    flex-shrink: 0;
+  }
+
+  .episode-full-content {
+    white-space: pre-wrap;
+    line-height: 1.6;
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+    padding: var(--space-sm) 0;
+    border-top: 1px solid var(--color-border);
+    margin-top: var(--space-sm);
+  }
+
+  .episode-entities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    padding-top: var(--space-sm);
+  }
+
+  .entity-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--color-primary-bg, #e3f2fd);
+    color: var(--color-primary);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-family: var(--font-mono);
+  }
+
+  .episode-footer {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: var(--space-xs);
+    border-top: 1px solid var(--color-border);
+    margin-top: var(--space-sm);
+  }
+
+  .episode-id {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono);
+  }
+
+  /* Concept side panel */
+  .concept-side-panel {
+    width: 400px;
+    flex-shrink: 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    overflow-y: auto;
+  }
+
+  .side-panel-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    border-bottom: 1px solid var(--color-border);
+    position: sticky;
+    top: 0;
+    background: var(--color-surface);
+  }
+
+  .side-panel-header h3 {
+    margin: 0;
+    font-size: var(--font-size-base);
+    color: var(--color-text);
+  }
+
+  .back-btn {
+    background: none;
+    border: 1px solid var(--color-border);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    transition: all 0.15s ease;
+  }
+
+  .back-btn:hover {
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+
+  .side-panel-content {
+    padding: var(--space-md);
+  }
+
+  .concept-summary {
+    font-size: var(--font-size-base);
+    line-height: 1.6;
+    color: var(--color-text);
+    margin-bottom: var(--space-md);
+  }
+
+  .concept-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    padding: var(--space-sm);
+    background: var(--color-bg);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-md);
+  }
+
+  .concept-section {
+    margin-bottom: var(--space-md);
+  }
+
+  .concept-section h4 {
+    margin: 0 0 var(--space-xs) 0;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .concept-section p {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+  }
+
+  .concept-section ul {
+    margin: 0;
+    padding-left: var(--space-md);
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+  }
+
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .tag {
+    padding: 2px 8px;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+  }
+
+  .relations-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .relation-item {
+    display: flex;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--color-bg);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--color-border);
+    font-size: var(--font-size-sm);
+  }
+
+  .relation-type {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+  }
+
+  .relation-target {
+    color: var(--color-text);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+  }
+
+  .relation-implies { border-color: var(--color-success, #28a745); }
+  .relation-contradicts { border-color: var(--color-error, #dc3545); }
+  .relation-specializes { border-color: var(--color-primary); }
+  .relation-generalizes { border-color: var(--color-warning, #ffc107); }
 </style>
