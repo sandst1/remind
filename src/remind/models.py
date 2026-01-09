@@ -271,7 +271,10 @@ class Episode:
     
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     timestamp: datetime = field(default_factory=datetime.now)
-    
+
+    # Short title for the episode (5-10 words)
+    title: Optional[str] = None
+
     # The raw interaction content
     content: str = ""
     
@@ -307,6 +310,7 @@ class Episode:
         return {
             "id": self.id,
             "timestamp": self.timestamp.isoformat(),
+            "title": self.title,
             "content": self.content,
             "episode_type": self.episode_type.value,
             "summary": self.summary,
@@ -333,6 +337,7 @@ class Episode:
         return cls(
             id=data["id"],
             timestamp=datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(),
+            title=data.get("title"),
             content=data.get("content", ""),
             episode_type=episode_type,
             summary=data.get("summary"),
@@ -366,6 +371,7 @@ class ExtractionResult:
     """Result of entity/type extraction from an episode."""
 
     episode_type: EpisodeType
+    title: Optional[str] = None
     entities: list[Entity] = field(default_factory=list)
     entity_relations: list[EntityRelation] = field(default_factory=list)
 
@@ -379,6 +385,9 @@ class ExtractionResult:
                 episode_type = EpisodeType(data["type"])
             except ValueError:
                 pass
+
+        # Parse title
+        title = data.get("title")
 
         # Parse entities
         entities = []
@@ -412,6 +421,6 @@ class ExtractionResult:
                     source_episode_id=episode_id,
                 ))
 
-        return cls(episode_type=episode_type, entities=entities, entity_relations=entity_relations)
+        return cls(episode_type=episode_type, title=title, entities=entities, entity_relations=entity_relations)
 
 

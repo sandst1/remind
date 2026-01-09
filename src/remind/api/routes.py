@@ -125,6 +125,7 @@ async def get_concept_detail(request: Request) -> JSONResponse:
             if episode:
                 source_episodes_data.append({
                     "id": episode.id,
+                    "title": episode.title,
                     "content": episode.content[:150],  # Truncated preview
                     "type": episode.episode_type.value,
                 })
@@ -378,6 +379,7 @@ async def get_graph(request: Request) -> JSONResponse:
                 if episode:
                     source_episodes_data.append({
                         "id": episode.id,
+                        "title": episode.title,
                         "content": episode.content[:200],  # Truncate
                         "type": episode.episode_type.value,
                     })
@@ -434,6 +436,67 @@ async def get_graph(request: Request) -> JSONResponse:
         })
     except Exception as e:
         logger.exception("Failed to get graph")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def get_entity_graph(request: Request) -> JSONResponse:
+    """Get entity network graph data for D3 visualization."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        # Get all entities with mention counts
+        entity_counts = memory.store.get_entity_mention_counts()
+
+        # Build entity map for quick lookup
+        entity_map = {ent.id: ent for ent, _ in entity_counts}
+
+        nodes = []
+        links = []
+
+        # Collect all entity relations (dedupe by source, target, type)
+        all_relations = set()  # (source, target, type) tuples
+
+        for entity, mention_count in entity_counts:
+            # Get relations for this entity
+            relations = memory.store.get_entity_relations(entity.id)
+
+            for rel in relations:
+                # Only include if both entities exist
+                if rel.source_id in entity_map and rel.target_id in entity_map:
+                    key = (rel.source_id, rel.target_id, rel.relation_type)
+                    if key not in all_relations:
+                        all_relations.add(key)
+                        links.append({
+                            "source": rel.source_id,
+                            "target": rel.target_id,
+                            "type": rel.relation_type,
+                            "strength": rel.strength,
+                            "context": rel.context,
+                        })
+
+        # Only include entities that have relations
+        entities_with_relations = set()
+        for link in links:
+            entities_with_relations.add(link["source"])
+            entities_with_relations.add(link["target"])
+
+        for entity, mention_count in entity_counts:
+            if entity.id in entities_with_relations:
+                nodes.append({
+                    "id": entity.id,
+                    "type": entity.type.value,
+                    "display_name": entity.display_name,
+                    "mention_count": mention_count,
+                })
+
+        return JSONResponse({
+            "nodes": nodes,
+            "links": links,
+        })
+    except Exception as e:
+        logger.exception("Failed to get entity graph")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -587,6 +650,7 @@ api_routes = [
     Route("/api/v1/entities/{id:path}/concepts", get_entity_concepts, methods=["GET"]),
     Route("/api/v1/entities/{id:path}", get_entity_detail, methods=["GET"]),
     Route("/api/v1/graph", get_graph, methods=["GET"]),
+    Route("/api/v1/entity-graph", get_entity_graph, methods=["GET"]),
     Route("/api/v1/query", execute_query, methods=["POST"]),
     Route("/api/v1/chat", stream_chat, methods=["POST"]),
     Route("/api/v1/databases", list_databases, methods=["GET"]),

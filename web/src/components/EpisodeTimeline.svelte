@@ -162,6 +162,9 @@
                 <span class="pending-badge">Pending</span>
               {/if}
             </div>
+            {#if episode.title}
+              <div class="episode-title">{episode.title}</div>
+            {/if}
             <div class="episode-content">{episode.content}</div>
             {#if episode.entity_ids.length > 0}
               <div class="episode-entities">
@@ -343,6 +346,13 @@
     align-items: center;
     gap: var(--space-sm);
     margin-bottom: var(--space-md);
+  }
+
+  .episode-title {
+    font-weight: 600;
+    font-size: var(--font-size-base);
+    color: var(--color-text);
+    margin-bottom: var(--space-sm);
   }
 
   .episode-type {

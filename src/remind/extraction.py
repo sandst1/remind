@@ -112,11 +112,13 @@ EXTRACTION_PROMPT_TEMPLATE = """Classify and extract from this text:
 Return JSON:
 {{
   "type": "observation|decision|question|meta|preference",
+  "title": "Short descriptive title (5-10 words)",
   "entities": [{{"type": "file|function|class|person|concept|tool|project", "id": "type:name", "name": "short name"}}],
   "entity_relationships": [{{"source": "type:name", "target": "type:name", "relationship": "verb or description", "strength": 0.7}}]
 }}
 
 Types: observation=noticed/learned, decision=choice made, question=uncertainty, meta=about thinking, preference=opinion/value
+Title: Concise summary capturing the main insight, decision, or topic (e.g., "User prefers Python for backends", "Bug in auth flow identified")
 Entity examples: {{"type":"file","id":"file:auth.ts","name":"auth.ts"}}, {{"type":"person","id":"person:alice","name":"Alice"}}
 Relationship examples: {{"source":"person:alice","target":"project:backend","relationship":"maintains","strength":0.8}}, {{"source":"file:auth.ts","target":"file:utils.ts","relationship":"imports","strength":0.9}}
 
@@ -226,6 +228,7 @@ class EntityExtractor:
 
         # Update episode
         episode.episode_type = result.episode_type
+        episode.title = result.title
         episode.entity_ids = [e.id for e in result.entities]
         episode.entities_extracted = True
         episode.relations_extracted = True

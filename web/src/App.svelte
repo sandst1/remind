@@ -6,10 +6,12 @@
   import EntityList from './components/EntityList.svelte';
   import ConceptList from './components/ConceptList.svelte';
   import EpisodeTimeline from './components/EpisodeTimeline.svelte';
+  import ConceptMap from './components/ConceptMap.svelte';
+  import EntityGraph from './components/EntityGraph.svelte';
   import DatabaseSelector from './components/DatabaseSelector.svelte';
-  
+
   // Icons
-  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor } from 'lucide-svelte';
+  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Circle, Network } from 'lucide-svelte';
 
   let initialized = false;
 
@@ -60,6 +62,8 @@
     { view: 'entities', label: 'Entities', icon: Tag },
     { view: 'episodes', label: 'Episodes', icon: History },
     { view: 'concepts', label: 'Concepts', icon: Lightbulb },
+    { view: 'concept-map', label: 'Concept Map', icon: Circle },
+    { view: 'entity-graph', label: 'Entity Graph', icon: Network },
   ];
 
   function toggleTheme() {
@@ -127,6 +131,10 @@
         <EpisodeTimeline />
       {:else if $currentView === 'concepts'}
         <ConceptList />
+      {:else if $currentView === 'concept-map'}
+        <ConceptMap />
+      {:else if $currentView === 'entity-graph'}
+        <EntityGraph />
       {/if}
     {/if}
   </main>

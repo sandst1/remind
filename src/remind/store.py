@@ -101,14 +101,14 @@ class MemoryStore(ABC):
     
     @abstractmethod
     def get_episodes_by_date_range(
-        self, 
-        start_date: Optional[str] = None, 
+        self,
+        start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         limit: int = 100
     ) -> list[Episode]:
         """Get episodes within a date range."""
         ...
-    
+
     # Entity operations
     @abstractmethod
     def add_entity(self, entity: Entity) -> str:
@@ -359,6 +359,14 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute("ALTER TABLE concepts ADD COLUMN title TEXT")
             conn.commit()
             logger.info("Migration: Added title column to concepts table")
+
+        # Migration: Add title column to episodes table if it doesn't exist
+        try:
+            conn.execute("SELECT title FROM episodes LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE episodes ADD COLUMN title TEXT")
+            conn.commit()
+            logger.info("Migration: Added title column to episodes table")
 
         # Log migration status
         try:
@@ -643,14 +651,15 @@ class SQLiteMemoryStore(MemoryStore):
         conn = self._get_conn()
         try:
             data = episode.to_dict()
-            
+
             conn.execute(
                 """
-                INSERT INTO episodes (id, content, data, consolidated, timestamp)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO episodes (id, title, content, data, consolidated, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     episode.id,
+                    episode.title,
                     episode.content,
                     json.dumps(data),
                     episode.consolidated,
@@ -678,14 +687,15 @@ class SQLiteMemoryStore(MemoryStore):
         conn = self._get_conn()
         try:
             data = episode.to_dict()
-            
+
             conn.execute(
                 """
-                UPDATE episodes 
-                SET content = ?, data = ?, consolidated = ?, timestamp = ?
+                UPDATE episodes
+                SET title = ?, content = ?, data = ?, consolidated = ?, timestamp = ?
                 WHERE id = ?
                 """,
                 (
+                    episode.title,
                     episode.content,
                     json.dumps(data),
                     episode.consolidated,
@@ -769,7 +779,7 @@ class SQLiteMemoryStore(MemoryStore):
             return [Episode.from_dict(json.loads(row["data"])) for row in rows]
         finally:
             conn.close()
-    
+
     def get_unextracted_episodes(self, limit: int = 100) -> list[Episode]:
         """Get episodes that haven't had entity extraction performed."""
         conn = self._get_conn()

@@ -18,7 +18,7 @@
     User,
     Briefcase,
     Wrench,
-    Paperclip,
+    Tag,
     Eye,
     Zap,
     CircleHelp,
@@ -180,7 +180,7 @@
     person: User,
     project: Briefcase,
     tool: Wrench,
-    other: Paperclip,
+    other: Tag,
   };
 
   const episodeTypeIcons: Record<string, any> = {

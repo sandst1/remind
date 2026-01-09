@@ -369,7 +369,7 @@
                           <span class="episode-icon">
                             <svelte:component this={episodeTypeIcons[episode.type]} size={16} />
                           </span>
-                          <span class="episode-content" class:expanded={!!expanded}>{episode.content}</span>
+                          <span class="episode-content" class:expanded={!!expanded}>{episode.title || episode.content}</span>
                           <span class="episode-chevron">
                             {#if expanded}
                               <ChevronDown size={14} />
@@ -389,6 +389,9 @@
                                 <span class="pending-badge">Pending</span>
                               {/if}
                             </div>
+                            {#if expanded.title}
+                              <div class="episode-title">{expanded.title}</div>
+                            {/if}
                             <div class="episode-full-content">{expanded.content}</div>
                             {#if expanded.entity_ids.length > 0}
                               <div class="episode-entities">
@@ -924,6 +927,13 @@
     color: var(--color-warning);
     border-radius: var(--radius-sm);
     font-weight: 500;
+  }
+
+  .episode-title {
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+    margin-bottom: var(--space-sm);
   }
 
   .episode-full-content {
