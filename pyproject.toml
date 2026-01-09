@@ -1,6 +1,6 @@
 [project]
 name = "remind-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Generalization-capable memory layer for LLMs with episodic buffers, semantic graphs, and spreading activation retrieval"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -52,6 +52,10 @@ include = [
 exclude = [
     "web/node_modules/**/*",
 ]
+
+# Force include static files even though they're gitignored
+[tool.hatch.build.targets.sdist.force-include]
+"src/remind/static" = "src/remind/static"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

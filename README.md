@@ -158,6 +158,30 @@ The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`
 
 **Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
 
+### Web UI
+
+Remind includes a web interface for exploring and managing your memory database.
+
+```bash
+# Start the server (includes Web UI)
+remind-mcp --port 8765
+
+# Or with Docker
+docker compose up -d
+```
+
+Access the UI at `http://localhost:8765/ui/?db=my-project`
+
+**Features:**
+- **Dashboard** - Overview of memory statistics
+- **Concepts** - Browse and search generalized concepts
+- **Entities** - Explore entities and their relationships
+- **Episodes** - Timeline view of raw experiences
+- **Graph** - Interactive visualization of concept relationships
+- **Dark mode** - Toggle via UI
+
+You can switch between multiple databases using the database selector in the UI.
+
 ### CLI
 
 ```bash
