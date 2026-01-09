@@ -188,7 +188,7 @@
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: var(--space-md);
+    gap: var(--space-lg);
     margin-bottom: var(--space-xl);
   }
 
@@ -315,14 +315,14 @@
     display: flex;
     justify-content: space-between;
     padding: var(--space-sm) var(--space-md);
-    background: var(--color-zinc-50);
+    background: var(--color-bg);
     border-radius: var(--radius-sm);
     border: 1px solid transparent;
     transition: background 0.15s ease;
   }
   
   .distribution-item:hover {
-    background: var(--color-zinc-100);
+    background: var(--color-surface-hover);
   }
 
   .distribution-label {

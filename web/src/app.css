@@ -102,6 +102,44 @@
   --sidebar-width: 240px;
 }
 
+[data-theme="dark"] {
+  /* Semantic Colors - Dark Mode */
+  --color-bg: var(--color-zinc-950);
+  --color-surface: var(--color-zinc-900);
+  --color-surface-hover: var(--color-zinc-800);
+  --color-border: var(--color-zinc-800);
+  
+  --color-text: var(--color-zinc-50);
+  --color-text-secondary: var(--color-zinc-400);
+  --color-text-muted: var(--color-zinc-500);
+
+  /* Primary */
+  --color-primary: #3b82f6;
+  --color-primary-hover: #60a5fa;
+  --color-primary-bg: rgba(59, 130, 246, 0.1);
+  --color-primary-text: #60a5fa;
+
+  /* Shadows - simpler in dark mode */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.3), 0 4px 6px -4px rgb(0 0 0 / 0.3);
+  --shadow-inner: inset 0 2px 4px 0 rgb(0 0 0 / 0.2);
+
+  /* Palette Adjustments for Dark Mode */
+  --color-red-bg: rgba(239, 68, 68, 0.1);
+  --color-orange-bg: rgba(249, 115, 22, 0.1);
+  --color-amber-bg: rgba(245, 158, 11, 0.1);
+  --color-green-bg: rgba(16, 185, 129, 0.1);
+  --color-teal-bg: rgba(20, 184, 166, 0.1);
+  --color-cyan-bg: rgba(6, 182, 212, 0.1);
+  --color-blue-bg: rgba(59, 130, 246, 0.1);
+  --color-indigo-bg: rgba(99, 102, 241, 0.1);
+  --color-violet-bg: rgba(139, 92, 246, 0.1);
+  --color-purple-bg: rgba(168, 85, 247, 0.1);
+  --color-pink-bg: rgba(236, 72, 153, 0.1);
+  --color-rose-bg: rgba(244, 63, 94, 0.1);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -146,11 +184,16 @@ input, select, textarea {
   font-family: inherit;
   font-size: inherit;
   color: var(--color-text);
+  background: var(--color-surface); /* Added for dark mode inputs */
+  border: 1px solid var(--color-border); /* Added for visibility */
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
 }
 
 input:focus, select:focus, textarea:focus {
   outline: 2px solid var(--color-primary);
   outline-offset: -1px;
+  border-color: var(--color-primary);
 }
 
 /* Scrollbar styling */
@@ -170,6 +213,14 @@ input:focus, select:focus, textarea:focus {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-zinc-400);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--color-zinc-700);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-zinc-600);
 }
 
 /* Utility classes */
@@ -193,4 +244,19 @@ input:focus, select:focus, textarea:focus {
   background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+}
+
+[data-theme="dark"] .glass {
+  background: rgba(24, 24, 27, 0.8);
+}
+
+/* Search icon - shared across components */
+.search-icon {
+  position: absolute;
+  left: var(--space-sm);
+  margin-right: var(--space-xs);
+  top: 55%;
+  transform: translateY(-55%);
+  color: var(--color-text-muted);
+  pointer-events: none;
 }

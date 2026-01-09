@@ -470,15 +470,8 @@
     align-items: center;
   }
 
-  .search-icon {
-    position: absolute;
-    left: var(--space-sm);
-    color: var(--color-text-muted);
-    pointer-events: none;
-  }
-
   .search-bar input {
-    padding: var(--space-sm) var(--space-md) var(--space-sm) 30px;
+    padding: var(--space-sm) var(--space-md) var(--space-sm) 36px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     width: 250px;
@@ -600,7 +593,7 @@
     align-items: center;
     padding: var(--space-md);
     border-top: 1px solid var(--color-border);
-    background: var(--color-zinc-50);
+    background: var(--color-surface);
   }
 
   .pagination button {
@@ -614,7 +607,7 @@
   }
   
   .pagination button:hover:not(:disabled) {
-    background: var(--color-zinc-100);
+    background: var(--color-surface-hover);
   }
 
   .pagination button:disabled {
@@ -671,7 +664,7 @@
 
   .back-btn {
     padding: var(--space-xs);
-    background: var(--color-zinc-50);
+    background: var(--color-bg);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     cursor: pointer;
@@ -683,7 +676,7 @@
 
   .close-btn {
     padding: var(--space-xs);
-    background: var(--color-zinc-50);
+    background: var(--color-bg);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     cursor: pointer;
@@ -694,7 +687,7 @@
   }
 
   .close-btn:hover, .back-btn:hover {
-    background: var(--color-zinc-100);
+    background: var(--color-surface-hover);
     color: var(--color-text);
   }
 
@@ -715,9 +708,9 @@
     gap: var(--space-lg);
     margin-bottom: var(--space-lg);
     padding: var(--space-md);
-    background: var(--color-zinc-50);
+    background: var(--color-bg);
     border-radius: var(--radius-md);
-    border: 1px solid var(--color-zinc-100);
+    border: 1px solid var(--color-border);
   }
 
   .meta-item {
@@ -739,11 +732,11 @@
 
   .conditions {
     padding: var(--space-md);
-    background: var(--color-zinc-50);
+    background: var(--color-bg);
     border-radius: var(--radius-md);
     font-style: italic;
     color: var(--color-text-secondary);
-    border: 1px solid var(--color-zinc-100);
+    border: 1px solid var(--color-border);
   }
 
   .exceptions {
@@ -768,7 +761,7 @@
     align-items: center;
     gap: var(--space-xs);
     padding: var(--space-sm) var(--space-md);
-    background: var(--color-zinc-50);
+    background: var(--color-bg);
     border-radius: var(--radius-sm);
     border-left: 3px solid;
     cursor: pointer;
@@ -778,7 +771,7 @@
   }
 
   .relation-item:hover {
-    background: var(--color-zinc-100);
+    background: var(--color-surface-hover);
   }
 
   .relation-implies { border-color: var(--color-implies); }
@@ -840,8 +833,8 @@
     flex-direction: column;
     gap: var(--space-sm);
     padding: var(--space-sm) var(--space-md);
-    background: var(--color-zinc-50);
-    border: 1px solid var(--color-zinc-100);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     width: 100%;
     text-align: left;
@@ -850,7 +843,7 @@
   }
 
   .episode-item:hover {
-    border-color: var(--color-zinc-300);
+    border-color: var(--color-text-muted);
   }
 
   .episode-item.expanded {
@@ -892,7 +885,7 @@
 
   .episode-expanded {
     padding-top: var(--space-sm);
-    border-top: 1px solid var(--color-zinc-100);
+    border-top: 1px solid var(--color-border);
     margin-top: var(--space-xs);
   }
 
@@ -911,11 +904,11 @@
     text-transform: uppercase;
   }
 
-  .type-observation { background: #e3f2fd; color: #1565c0; }
-  .type-decision { background: #fff3e0; color: #e65100; }
-  .type-question { background: #f3e5f5; color: #7b1fa2; }
-  .type-meta { background: #e8f5e9; color: #2e7d32; }
-  .type-preference { background: #fce4ec; color: #c2185b; }
+  .type-observation { background: var(--color-blue-bg); color: var(--color-blue); }
+  .type-decision { background: var(--color-orange-bg); color: var(--color-orange); }
+  .type-question { background: var(--color-purple-bg); color: var(--color-purple); }
+  .type-meta { background: var(--color-green-bg); color: var(--color-green); }
+  .type-preference { background: var(--color-pink-bg); color: var(--color-pink); }
 
   .episode-date {
     font-size: var(--font-size-xs);
@@ -961,7 +954,7 @@
     display: flex;
     gap: var(--space-md);
     padding-top: var(--space-sm);
-    border-top: 1px solid var(--color-zinc-100);
+    border-top: 1px solid var(--color-border);
     font-size: var(--font-size-xs);
     color: var(--color-text-muted);
   }
@@ -975,7 +968,7 @@
     text-align: center;
     font-size: var(--font-size-sm);
     color: var(--color-text-muted);
-    background: var(--color-zinc-50);
+    background: var(--color-bg);
     border-radius: var(--radius-md);
   }
 
@@ -987,7 +980,7 @@
 
   .episode-id {
     padding: 2px 6px;
-    background: var(--color-zinc-100);
+    background: var(--color-bg);
     border-radius: var(--radius-sm);
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);

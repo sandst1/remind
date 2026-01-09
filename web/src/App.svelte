@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentDb, currentView, databases, hasDatabase, type View } from './lib/stores';
+  import { currentDb, currentView, databases, hasDatabase, type View, theme } from './lib/stores';
   import { fetchDatabases, getDbParam } from './lib/api';
   import Dashboard from './components/Dashboard.svelte';
   import EntityList from './components/EntityList.svelte';
@@ -9,7 +9,7 @@
   import DatabaseSelector from './components/DatabaseSelector.svelte';
   
   // Icons
-  import { Home, Tag, History, Lightbulb } from 'lucide-svelte';
+  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor } from 'lucide-svelte';
 
   let initialized = false;
 
@@ -27,7 +27,33 @@
     }
 
     initialized = true;
+
+    // Listen for system theme changes
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (e: MediaQueryListEvent) => {
+      if ($theme === 'system') {
+        document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+      }
+    };
+    
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
   });
+
+  // Theme handling
+  $: {
+    if (typeof document !== 'undefined') {
+      const t = $theme;
+      const root = document.documentElement;
+      
+      if (t === 'system') {
+        const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        root.setAttribute('data-theme', systemTheme);
+      } else {
+        root.setAttribute('data-theme', t);
+      }
+    }
+  }
 
   const navItems: Array<{ view: View; label: string; icon: any }> = [
     { view: 'dashboard', label: 'Dashboard', icon: Home },
@@ -35,6 +61,19 @@
     { view: 'episodes', label: 'Episodes', icon: History },
     { view: 'concepts', label: 'Concepts', icon: Lightbulb },
   ];
+
+  function toggleTheme() {
+    if ($theme === 'light') theme.set('dark');
+    else if ($theme === 'dark') theme.set('system');
+    else theme.set('light');
+  }
+
+  // Helper to get theme icon
+  function getThemeIcon(t: string) {
+    if (t === 'light') return Sun;
+    if (t === 'dark') return Moon;
+    return Monitor;
+  }
 </script>
 
 <div class="app">
@@ -59,6 +98,15 @@
           </button>
         {/each}
       </nav>
+
+      <div class="sidebar-footer">
+        <button class="nav-item theme-toggle" onclick={toggleTheme} title="Toggle theme ({$theme})">
+          <span class="nav-icon">
+            <svelte:component this={getThemeIcon($theme)} size={18} />
+          </span>
+          <span class="nav-label">Theme: {$theme}</span>
+        </button>
+      </div>
     {/if}
   </aside>
 
@@ -108,6 +156,10 @@
     background: rgba(255, 255, 255, 0.9); /* Fallback for glass */
   }
 
+  :global([data-theme="dark"]) .sidebar-header {
+    background: rgba(24, 24, 27, 0.9);
+  }
+
   .logo {
     font-size: var(--font-size-xl);
     font-weight: 700;
@@ -125,6 +177,11 @@
     overflow-y: auto;
   }
 
+  .sidebar-footer {
+    padding: var(--space-md);
+    border-top: 1px solid var(--color-border);
+  }
+
   .nav-item {
     display: flex;
     align-items: center;
@@ -138,11 +195,16 @@
     transition: all 0.15s ease;
     font-weight: 500;
     position: relative;
+    width: 100%;
   }
 
   .nav-item:hover {
     background: var(--color-zinc-100);
     color: var(--color-text);
+  }
+
+  :global([data-theme="dark"]) .nav-item:hover {
+    background: var(--color-zinc-800);
   }
 
   .nav-item.active {
@@ -164,12 +226,13 @@
 
   .nav-label {
     font-size: var(--font-size-sm);
+    text-transform: capitalize;
   }
 
   .main {
     flex: 1;
     overflow: auto;
-    padding: var(--space-2xl);
+    padding: var(--space-lg); /* Updated to lg (24px) */
     background: var(--color-bg);
   }
 

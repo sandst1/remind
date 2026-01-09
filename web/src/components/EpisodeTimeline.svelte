@@ -222,15 +222,8 @@
     align-items: center;
   }
 
-  .search-icon {
-    position: absolute;
-    left: var(--space-sm);
-    color: var(--color-text-muted);
-    pointer-events: none;
-  }
-
   .search-bar input {
-    padding: var(--space-sm) var(--space-md) var(--space-sm) 32px;
+    padding: var(--space-sm) var(--space-md) var(--space-sm) 36px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     width: 240px;
@@ -250,10 +243,19 @@
     align-items: center;
   }
 
+  .search-icon {
+    position: absolute;
+    left: var(--space-sm);
+    margin-right: var(--space-xs);
+    top: 65%;
+    transform: translateY(-65%);
+  }
+
   .select-icon {
     position: absolute;
     left: var(--space-sm);
     color: var(--color-text-muted);
+    margin-right: var(--space-sm);
     pointer-events: none;
     z-index: 1;
   }
@@ -267,6 +269,7 @@
     font-size: var(--font-size-sm);
     cursor: pointer;
     transition: all 0.15s ease;
+    margin-left: var(--space-sm);
   }
   
   /* Helper for the one without icon */
@@ -280,17 +283,18 @@
 
   .timeline {
     position: relative;
-    padding-left: 32px;
+    padding-left:64px;
   }
 
   .timeline::before {
     content: '';
     position: absolute;
-    left: 15px;
+    left: 31px;
     top: 0;
     bottom: 0;
     width: 2px;
-    background: var(--color-zinc-200);
+    background: var(--color-border);
+    margin-top: var(--space-sm);
   }
 
   .timeline-item {
@@ -300,7 +304,7 @@
 
   .timeline-marker {
     position: absolute;
-    left: -32px;
+    left: -48px;
     width: 32px;
     height: 32px;
     display: flex;
@@ -312,6 +316,7 @@
     color: var(--color-text-secondary);
     z-index: 2;
     transition: all 0.2s ease;
+    margin-top: var(--space-sm);
   }
 
   .timeline-item.consolidated .timeline-marker {
@@ -389,12 +394,12 @@
 
   .entity-tag {
     padding: 4px 10px;
-    background: var(--color-zinc-100);
+    background: var(--color-bg);
     border-radius: var(--radius-sm);
     font-size: var(--font-size-xs);
     font-family: var(--font-mono);
     color: var(--color-text-secondary);
-    border: 1px solid transparent;
+    border: 1px solid var(--color-border);
   }
   
   .entity-tag:hover {
@@ -439,14 +444,14 @@
   }
 
   .pagination button:hover:not(:disabled) {
-    background: var(--color-zinc-50);
+    background: var(--color-surface-hover);
     border-color: var(--color-zinc-300);
   }
 
   .pagination button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    background: var(--color-zinc-50);
+    background: var(--color-bg);
   }
 
   .loading,
