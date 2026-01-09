@@ -74,7 +74,13 @@
         limit: pageSize,
         search: search || undefined,
       });
-      concepts.set(response.concepts);
+      // Sort concepts alphabetically by title (or summary if no title)
+      const sortedConcepts = response.concepts.sort((a, b) => {
+        const aKey = (a.title || a.summary).toLowerCase();
+        const bKey = (b.title || b.summary).toLowerCase();
+        return aKey.localeCompare(bKey);
+      });
+      concepts.set(sortedConcepts);
       conceptsTotal.set(response.total);
     } catch (e) {
       conceptsError.set(e instanceof Error ? e.message : 'Failed to load concepts');
@@ -244,7 +250,6 @@
                 <span class="concept-confidence confidence-{getConfidenceClass(concept.confidence)}">
                   {formatConfidence(concept.confidence)}
                 </span>
-                <span class="concept-count">{concept.instance_count}x</span>
               </div>
               {#if concept.title}
                 <div class="concept-title">{concept.title}</div>
@@ -548,15 +553,6 @@
   .confidence-high { color: var(--color-success); }
   .confidence-medium { color: var(--color-warning); }
   .confidence-low { color: var(--color-error); }
-
-  .concept-count {
-    color: var(--color-text-muted);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-    background: var(--color-surface);
-    padding: 1px 6px;
-    border-radius: var(--radius-full);
-  }
 
   .concept-title {
     font-weight: 600;

@@ -5,7 +5,7 @@
   import { fetchEntityGraph, fetchEntity, fetchEntityEpisodes, fetchEntityConcepts, fetchEpisode } from '../lib/api';
   import type { EntityGraphData, EntityGraphNode, EntityGraphLink, EntityType, Entity, Episode, Concept } from '../lib/types';
   import {
-    File, Code, Box, Folder, Lightbulb, User, Briefcase, Wrench, HelpCircle,
+    File, Code, Box, Folder, Lightbulb, User, Briefcase, Wrench, HelpCircle, BookOpen,
     ZoomIn, ZoomOut, RotateCcw, Eye, Zap, CircleHelp, Brain, Heart,
     ChevronRight, ChevronDown
   } from 'lucide-svelte';
@@ -36,6 +36,7 @@
     class: '#f59e0b',     // amber
     module: '#6366f1',    // indigo
     concept: '#f97316',   // orange
+    subject: '#14b8a6',   // teal
     person: '#22c55e',    // green
     project: '#2563eb',   // primary blue
     tool: '#f43f5e',      // rose
@@ -48,6 +49,7 @@
     class: Box,
     module: Folder,
     concept: Lightbulb,
+    subject: BookOpen,
     person: User,
     project: Briefcase,
     tool: Wrench,
@@ -375,6 +377,7 @@
         <option value="class">Classes</option>
         <option value="module">Modules</option>
         <option value="concept">Concepts</option>
+        <option value="subject">Subjects</option>
         <option value="person">People</option>
         <option value="project">Projects</option>
         <option value="tool">Tools</option>

@@ -168,7 +168,7 @@ class TestEntityExtractor:
                 {"type": "function", "id": "function:foo", "name": "foo"},
                 {"type": "class", "id": "class:Bar", "name": "Bar"},
                 {"type": "module", "id": "module:utils", "name": "utils"},
-                {"type": "concept", "id": "concept:caching", "name": "caching"},
+                {"type": "subject", "id": "subject:caching", "name": "caching"},
                 {"type": "person", "id": "person:bob", "name": "Bob"},
                 {"type": "project", "id": "project:api", "name": "api"},
                 {"type": "tool", "id": "tool:redis", "name": "redis"},
@@ -184,7 +184,7 @@ class TestEntityExtractor:
         assert EntityType.FUNCTION in types
         assert EntityType.CLASS in types
         assert EntityType.MODULE in types
-        assert EntityType.CONCEPT in types
+        assert EntityType.SUBJECT in types
         assert EntityType.PERSON in types
         assert EntityType.PROJECT in types
         assert EntityType.TOOL in types

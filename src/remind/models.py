@@ -33,16 +33,38 @@ class EpisodeType(Enum):
 
 class EntityType(Enum):
     """Types of entities that can be mentioned in episodes."""
-    
+
     FILE = "file"                 # Source file (e.g., "file:src/auth.ts")
     FUNCTION = "function"         # Function or method (e.g., "function:authenticate")
     CLASS = "class"               # Class or type (e.g., "class:UserService")
     MODULE = "module"             # Module or package (e.g., "module:auth")
-    CONCEPT = "concept"           # Abstract concept (e.g., "concept:caching")
+    SUBJECT = "subject"           # Abstract subject/topic (e.g., "subject:caching")
     PERSON = "person"             # Person (e.g., "person:alice")
     PROJECT = "project"           # Project (e.g., "project:backend-api")
     TOOL = "tool"                 # Tool or technology (e.g., "tool:redis")
     OTHER = "other"               # Catch-all for other entity types
+
+
+# Valid entity type prefixes for ID validation
+VALID_ENTITY_TYPE_PREFIXES = {t.value for t in EntityType}
+
+
+def normalize_entity_name(name: str) -> str:
+    """Normalize entity name for consistent matching and ID generation.
+
+    - Strips leading/trailing whitespace
+    - Collapses multiple spaces into one
+    - Converts to lowercase for case-insensitive matching
+
+    Args:
+        name: The entity name to normalize
+
+    Returns:
+        Normalized name, or "unknown" if name is empty/None
+    """
+    if not name:
+        return "unknown"
+    return " ".join(name.lower().split())
 
 
 @dataclass
@@ -54,7 +76,7 @@ class Entity:
     They form a graph alongside concepts, connected through mentions.
     """
     
-    id: str  # e.g., "file:src/auth.ts", "person:alice", "concept:caching"
+    id: str  # e.g., "file:src/auth.ts", "person:alice", "subject:caching"
     type: EntityType
     display_name: Optional[str] = None  # Human-readable name
     created_at: datetime = field(default_factory=datetime.now)
@@ -89,8 +111,8 @@ class Entity:
         if ":" in entity_id:
             type_str, name = entity_id.split(":", 1)
             return type_str, name
-        # No prefix - assume concept
-        return "concept", entity_id
+        # No prefix - assume subject
+        return "subject", entity_id
     
     @classmethod
     def make_id(cls, entity_type: str, name: str) -> str:
@@ -287,7 +309,7 @@ class Episode:
     # Which concepts were activated when this episode occurred
     concepts_activated: list[str] = field(default_factory=list)
     
-    # Entity IDs mentioned in this episode (e.g., ["file:src/auth.ts", "concept:caching"])
+    # Entity IDs mentioned in this episode (e.g., ["file:src/auth.ts", "subject:caching"])
     entity_ids: list[str] = field(default_factory=list)
     
     # Has this episode been processed into concepts?
@@ -392,16 +414,24 @@ class ExtractionResult:
         # Parse entities
         entities = []
         for e in data.get("entities", []):
+            # Parse entity type, defaulting to OTHER if invalid/missing
             try:
                 entity_type = EntityType(e.get("type", "other"))
             except ValueError:
                 entity_type = EntityType.OTHER
 
-            entity_id = e.get("id") or Entity.make_id(entity_type.value, e.get("name", "unknown"))
+            # Get entity name and normalize it for ID generation
+            raw_name = e.get("name", "")
+            normalized_name = normalize_entity_name(raw_name)
+
+            # Always generate entity ID from type:normalized_name
+            # This ensures consistent IDs regardless of what the LLM provides
+            entity_id = Entity.make_id(entity_type.value, normalized_name)
+
             entities.append(Entity(
                 id=entity_id,
                 type=entity_type,
-                display_name=e.get("name"),
+                display_name=raw_name or normalized_name,  # Preserve original casing for display
             ))
 
         # Parse entity relationships

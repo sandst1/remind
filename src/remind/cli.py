@@ -213,6 +213,79 @@ def consolidate(ctx, force: bool):
             console.print(f"    → {contradiction}")
 
 
+@main.command()
+@click.confirmation_option(
+    prompt="This will delete all concepts and entities and rebuild from episodes. Continue?"
+)
+@click.pass_context
+def reconsolidate(ctx):
+    """Reset database and consolidate from scratch.
+
+    This operation:
+    1. Deletes all concepts and relations
+    2. Deletes all entities and mentions
+    3. Resets episode consolidated/extracted flags
+    4. Runs consolidation from scratch
+
+    Useful when consolidation prompts change or to fix accumulated errors.
+    Episodes are preserved - only derived data is cleared.
+    """
+    from remind.store import SQLiteMemoryStore
+
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    store = SQLiteMemoryStore(ctx.obj["db"])
+
+    console.print("[bold cyan]Reconsolidating memory...[/bold cyan]\n")
+
+    # Step 1: Delete concepts
+    with console.status("[bold cyan]Deleting concepts..."):
+        concept_count = store.delete_all_concepts()
+    console.print(f"  [green]✓[/green] Deleted {concept_count} concepts")
+
+    # Step 2: Delete entities
+    with console.status("[bold cyan]Deleting entities..."):
+        entity_count = store.delete_all_entities()
+    console.print(f"  [green]✓[/green] Deleted {entity_count} entities")
+
+    # Step 3: Reset episode flags
+    with console.status("[bold cyan]Resetting episode flags..."):
+        episode_count = store.reset_episode_flags()
+    console.print(f"  [green]✓[/green] Reset {episode_count} episodes")
+
+    # Step 4: Run consolidation in batches
+    console.print(f"\n[cyan]Running consolidation on {episode_count} episodes in batches...[/cyan]")
+
+    total_created = 0
+    total_updated = 0
+    total_contradictions = 0
+    batch_num = 0
+
+    async def _consolidate():
+        return await memory.consolidate(force=True)
+
+    while True:
+        batch_num += 1
+        remaining = store.count_unconsolidated_episodes()
+        if remaining == 0:
+            break
+
+        console.print(f"\n  [cyan]Batch {batch_num}[/cyan] ({remaining} episodes remaining)")
+        with console.status(f"[bold cyan]Processing batch {batch_num}..."):
+            result = run_async(_consolidate())
+
+        total_created += result.concepts_created
+        total_updated += result.concepts_updated
+        total_contradictions += result.contradictions_found
+
+        console.print(f"    Created: {result.concepts_created}, Updated: {result.concepts_updated}")
+
+    console.print(f"\n[green]✓ Reconsolidation complete[/green]")
+    console.print(f"  Total concepts created: {total_created}")
+    console.print(f"  Total concepts updated: {total_updated}")
+    if total_contradictions:
+        console.print(f"  [yellow]Contradictions found: {total_contradictions}[/yellow]")
+
+
 @main.command("end-session")
 @click.pass_context
 def end_session(ctx):

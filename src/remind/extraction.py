@@ -99,7 +99,7 @@ EXTRACTION_SYSTEM_PROMPT = """You are an information extraction system. Your job
 3. Identify relationships between extracted entities
 
 Be conservative - only extract entities that are clearly mentioned.
-Prefer specific entity types (file, function) over generic ones (concept).
+Prefer specific entity types (file, function) over generic ones (subject).
 Keep entity names SHORT (under 30 characters).
 Only include relationships that are explicitly stated or strongly implied.
 Respond with ONLY valid JSON, no explanations."""
@@ -113,7 +113,7 @@ Return JSON:
 {{
   "type": "observation|decision|question|meta|preference",
   "title": "Short descriptive title (5-10 words)",
-  "entities": [{{"type": "file|function|class|person|concept|tool|project", "id": "type:name", "name": "short name"}}],
+  "entities": [{{"type": "file|function|class|person|subject|tool|project", "id": "type:name", "name": "short name"}}],
   "entity_relationships": [{{"source": "type:name", "target": "type:name", "relationship": "verb or description", "strength": 0.7}}]
 }}
 
@@ -226,18 +226,35 @@ class EntityExtractor:
         """
         result = await self.extract(episode.content, episode_id=episode.id)
 
-        # Update episode
+        # Update episode metadata
         episode.episode_type = result.episode_type
         episode.title = result.title
-        episode.entity_ids = [e.id for e in result.entities]
         episode.entities_extracted = True
         episode.relations_extracted = True
-        self.store.update_episode(episode)
 
-        # Store entities and mentions
+        # Store entities with deduplication, and track final entity IDs
+        final_entity_ids = []
         for entity in result.entities:
-            self.store.add_entity(entity)
-            self.store.add_mention(episode.id, entity.id)
+            # Check if an entity with the same name already exists
+            existing = self.store.find_entity_by_name(entity.display_name)
+            if existing:
+                # Reuse existing entity ID for consistency
+                entity_id = existing.id
+                # Update type to most recent extraction (but keep ID stable)
+                if entity.type != existing.type:
+                    existing.type = entity.type
+                    self.store.add_entity(existing)  # INSERT OR REPLACE updates the type
+            else:
+                # New entity - store it
+                self.store.add_entity(entity)
+                entity_id = entity.id
+
+            final_entity_ids.append(entity_id)
+            self.store.add_mention(episode.id, entity_id)
+
+        # Update episode with deduplicated entity IDs
+        episode.entity_ids = final_entity_ids
+        self.store.update_episode(episode)
 
         # Store entity relationships
         for relation in result.entity_relations:

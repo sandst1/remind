@@ -19,6 +19,7 @@
     Briefcase,
     Wrench,
     Tag,
+    BookOpen,
     Eye,
     Zap,
     CircleHelp,
@@ -61,18 +62,20 @@
     relatedConcepts = [];
   }
 
-  // Client-side filtering of entities
-  $: filteredEntities = $entities.filter(e => {
-    // Filter by type
-    if (filterType && e.type !== filterType) return false;
-    // Filter by search
-    if (search.length >= 2) {
-      const searchLower = search.toLowerCase();
-      return e.id.toLowerCase().includes(searchLower) ||
-             (e.display_name && e.display_name.toLowerCase().includes(searchLower));
-    }
-    return true;
-  });
+  // Client-side filtering and sorting of entities
+  $: filteredEntities = $entities
+    .filter(e => {
+      // Filter by type
+      if (filterType && e.type !== filterType) return false;
+      // Filter by search
+      if (search.length >= 2) {
+        const searchLower = search.toLowerCase();
+        return e.id.toLowerCase().includes(searchLower) ||
+               (e.display_name && e.display_name.toLowerCase().includes(searchLower));
+      }
+      return true;
+    })
+    .sort((a, b) => (a.display_name || a.id).localeCompare(b.display_name || b.id));
 
   async function loadEntities() {
     if (!$currentDb) return;
@@ -163,6 +166,7 @@
     class: 'Class',
     module: 'Module',
     concept: 'Concept',
+    subject: 'Subject',
     person: 'Person',
     project: 'Project',
     tool: 'Tool',
@@ -175,6 +179,7 @@
     class: Box,
     module: Folder,
     concept: Lightbulb,
+    subject: BookOpen,
     person: User,
     project: Briefcase,
     tool: Wrench,
@@ -206,6 +211,13 @@
     if (confidence >= 0.4) return 'medium';
     return 'low';
   }
+
+  function getEntityName(entity: Entity): string {
+    if (entity.display_name) return entity.display_name;
+    // Extract name part after the colon (e.g., "ai-architecture" from "concept:ai-architecture")
+    const colonIndex = entity.id.indexOf(':');
+    return colonIndex >= 0 ? entity.id.slice(colonIndex + 1) : entity.id;
+  }
 </script>
 
 <div class="entity-list">
@@ -228,6 +240,7 @@
         <option value="class">Classes</option>
         <option value="module">Modules</option>
         <option value="concept">Concepts</option>
+        <option value="subject">Subjects</option>
         <option value="person">People</option>
         <option value="project">Projects</option>
         <option value="tool">Tools</option>
@@ -256,12 +269,9 @@
                 <svelte:component this={entityTypeIcons[entity.type]} size={16} />
               </span>
               <div class="entity-info">
-                <div class="entity-id">{entity.id}</div>
-                {#if entity.display_name && entity.display_name !== entity.id}
-                  <div class="entity-name">{entity.display_name}</div>
-                {/if}
+                <div class="entity-name">{getEntityName(entity)}</div>
+                <div class="entity-type">{entityTypeLabels[entity.type]}</div>
               </div>
-              <span class="entity-count">{entity.mention_count || 0}</span>
             </button>
           {/each}
         </div>
@@ -513,7 +523,6 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    max-height: calc(100vh - var(--space-2xl) * 2);
   }
 
   .header {
@@ -619,7 +628,7 @@
     padding-left: calc(var(--space-md) - 3px);
   }
 
-  .entity-item.selected .entity-id {
+  .entity-item.selected .entity-name {
     color: var(--color-primary);
     font-weight: 500;
   }
@@ -642,6 +651,7 @@
   .icon-class { color: var(--color-amber); }
   .icon-module { color: var(--color-indigo); }
   .icon-concept { color: var(--color-orange); }
+  .icon-subject { color: var(--color-teal); }
   .icon-person { color: var(--color-green); }
   .icon-project { color: var(--color-primary); }
   .icon-tool { color: var(--color-rose); }
@@ -653,34 +663,17 @@
     overflow: hidden;
   }
 
-  .entity-id {
+  .entity-name {
     font-size: var(--font-size-sm);
-    font-family: var(--font-mono);
     color: var(--color-text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .entity-name {
+  .entity-type {
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
-  }
-
-  .entity-count {
-    font-size: var(--font-size-xs);
-    color: var(--color-text-secondary);
-    background: var(--color-bg);
-    padding: 2px 6px;
-    border-radius: var(--radius-full);
-    flex-shrink: 0;
-    min-width: 20px;
-    text-align: center;
-  }
-  
-  .entity-item.selected .entity-count {
-    background: var(--color-surface);
-    color: var(--color-primary);
   }
 
   .detail-panel {

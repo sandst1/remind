@@ -93,7 +93,12 @@ class MemoryStore(ABC):
     def get_unconsolidated_episodes(self, limit: int = 10) -> list[Episode]:
         """Get episodes that haven't been consolidated yet."""
         ...
-    
+
+    @abstractmethod
+    def count_unconsolidated_episodes(self) -> int:
+        """Count episodes that haven't been consolidated yet."""
+        ...
+
     @abstractmethod
     def get_recent_episodes(self, limit: int = 10) -> list[Episode]:
         """Get most recent episodes."""
@@ -129,7 +134,23 @@ class MemoryStore(ABC):
     def get_all_entities(self) -> list[Entity]:
         """Get all entities."""
         ...
-    
+
+    @abstractmethod
+    def find_entity_by_name(self, name: str) -> Optional[Entity]:
+        """Find an entity by display name, case-insensitive.
+
+        Searches for entities whose display_name matches the given name
+        after normalization (lowercase, trimmed). Returns the first match
+        if multiple exist.
+
+        Args:
+            name: The entity name to search for
+
+        Returns:
+            Entity if found, None otherwise
+        """
+        ...
+
     # Mention operations (episode <-> entity)
     @abstractmethod
     def add_mention(self, episode_id: str, entity_id: str) -> None:
@@ -189,6 +210,26 @@ class MemoryStore(ABC):
     @abstractmethod
     def get_unextracted_relation_episodes(self, limit: int = 100) -> list[Episode]:
         """Get episodes that have entities but haven't had relation extraction performed."""
+        ...
+
+    # Bulk operations for reconsolidation
+    @abstractmethod
+    def delete_all_concepts(self) -> int:
+        """Delete all concepts and their relations. Returns count deleted."""
+        ...
+
+    @abstractmethod
+    def delete_all_entities(self) -> int:
+        """Delete all entities, mentions, and entity relations. Returns count deleted."""
+        ...
+
+    @abstractmethod
+    def reset_episode_flags(self) -> int:
+        """Reset consolidated, entities_extracted, and relations_extracted flags on all episodes.
+
+        Also clears entity_ids and concepts_activated lists.
+        Returns count of episodes reset.
+        """
         ...
 
     # Statistics
@@ -724,7 +765,18 @@ class SQLiteMemoryStore(MemoryStore):
             return [Episode.from_dict(json.loads(row["data"])) for row in rows]
         finally:
             conn.close()
-    
+
+    def count_unconsolidated_episodes(self) -> int:
+        """Count episodes that haven't been consolidated yet."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) as count FROM episodes WHERE consolidated = FALSE"
+            ).fetchone()
+            return row["count"]
+        finally:
+            conn.close()
+
     def get_recent_episodes(self, limit: int = 10) -> list[Episode]:
         """Get most recent episodes."""
         conn = self._get_conn()
@@ -879,11 +931,49 @@ class SQLiteMemoryStore(MemoryStore):
             rows = conn.execute(
                 "SELECT data FROM entities ORDER BY type, created_at DESC"
             ).fetchall()
-            
+
             return [Entity.from_dict(json.loads(row["data"])) for row in rows]
         finally:
             conn.close()
-    
+
+    def find_entity_by_name(self, name: str) -> Optional[Entity]:
+        """Find an entity by display name, case-insensitive.
+
+        Uses LOWER() for case-insensitive comparison and TRIM() for whitespace.
+        Returns the first match if multiple entities have the same normalized name.
+
+        Args:
+            name: The entity name to search for
+
+        Returns:
+            Entity if found, None otherwise
+        """
+        if not name:
+            return None
+
+        # Normalize the search name
+        normalized = " ".join(name.lower().split())
+
+        conn = self._get_conn()
+        try:
+            # Search by normalized display_name (case-insensitive, trimmed)
+            row = conn.execute(
+                """
+                SELECT data FROM entities
+                WHERE LOWER(TRIM(display_name)) = ?
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (normalized,)
+            ).fetchone()
+
+            if not row:
+                return None
+
+            return Entity.from_dict(json.loads(row["data"]))
+        finally:
+            conn.close()
+
     # Mention operations
     
     def add_mention(self, episode_id: str, entity_id: str) -> None:
@@ -1145,8 +1235,69 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
 
+    # Bulk operations for reconsolidation
+
+    def delete_all_concepts(self) -> int:
+        """Delete all concepts and their relations. Returns count deleted."""
+        conn = self._get_conn()
+        try:
+            # Delete relations first (foreign key constraint)
+            conn.execute("DELETE FROM relations")
+            # Delete concepts
+            cursor = conn.execute("DELETE FROM concepts")
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
+    def delete_all_entities(self) -> int:
+        """Delete all entities, mentions, and entity relations. Returns count deleted."""
+        conn = self._get_conn()
+        try:
+            # Delete in order of foreign key dependencies
+            conn.execute("DELETE FROM entity_relations")
+            conn.execute("DELETE FROM mentions")
+            cursor = conn.execute("DELETE FROM entities")
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
+    def reset_episode_flags(self) -> int:
+        """Reset consolidated, entities_extracted, and relations_extracted flags on all episodes.
+
+        Also clears entity_ids and concepts_activated lists.
+        Returns count of episodes reset.
+        """
+        conn = self._get_conn()
+        try:
+            # Get all episodes
+            rows = conn.execute("SELECT id, data FROM episodes").fetchall()
+
+            count = 0
+            for row in rows:
+                data = json.loads(row["data"])
+                # Reset flags
+                data["consolidated"] = False
+                data["entities_extracted"] = False
+                data["relations_extracted"] = False
+                # Clear derived data
+                data["entity_ids"] = []
+                data["concepts_activated"] = []
+
+                conn.execute(
+                    "UPDATE episodes SET data = ?, consolidated = ? WHERE id = ?",
+                    (json.dumps(data), False, row["id"])
+                )
+                count += 1
+
+            conn.commit()
+            return count
+        finally:
+            conn.close()
+
     # Statistics
-    
+
     def get_stats(self) -> dict:
         """Get storage statistics."""
         conn = self._get_conn()

@@ -82,6 +82,7 @@ Respond with this exact JSON structure:
 
   "new_concepts": [
     {{
+      "temp_id": "NEW_0",
       "title": "short descriptive title (5-10 words)",
       "summary": "the generalized understanding - be specific and actionable",
       "confidence": 0.6,
@@ -90,15 +91,15 @@ Respond with this exact JSON structure:
       "exceptions": ["known exceptions"],
       "tags": ["categorization", "tags"],
       "relations": [
-        {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of", "target_id": "concept_id", "strength": 0.7, "context": "when this relation holds"}}
+        {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
       ]
     }}
   ],
-  
+
   "new_relations": [
     {{
-      "source_id": "concept_id",
-      "target_id": "concept_id", 
+      "source_id": "existing_id or NEW_0",
+      "target_id": "existing_id or NEW_1",
       "type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of",
       "strength": 0.7,
       "context": "when this relation holds"
@@ -113,6 +114,10 @@ Respond with this exact JSON structure:
     }}
   ]
 }}
+
+IMPORTANT for new concepts: Use temp_id (NEW_0, NEW_1, etc.) to identify each new concept you create.
+When creating relations between new concepts, use these temp_ids as target_id or source_id.
+For relations to existing concepts, use the existing concept's ID from the EXISTING CONCEPTUAL MEMORY section.
 
 Be conservative: only include entries that have clear evidence. Empty arrays are fine."""
 
@@ -134,7 +139,7 @@ class Consolidator:
         llm: LLMProvider,
         embedding: EmbeddingProvider,
         store: MemoryStore,
-        batch_size: int = 20,
+        batch_size: int = 10,
         min_confidence: float = 0.3,
     ):
         self.llm = llm
@@ -217,18 +222,49 @@ class Consolidator:
             except Exception as e:
                 logger.warning(f"Failed to apply update to {update.get('concept_id')}: {e}")
         
-        # Create new concepts
-        for new_concept_data in operations.get("new_concepts", []):
+        # Create new concepts - first pass without relations
+        id_mapping = {}  # temp_id -> real_id
+        deferred_relations = []
+
+        for i, new_concept_data in enumerate(operations.get("new_concepts", [])):
             try:
+                temp_id = new_concept_data.get("temp_id", f"NEW_{i}")
+                # Extract relations for deferred processing
+                relations = new_concept_data.pop("relations", [])
+                deferred_relations.extend([
+                    {**rel, "_source_temp_id": temp_id} for rel in relations
+                ])
+
                 concept_id = await self._create_concept(new_concept_data)
+                id_mapping[temp_id] = concept_id
                 result.concepts_created += 1
                 result.created_concept_ids.append(concept_id)
             except Exception as e:
                 logger.warning(f"Failed to create concept: {e}")
-        
-        # Add new relations between existing concepts
+
+        # Helper to resolve temp IDs to real IDs
+        def resolve_id(id_str: str) -> str:
+            if id_str and id_str.startswith("NEW_"):
+                return id_mapping.get(id_str, id_str)
+            return id_str
+
+        # Process deferred relations from new concepts
+        for rel in deferred_relations:
+            try:
+                source_id = id_mapping.get(rel.pop("_source_temp_id"))
+                if not source_id:
+                    continue
+                rel["source_id"] = source_id
+                rel["target_id"] = resolve_id(rel.get("target_id", ""))
+                await self._add_relation(rel)
+            except Exception as e:
+                logger.warning(f"Failed to add deferred relation: {e}")
+
+        # Add new relations between concepts (with temp ID resolution)
         for relation_data in operations.get("new_relations", []):
             try:
+                relation_data["source_id"] = resolve_id(relation_data.get("source_id", ""))
+                relation_data["target_id"] = resolve_id(relation_data.get("target_id", ""))
                 await self._add_relation(relation_data)
             except Exception as e:
                 logger.warning(f"Failed to add relation: {e}")
@@ -374,34 +410,16 @@ class Consolidator:
         self.store.update_concept(concept)
     
     async def _create_concept(self, data: dict) -> str:
-        """Create a new concept from consolidation data."""
+        """Create a new concept from consolidation data (relations added separately)."""
         # Validate minimum confidence
         confidence = data.get("confidence", 0.5)
         if confidence < self.min_confidence:
             logger.info(f"Skipping low-confidence concept: {data.get('summary', '')[:50]}...")
             raise ValueError(f"Confidence {confidence} below threshold {self.min_confidence}")
-        
+
         # Generate embedding for the summary
         embedding = await self.embedding.embed(data["summary"])
-        
-        # Build relations - only include ones with valid targets
-        relations = []
-        for rel_data in data.get("relations", []):
-            target_id = rel_data.get("target_id")
-            # Validate target exists before adding relation
-            if not target_id or not self.store.get_concept(target_id):
-                logger.warning(f"Skipping relation to non-existent concept: {target_id}")
-                continue
-            try:
-                relations.append(Relation(
-                    type=RelationType(rel_data["type"]),
-                    target_id=target_id,
-                    strength=rel_data.get("strength", 0.5),
-                    context=rel_data.get("context"),
-                ))
-            except (ValueError, KeyError) as e:
-                logger.warning(f"Invalid relation data: {e}")
-        
+
         concept = Concept(
             title=data.get("title"),
             summary=data["summary"],
@@ -411,10 +429,10 @@ class Consolidator:
             conditions=data.get("conditions"),
             exceptions=data.get("exceptions", []),
             tags=data.get("tags", []),
-            relations=relations,
+            relations=[],  # Relations added via _add_relation after all concepts created
             embedding=embedding,
         )
-        
+
         return self.store.add_concept(concept)
     
     async def _add_relation(self, data: dict) -> None:
