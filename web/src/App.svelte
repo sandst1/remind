@@ -59,8 +59,8 @@
 
   const navItems: Array<{ view: View; label: string; icon: any }> = [
     { view: 'dashboard', label: 'Dashboard', icon: Home },
-    { view: 'entities', label: 'Entities', icon: Tag },
     { view: 'episodes', label: 'Episodes', icon: History },
+    { view: 'entities', label: 'Entities', icon: Tag },
     { view: 'concepts', label: 'Concepts', icon: Lightbulb },
     { view: 'concept-map', label: 'Concept Map', icon: Circle },
     { view: 'entity-graph', label: 'Entity Graph', icon: Network },

@@ -62,13 +62,17 @@
   }
 
   // Client-side filtering of entities
-  $: filteredEntities = search.length >= 2
-    ? $entities.filter(e => {
-        const searchLower = search.toLowerCase();
-        return e.id.toLowerCase().includes(searchLower) ||
-               (e.display_name && e.display_name.toLowerCase().includes(searchLower));
-      })
-    : $entities;
+  $: filteredEntities = $entities.filter(e => {
+    // Filter by type
+    if (filterType && e.type !== filterType) return false;
+    // Filter by search
+    if (search.length >= 2) {
+      const searchLower = search.toLowerCase();
+      return e.id.toLowerCase().includes(searchLower) ||
+             (e.display_name && e.display_name.toLowerCase().includes(searchLower));
+    }
+    return true;
+  });
 
   async function loadEntities() {
     if (!$currentDb) return;
@@ -77,9 +81,7 @@
     entitiesError.set(null);
 
     try {
-      const response = await fetchEntities({
-        type: filterType || undefined,
-      });
+      const response = await fetchEntities();
       entities.set(response.entities);
       entitiesTotal.set(response.total);
     } catch (e) {
@@ -115,10 +117,6 @@
   // Navigate to a related entity
   async function navigateToRelatedEntity(relatedEntity: Entity) {
     await selectEntity(relatedEntity);
-  }
-
-  function applyFilter() {
-    loadEntities();
   }
 
   function clearSelection() {
@@ -223,7 +221,7 @@
           class="search-input"
         />
       </div>
-      <select bind:value={filterType} onchange={applyFilter}>
+      <select bind:value={filterType}>
         <option value="">All types</option>
         <option value="file">Files</option>
         <option value="function">Functions</option>
