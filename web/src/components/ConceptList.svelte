@@ -74,13 +74,7 @@
         limit: pageSize,
         search: search || undefined,
       });
-      // Sort concepts alphabetically by title (or summary if no title)
-      const sortedConcepts = response.concepts.sort((a, b) => {
-        const aKey = (a.title || a.summary).toLowerCase();
-        const bKey = (b.title || b.summary).toLowerCase();
-        return aKey.localeCompare(bKey);
-      });
-      concepts.set(sortedConcepts);
+      concepts.set(response.concepts);
       conceptsTotal.set(response.total);
     } catch (e) {
       conceptsError.set(e instanceof Error ? e.message : 'Failed to load concepts');

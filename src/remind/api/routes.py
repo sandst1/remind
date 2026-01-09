@@ -88,8 +88,8 @@ async def get_concepts(request: Request) -> JSONResponse:
                 or any(search_lower in tag.lower() for tag in c.tags)
             ]
 
-        # Sort by updated_at descending
-        all_concepts.sort(key=lambda c: c.updated_at, reverse=True)
+        # Sort alphabetically by title (or summary if no title)
+        all_concepts.sort(key=lambda c: (c.title or c.summary).lower())
 
         total = len(all_concepts)
         concepts = all_concepts[offset : offset + limit]
