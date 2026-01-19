@@ -1,263 +1,87 @@
-# Remind - Instructions for AI Agents
+# Remind - AI Agent Instructions
 
-Remind is your external memory layer. Unlike your context window (which resets each conversation), Remind persists knowledge across sessions and generalizes from specific experiences into abstract concepts.
+External memory layer that persists across sessions and generalizes experiences into concepts.
 
-**Important**: Do NOT use any built-in memory tools provided by your IDE or runtime (such as Cursor's default memory, Claude's memory features, etc.). Use the Remind MCP tools instead.
+**Important**: Use Remind MCP tools instead of any built-in IDE/runtime memory features.
 
-## Why Remind?
-
-- **Episodic → Semantic**: Raw experiences are consolidated into generalized concepts
-- **Associative Retrieval**: Queries activate related concepts through a semantic graph
-- **Cross-session Persistence**: Memories persist across conversations and sessions
-- **Project-specific**: Each project can have its own memory database
-
-## Quick Reference
+## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `remember` | Store an experience (fast, no LLM call) |
-| `recall` | Retrieve relevant memories |
-| `consolidate` | Extract entities, relationships + process episodes into concepts |
-| `inspect` | View concepts or episodes |
-| `entities` | List entities in memory |
-| `inspect_entity` | View entity details and relationships |
-| `stats` | Memory statistics |
+| `remember(content, [episode_type], [entities])` | Store experience (fast, no LLM) |
+| `recall(query, [entity])` | Retrieve relevant memories |
+| `consolidate([force])` | Extract entities + process episodes → concepts |
+| `inspect([concept_id], [show_episodes])` | View concepts or episodes |
+| `entities([entity_type], [limit])` | List entities with mention counts |
+| `inspect_entity(entity_id, [show_relations])` | View entity details/relationships |
+| `stats()` | Memory statistics |
 
----
-
-## Core Operations
-
-### remember - Store Experiences
+## remember
 
 ```
 remember(content="User prefers TypeScript over JavaScript")
+remember(content="Use Redis for caching", episode_type="decision", entities="tool:redis,concept:caching")
 ```
 
-**Fast operation**: `remember()` just stores the episode - no LLM call. Entity extraction and type classification happen during `consolidate()`.
+**Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`
 
-**Optional parameters:**
-- `episode_type`: `observation` (default), `decision`, `question`, `meta`, `preference`
-- `entities`: Comma-separated entity IDs (e.g., `"file:auth.ts,person:alice"`)
+**When to use**: User preferences, project context, decisions+rationale, open questions, corrections
+**Skip**: Trivial info, already-captured knowledge, raw conversation logs
 
-If not provided, these are automatically detected during consolidation.
-
-```
-remember(
-  content="Decided to use Redis for session caching",
-  episode_type="decision",
-  entities="tool:redis,concept:caching"
-)
-```
-
-**When to remember:**
-- User preferences, opinions, values
-- Technical context about their project
-- Decisions and their rationale
-- Open questions or uncertainties
-- Corrections to existing knowledge
-
-**When NOT to remember:**
-- Trivial, one-off information
-- Information already captured in existing concepts
-- Raw conversation logs (summarize first)
-
-### recall - Retrieve Context
-
-**Semantic search** (default):
-```
-recall(query="authentication issues")
-```
-
-**Entity-based** (get everything about a specific entity):
-```
-recall(query="auth", entity="file:src/auth.ts")
-```
-
-Use entity-based recall when the user mentions a specific file, function, or person.
-
-### consolidate - Process Episodes
-
-Runs in two phases:
-1. **Extraction**: Classifies episode types and extracts entity mentions
-2. **Generalization**: Transforms episodes into abstract concepts
-
-Run periodically or at session end.
+## recall
 
 ```
-consolidate()
-consolidate(force=True)  # Even with few episodes
+recall(query="authentication issues")           # Semantic search
+recall(query="auth", entity="file:src/auth.ts") # Entity-specific
 ```
 
----
+## consolidate
 
-## Episode Types
-
-| Type | Use For |
-|------|---------|
-| `observation` | Something noticed/learned (default) |
-| `decision` | A choice that was made |
-| `question` | Uncertainty, needs investigation |
-| `meta` | Thinking patterns, processes |
-| `preference` | User preferences, values |
-
-Use `inspect(show_episodes=True)` to view recent episodes of all types.
-
----
-
-## Entity Types
-
-Entities are automatically extracted during consolidation. Format: `type:name`
-
-| Type | Examples |
-|------|----------|
-| `file` | `file:src/auth.ts` |
-| `function` | `function:authenticate` |
-| `class` | `class:UserService` |
-| `person` | `person:alice` |
-| `concept` | `concept:caching` |
-| `tool` | `tool:redis` |
-| `project` | `project:backend-api` |
-
-Use `recall(entity="file:src/auth.ts")` to retrieve memories about a specific entity.
-
-### Entity Relationships
-
-When multiple entities are mentioned in the same episode, their relationships are automatically extracted. These describe how entities relate to each other:
-
-- `file:auth.ts` → **imports** → `file:utils.ts`
-- `person:alice` → **manages** → `person:bob`
-- `class:UserService` → **depends_on** → `class:DatabaseService`
-
-Use `inspect_entity()` to explore entity relationships.
-
----
-
-## Other Tools
-
-### inspect - View Memory Contents
+Runs extraction (entities/types) then generalization (episodes → concepts). Run periodically or at session end.
 
 ```
-inspect()                    # List all concepts
-inspect(concept_id="abc123") # Specific concept
-inspect(show_episodes=True)  # Recent episodes
+consolidate()        # Normal (threshold-based)
+consolidate(force=True)  # Force even with few episodes
 ```
 
-### entities - List Entities
+## Entity Format
 
+`type:name` — Types: `file`, `function`, `class`, `person`, `concept`, `tool`, `project`
+
+Examples: `file:src/auth.ts`, `person:alice`, `tool:redis`
+
+## Workflow
+
+**Session start**:
 ```
-entities()                   # List all entities with mention counts
-entities(entity_type="file") # Filter by type
-entities(limit=20)           # Limit results
-```
-
-Use this to discover what entities exist before using `recall(entity="...")`.
-
-### inspect_entity - View Entity Details
-
-```
-inspect_entity(entity_id="file:src/auth.ts")
-inspect_entity(entity_id="person:alice", show_relations=True)
+recall("project context")
+recall("user preferences")
 ```
 
-Shows entity details including:
-- Entity type and display name
-- Number of mentions in episodes
-- Relationships to other entities (e.g., "manages", "imports", "depends_on")
-
-**Example output:**
+**During work**:
 ```
-Entity: person:alice
-  Type: person
-  Display: Alice
-  Mentions: 15
-
-Relationships (3):
-  → manages person:bob (85%)
-  → works_on project:backend (90%)
-  ← reports_to person:carol (75%)
+remember("Rate limiting is at gateway level")
+remember("User wants retry-after headers on 429s", episode_type="preference")
 ```
 
-Entity relationships are automatically extracted during consolidation when episodes mention multiple entities.
-
-### stats - Memory Statistics
-
+**Session end**:
 ```
-stats()
-```
-
-Shows: concept/episode/entity counts, consolidation status, type distributions.
-
----
-
-## Workflow Examples
-
-### Starting a Session
-```
-# First, recall relevant context
-recall("What do I know about this project?")
-recall("User preferences")
-
-# Then proceed with the task...
-```
-
-### Learning Something New
-```
-# User mentions they prefer tabs over spaces
-remember("User prefers tabs over spaces for indentation")
-
-# User explains their deployment process
-remember("Deployments go through staging first, then production via GitHub Actions")
-```
-
-### End of Session
-```
-# Consolidate what you've learned
 consolidate(force=True)
-
-# Or check if consolidation is needed
-stats()  # See pending episodes count
 ```
 
-### Complex Task
-```
-# 1. Gather context
-recall("authentication implementation")
-recall("API patterns used in this project")
+## Concepts
 
-# 2. Work on task...
-
-# 3. Remember important discoveries
-remember("Found that rate limiting is implemented at the gateway level")
-remember("User wants 429 errors to include retry-after headers")
-```
-
----
-
-## Memory Concepts
-
-### Episodes vs Concepts
-- **Episodes**: Raw experiences you log with `remember()`. These are temporary.
-- **Concepts**: Generalized knowledge extracted via `consolidate()`. These persist.
-
-### Relations
-Concepts are connected through typed relations:
-- `implies` - If A then likely B
-- `contradicts` - A conflicts with B
-- `specializes` / `generalizes` - Hierarchy
-- `causes` - Causal relationship
-- `part_of` - Component relationship
-
-### Confidence
-Each concept has a confidence score (0.0-1.0) based on how many episodes support it.
-
----
+- **Episodes**: Raw experiences via `remember()` — temporary
+- **Concepts**: Generalized knowledge via `consolidate()` — persistent
+- **Relations**: `implies`, `contradicts`, `specializes`, `generalizes`, `causes`, `part_of`
+- **Confidence**: 0.0-1.0 based on supporting episodes
 
 ## Best Practices
 
-1. **Be selective**: Don't remember trivial information
-2. **Use clear statements**: "User prefers tabs over spaces" not "tabs"
-3. **Log decisions explicitly**: Use `episode_type="decision"` for choices
-4. **Track open questions**: Use `episode_type="question"` for uncertainties
-5. **Use entity recall**: When user mentions a file/person, recall by entity
-6. **Consolidate periodically**: Run `consolidate()` at natural boundaries
-7. **Handle contradictions**: When you notice conflicting information, remember the update and consolidate - it will flag the contradiction
+1. Be selective — skip trivial info
+2. Use clear statements — "User prefers tabs" not "tabs"
+3. Tag decisions with `episode_type="decision"`
+4. Track uncertainties with `episode_type="question"`
+5. Use entity recall for specific files/people
+6. Consolidate at natural boundaries
+7. Remember updates to flag contradictions
