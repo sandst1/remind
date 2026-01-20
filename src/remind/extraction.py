@@ -344,11 +344,18 @@ class EntityExtractor:
                 # Validate that source and target are in the filtered entities
                 # and this pair doesn't already have a relation
                 if source and target and relationship:
-                    if source in filtered_entities and target in filtered_entities:
-                        if (source, target) not in related_pairs:
+                    # Normalize source and target IDs to match entity ID format
+                    from remind.models import Entity, normalize_entity_name
+                    source_type, source_name = Entity.parse_id(source)
+                    target_type, target_name = Entity.parse_id(target)
+                    normalized_source = Entity.make_id(source_type, normalize_entity_name(source_name))
+                    normalized_target = Entity.make_id(target_type, normalize_entity_name(target_name))
+
+                    if normalized_source in filtered_entities and normalized_target in filtered_entities:
+                        if (normalized_source, normalized_target) not in related_pairs:
                             relations.append(EntityRelation(
-                                source_id=source,
-                                target_id=target,
+                                source_id=normalized_source,
+                                target_id=normalized_target,
                                 relation_type=relationship,
                                 strength=rel.get("strength", 0.5),
                                 context=rel.get("context"),

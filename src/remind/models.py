@@ -442,9 +442,16 @@ class ExtractionResult:
             relationship = rel.get("relationship")
 
             if source and target and relationship:
+                # Normalize source and target IDs to match entity ID format
+                # This ensures relationships can be looked up correctly
+                source_type, source_name = Entity.parse_id(source)
+                target_type, target_name = Entity.parse_id(target)
+                normalized_source = Entity.make_id(source_type, normalize_entity_name(source_name))
+                normalized_target = Entity.make_id(target_type, normalize_entity_name(target_name))
+
                 entity_relations.append(EntityRelation(
-                    source_id=source,
-                    target_id=target,
+                    source_id=normalized_source,
+                    target_id=normalized_target,
                     relation_type=relationship,
                     strength=rel.get("strength", 0.5),
                     context=rel.get("context"),

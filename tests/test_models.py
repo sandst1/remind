@@ -9,6 +9,9 @@ from remind.models import (
     Relation,
     RelationType,
     ConsolidationResult,
+    ExtractionResult,
+    EpisodeType,
+    normalize_entity_name,
 )
 
 
@@ -170,4 +173,69 @@ class TestConsolidationResult:
         assert result.concepts_updated == 0
         assert result.contradictions_found == 0
         assert result.created_concept_ids == []
+
+
+class TestExtractionResult:
+    def test_entity_relationship_ids_are_normalized(self):
+        """Entity relationship source/target IDs should be normalized to match entity IDs."""
+        # Simulate LLM response with non-normalized IDs (mixed case, extra spaces)
+        data = {
+            "type": "observation",
+            "entities": [
+                {"type": "person", "name": "Alice"},
+                {"type": "project", "name": "Backend API"},
+            ],
+            "entity_relationships": [
+                {
+                    "source": "person:Alice",  # Not normalized (uppercase A)
+                    "target": "project:Backend API",  # Not normalized (uppercase, spaces)
+                    "relationship": "maintains",
+                    "strength": 0.8,
+                },
+            ],
+        }
+
+        result = ExtractionResult.from_dict(data, episode_id="test-ep")
+
+        # Entities should be normalized
+        assert result.entities[0].id == "person:alice"
+        assert result.entities[1].id == "project:backend api"
+
+        # Relationships should also be normalized to match entity IDs
+        assert len(result.entity_relations) == 1
+        rel = result.entity_relations[0]
+        assert rel.source_id == "person:alice"
+        assert rel.target_id == "project:backend api"
+        assert rel.relation_type == "maintains"
+        assert rel.strength == 0.8
+        assert rel.source_episode_id == "test-ep"
+
+    def test_entity_relationship_with_no_type_prefix(self):
+        """Entity IDs without type prefix should default to 'subject' type."""
+        data = {
+            "type": "observation",
+            "entities": [],
+            "entity_relationships": [
+                {
+                    "source": "caching",  # No type prefix
+                    "target": "performance",  # No type prefix
+                    "relationship": "improves",
+                },
+            ],
+        }
+
+        result = ExtractionResult.from_dict(data)
+
+        assert len(result.entity_relations) == 1
+        rel = result.entity_relations[0]
+        assert rel.source_id == "subject:caching"
+        assert rel.target_id == "subject:performance"
+
+    def test_normalize_entity_name(self):
+        """Test the normalize_entity_name function."""
+        assert normalize_entity_name("Alice") == "alice"
+        assert normalize_entity_name("  trimmed  ") == "trimmed"
+        assert normalize_entity_name("Multiple   Spaces") == "multiple spaces"
+        assert normalize_entity_name("") == "unknown"
+        assert normalize_entity_name(None) == "unknown"
 
