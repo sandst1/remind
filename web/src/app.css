@@ -100,6 +100,7 @@
 
   /* Sidebar */
   --sidebar-width: 240px;
+  --sidebar-width-collapsed: 64px;
 }
 
 [data-theme="dark"] {

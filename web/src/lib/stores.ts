@@ -66,6 +66,18 @@ if (typeof localStorage !== 'undefined') {
   });
 }
 
+// Sidebar collapsed state
+const savedSidebarCollapsed = typeof localStorage !== 'undefined' 
+  ? localStorage.getItem('sidebarCollapsed') === 'true' 
+  : false;
+export const sidebarCollapsed = writable<boolean>(savedSidebarCollapsed);
+
+if (typeof localStorage !== 'undefined') {
+  sidebarCollapsed.subscribe((val) => {
+    localStorage.setItem('sidebarCollapsed', String(val));
+  });
+}
+
 // Derived stores
 export const hasDatabase = derived(currentDb, ($db) => $db.length > 0);
 

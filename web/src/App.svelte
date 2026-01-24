@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentDb, currentView, databases, hasDatabase, type View, theme } from './lib/stores';
+  import { currentDb, currentView, databases, hasDatabase, type View, theme, sidebarCollapsed } from './lib/stores';
   import { fetchDatabases, getDbParam } from './lib/api';
   import Dashboard from './components/Dashboard.svelte';
   import EntityList from './components/EntityList.svelte';
@@ -11,7 +11,7 @@
   import DatabaseSelector from './components/DatabaseSelector.svelte';
 
   // Icons
-  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Circle, Network } from 'lucide-svelte';
+  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Circle, Network, PanelLeftClose, PanelLeft } from 'lucide-svelte';
 
   let initialized = false;
 
@@ -78,13 +78,34 @@
     if (t === 'dark') return Moon;
     return Monitor;
   }
+
+  function toggleSidebar() {
+    sidebarCollapsed.update(v => !v);
+  }
 </script>
 
 <div class="app">
-  <aside class="sidebar">
+  <aside class="sidebar" class:collapsed={$sidebarCollapsed}>
     <div class="sidebar-header glass">
-      <h1 class="logo">Remind</h1>
-      <DatabaseSelector />
+      <div class="sidebar-header-row">
+        {#if !$sidebarCollapsed}
+          <h1 class="logo">Remind</h1>
+        {/if}
+        <button 
+          class="sidebar-toggle" 
+          onclick={toggleSidebar} 
+          title={$sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {#if $sidebarCollapsed}
+            <PanelLeft size={18} />
+          {:else}
+            <PanelLeftClose size={18} />
+          {/if}
+        </button>
+      </div>
+      {#if !$sidebarCollapsed}
+        <DatabaseSelector />
+      {/if}
     </div>
 
     {#if $hasDatabase}
@@ -94,21 +115,30 @@
             class="nav-item"
             class:active={$currentView === item.view}
             onclick={() => currentView.set(item.view)}
+            title={$sidebarCollapsed ? item.label : ''}
           >
             <span class="nav-icon">
               <svelte:component this={item.icon} size={18} />
             </span>
-            <span class="nav-label">{item.label}</span>
+            {#if !$sidebarCollapsed}
+              <span class="nav-label">{item.label}</span>
+            {/if}
           </button>
         {/each}
       </nav>
 
       <div class="sidebar-footer">
-        <button class="nav-item theme-toggle" onclick={toggleTheme} title="Toggle theme ({$theme})">
+        <button 
+          class="nav-item theme-toggle" 
+          onclick={toggleTheme} 
+          title={$sidebarCollapsed ? `Theme: ${$theme}` : `Toggle theme (${$theme})`}
+        >
           <span class="nav-icon">
             <svelte:component this={getThemeIcon($theme)} size={18} />
           </span>
-          <span class="nav-label">Theme: {$theme}</span>
+          {#if !$sidebarCollapsed}
+            <span class="nav-label">Theme: {$theme}</span>
+          {/if}
         </button>
       </div>
     {/if}
@@ -156,22 +186,63 @@
     flex-direction: column;
     flex-shrink: 0;
     z-index: 20;
+    transition: width 0.2s ease;
+  }
+
+  .sidebar.collapsed {
+    width: var(--sidebar-width-collapsed);
   }
 
   .sidebar-header {
     padding: var(--space-lg);
     border-bottom: 1px solid var(--color-border);
     background: rgba(255, 255, 255, 0.9); /* Fallback for glass */
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .sidebar.collapsed .sidebar-header {
+    padding: var(--space-md);
+    align-items: center;
   }
 
   :global([data-theme="dark"]) .sidebar-header {
     background: rgba(24, 24, 27, 0.9);
   }
 
+  .sidebar-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .sidebar.collapsed .sidebar-header-row {
+    justify-content: center;
+  }
+
+  .sidebar-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-sm);
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+    transition: all 0.15s ease;
+  }
+
+  .sidebar-toggle:hover {
+    background: var(--color-zinc-100);
+    color: var(--color-text);
+  }
+
+  :global([data-theme="dark"]) .sidebar-toggle:hover {
+    background: var(--color-zinc-800);
+  }
+
   .logo {
     font-size: var(--font-size-xl);
     font-weight: 700;
-    margin-bottom: var(--space-md);
     color: var(--color-text);
     letter-spacing: -0.025em;
   }
@@ -185,9 +256,20 @@
     overflow-y: auto;
   }
 
+  .sidebar.collapsed .nav {
+    padding: var(--space-sm);
+    align-items: center;
+  }
+
   .sidebar-footer {
     padding: var(--space-md);
     border-top: 1px solid var(--color-border);
+  }
+
+  .sidebar.collapsed .sidebar-footer {
+    padding: var(--space-sm);
+    display: flex;
+    justify-content: center;
   }
 
   .nav-item {
@@ -204,6 +286,12 @@
     font-weight: 500;
     position: relative;
     width: 100%;
+  }
+
+  .sidebar.collapsed .nav-item {
+    width: auto;
+    padding: var(--space-sm);
+    justify-content: center;
   }
 
   .nav-item:hover {
