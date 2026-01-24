@@ -151,11 +151,12 @@ class MemoryInterface:
         # Apply explicit type/entities if provided
         if episode_type:
             episode.episode_type = episode_type
-            episode.entities_extracted = True  # Manual override counts as extracted
+            # Note: Don't set entities_extracted here - type can be set independently
         
         if entities:
             episode.entity_ids = entities
             episode.entities_extracted = True
+            # Note: relations_extracted stays False so consolidation can extract relationships
         
         # Store the episode
         episode_id = self.store.add_episode(episode)

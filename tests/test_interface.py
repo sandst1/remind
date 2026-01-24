@@ -61,7 +61,8 @@ class TestMemoryInterface:
 
         episode = memory.store.get_episode(episode_id)
         assert episode.episode_type == EpisodeType.DECISION
-        assert episode.entities_extracted == True  # Manual override counts as extracted
+        # Setting type manually doesn't mean entities are extracted - consolidation will still extract them
+        assert episode.entities_extracted == False
 
     def test_remember_with_all_episode_types(self, memory):
         """Test remember with all episode types."""

@@ -165,12 +165,13 @@ class Consolidator:
         """
         result = ConsolidationResult()
         
-        # Phase 1: Extract entities from unextracted episodes
+        # Phase 1: Extract entities and relationships from unextracted episodes
         extraction_result = await self._run_extraction_phase()
         if extraction_result:
             logger.info(
                 f"Extraction phase: processed {extraction_result['episodes_processed']} episodes, "
-                f"created {extraction_result['entities_created']} entities"
+                f"created {extraction_result['entities_created']} entities, "
+                f"extracted {extraction_result['relations_extracted']} relationships"
             )
         
         # Phase 2: Generalize unconsolidated episodes into concepts
@@ -292,33 +293,52 @@ class Consolidator:
         Run entity extraction on episodes that haven't been processed yet.
         
         This is Phase 1 of consolidation - classifying episode types and
-        extracting entity mentions.
+        extracting entity mentions. Also extracts relationships for episodes
+        that have entities but haven't had relationship extraction.
         
         Returns:
             dict with extraction stats or None if no episodes needed extraction
         """
-        # Check if there are unextracted episodes
-        unextracted = self.store.get_unextracted_episodes(limit=self.batch_size)
-        
-        if not unextracted:
-            return None
-        
-        logger.info(f"Running extraction on {len(unextracted)} episodes...")
-        
         episodes_processed = 0
         entities_created = 0
+        relations_extracted = 0
+
+        # Step 1: Full extraction for episodes without entities
+        unextracted = self.store.get_unextracted_episodes(limit=self.batch_size)
         
-        for episode in unextracted:
-            try:
-                extraction = await self.extractor.extract_and_store(episode)
-                episodes_processed += 1
-                entities_created += len(extraction.entities)
-            except Exception as e:
-                logger.warning(f"Failed to extract from {episode.id}: {e}")
-        
+        if unextracted:
+            logger.info(f"Running extraction on {len(unextracted)} episodes...")
+            
+            for episode in unextracted:
+                try:
+                    extraction = await self.extractor.extract_and_store(episode)
+                    episodes_processed += 1
+                    entities_created += len(extraction.entities)
+                    relations_extracted += len(extraction.entity_relations)
+                except Exception as e:
+                    logger.warning(f"Failed to extract from {episode.id}: {e}")
+
+        # Step 2: Relationship-only extraction for episodes with entities but no relations
+        unextracted_relations = self.store.get_unextracted_relation_episodes(limit=self.batch_size)
+
+        if unextracted_relations:
+            logger.info(f"Extracting relationships from {len(unextracted_relations)} episodes...")
+
+            for episode in unextracted_relations:
+                try:
+                    count = await self.extractor.extract_and_store_relations_only(episode)
+                    relations_extracted += count
+                    episodes_processed += 1
+                except Exception as e:
+                    logger.warning(f"Failed to extract relations from {episode.id}: {e}")
+
+        if episodes_processed == 0:
+            return None
+
         return {
             "episodes_processed": episodes_processed,
             "entities_created": entities_created,
+            "relations_extracted": relations_extracted,
         }
     
     def _format_concepts(self, concepts: list[dict]) -> str:
