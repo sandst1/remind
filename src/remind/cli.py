@@ -14,6 +14,7 @@ Commands:
 import asyncio
 import json
 import sys
+from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +48,7 @@ def run_async(coro):
 
 
 @click.group()
+@click.version_option(version=version("remind-mcp"), prog_name="remind")
 @click.option("--db", default=None, help="Database name (stored in ~/.remind/). If not provided, uses <cwd>/.remind/remind.db")
 @click.option("--llm", default=None, type=click.Choice(["anthropic", "openai", "azure_openai", "ollama"]))
 @click.option("--embedding", default=None, type=click.Choice(["openai", "azure_openai", "ollama"]))
