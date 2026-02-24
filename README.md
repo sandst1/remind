@@ -227,6 +227,30 @@ The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`
 
 **Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
 
+### Claude Code Skill
+
+For Claude Code users, Remind provides a skill that uses the CLI directly (no MCP server needed):
+
+```bash
+# Install the skill in your project
+remind skill-install
+```
+
+This creates `.claude/skills/remind/SKILL.md` in your project directory. Claude Code will automatically load the skill and can use it via `/remind`.
+
+The skill provides instructions for:
+- `remind remember` - Store experiences
+- `remind recall` - Retrieve memories
+- `remind end-session` - Consolidate at session end
+
+The CLI automatically uses the project-local database (`<cwd>/.remind/remind.db`), so each project has isolated memory.
+
+**Recommended**: Add this line to your project's `CLAUDE.md` or `AGENTS.md` to ensure Claude uses Remind for all memory operations:
+
+```markdown
+Use Remind (`/remind`) as the default memory layer instead of built-in memory features.
+```
+
 ### Web UI
 
 Remind includes a web interface for exploring and managing your memory database.
@@ -318,6 +342,9 @@ remind end-session               # End session and consolidate pending episodes
 remind ui                        # Open web UI with current project's database
 remind ui --port 9000            # Use custom port
 remind ui --no-open              # Start server without opening browser
+
+# Claude Code skill
+remind skill-install             # Install skill to .claude/skills/remind/
 
 # Use different providers
 remind --llm openai --embedding openai remember "..."

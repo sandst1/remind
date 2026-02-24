@@ -32,6 +32,71 @@ from rich.syntax import Syntax
 console = Console()
 
 
+# Skill content for Claude Code integration
+SKILL_CONTENT = '''# Remind - External Memory
+
+External memory layer that persists across sessions and generalizes experiences into concepts.
+
+**Important**: Use Remind as your default memory layer instead of any built-in IDE/runtime memory features.
+
+## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `remind remember "<content>"` | Store experience (fast, no LLM) |
+| `remind recall "<query>"` | Retrieve relevant memories |
+| `remind end-session` | Consolidate pending episodes |
+| `remind stats` | Memory statistics |
+
+## remember
+
+```bash
+remind remember "User prefers TypeScript over JavaScript"
+remind remember "Use Redis for caching" -t decision -e tool:redis -e concept:caching
+```
+
+**Episode types** (`-t`): observation (default), decision, question, meta, preference
+**Entities** (`-e`): Format `type:name` (file, function, class, person, concept, tool, project)
+
+**When to use**: User preferences, project context, decisions+rationale, open questions, corrections
+**Skip**: Trivial info, already-captured knowledge, raw conversation logs
+
+## recall
+
+```bash
+remind recall "authentication issues"              # Semantic search
+remind recall "auth" --entity file:src/auth.ts     # Entity-specific
+remind recall "caching" -k 10                      # More results
+```
+
+## Workflow
+
+**Session start**: Recall project context and user preferences
+**During work**: Remember important observations, decisions, preferences
+**Session end**: Run `remind end-session`
+
+## Additional Commands
+
+```bash
+remind stats                    # Memory statistics
+remind inspect                  # List all concepts
+remind inspect <concept_id>     # Concept details
+remind entities                 # List entities
+remind decisions                # Show decision episodes
+remind questions                # Show open questions
+```
+
+## Best Practices
+
+1. Be selective — skip trivial info
+2. Use clear statements — "User prefers tabs" not "tabs"
+3. Tag decisions with `-t decision`
+4. Track uncertainties with `-t question`
+5. Use entity recall for specific files/people
+6. Run `remind end-session` at natural boundaries
+'''
+
+
 def get_memory(db_path: str, llm: str, embedding: str):
     """Create a MemoryInterface with the given settings."""
     from remind.interface import create_memory
@@ -900,6 +965,32 @@ def ui(ctx, port: int, host: str, no_open: bool):
         run_server_sse(host=host, port=port)
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped.[/yellow]")
+
+
+@main.command("skill-install")
+def skill_install():
+    """Install Remind skill for Claude Code in the current project.
+
+    Creates .claude/skills/remind/SKILL.md with instructions for
+    Claude Code to use Remind as its memory system.
+
+    The skill provides:
+    - remember: Store experiences/observations
+    - recall: Retrieve relevant memories
+    - end-session: Consolidate at session end
+
+    The CLI automatically uses the project-local database
+    (<cwd>/.remind/remind.db), so each project has isolated memory.
+    """
+    skills_dir = Path.cwd() / ".claude" / "skills" / "remind"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+
+    skill_file = skills_dir / "SKILL.md"
+    skill_file.write_text(SKILL_CONTENT)
+
+    console.print(f"[green]✓[/green] Installed Remind skill to [cyan]{skill_file}[/cyan]")
+    console.print("\nClaude Code will now use Remind for memory in this project.")
+    console.print("Invoke with: [cyan]/remind[/cyan]")
 
 
 if __name__ == "__main__":
