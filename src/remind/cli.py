@@ -851,6 +851,57 @@ def entity_relations(ctx, entity_id: str):
     console.print(tree)
 
 
+@main.command()
+@click.option("--port", "-p", default=8765, help="Port to run UI server on (default: 8765)")
+@click.option("--host", default="127.0.0.1", help="Host to bind to (default: 127.0.0.1)")
+@click.option("--no-open", is_flag=True, help="Don't open browser automatically")
+@click.pass_context
+def ui(ctx, port: int, host: str, no_open: bool):
+    """Launch the web UI with the current project's database.
+
+    Opens a browser to the Remind web UI with the project-local database
+    (<cwd>/.remind/remind.db) automatically selected.
+
+    The UI provides:
+    - Visual memory browser (concepts, episodes, entities)
+    - Graph visualization of concept relationships
+    - Search and recall interface
+    - Memory statistics dashboard
+    """
+    import threading
+    import time
+    import webbrowser
+    from urllib.parse import quote
+
+    from remind.mcp_server import run_server_sse
+
+    db_path = ctx.obj["db"]
+
+    # URL-encode the database path for the query parameter
+    db_param = quote(db_path, safe="")
+    ui_url = f"http://{host}:{port}/ui/?db={db_param}"
+
+    console.print(f"[cyan]Starting Remind UI server...[/cyan]")
+    console.print(f"  Database: [green]{db_path}[/green]")
+    console.print(f"  URL: [link={ui_url}]{ui_url}[/link]")
+    console.print()
+
+    # Open browser after a short delay to let server start
+    if not no_open:
+        def open_browser():
+            time.sleep(1.0)  # Wait for server to start
+            webbrowser.open(ui_url)
+
+        browser_thread = threading.Thread(target=open_browser, daemon=True)
+        browser_thread.start()
+
+    # Run the server (this blocks until Ctrl+C)
+    try:
+        run_server_sse(host=host, port=port)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Server stopped.[/yellow]")
+
+
 if __name__ == "__main__":
     main()
 

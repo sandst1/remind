@@ -232,14 +232,17 @@ The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`
 Remind includes a web interface for exploring and managing your memory database.
 
 ```bash
-# Start the server (includes Web UI)
+# Quick start - opens UI with current project's database
+remind ui
+
+# Or start the server manually
 remind-mcp --port 8765
 
 # Or with Docker
 docker compose up -d
 ```
 
-Access the UI at `http://localhost:8765/ui/?db=my-project`
+The `remind ui` command automatically opens your browser with the project-local database (`<cwd>/.remind/remind.db`) selected. For manual access, use `http://localhost:8765/ui/?db=my-project`
 
 **Features:**
 - **Dashboard** - Overview of memory statistics
@@ -310,6 +313,11 @@ remind search "keyword"          # Search concepts by keyword
 
 # Session management
 remind end-session               # End session and consolidate pending episodes
+
+# Web UI
+remind ui                        # Open web UI with current project's database
+remind ui --port 9000            # Use custom port
+remind ui --no-open              # Start server without opening browser
 
 # Use different providers
 remind --llm openai --embedding openai remember "..."

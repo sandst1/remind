@@ -188,29 +188,41 @@ def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
     Resolve a database name to a full path.
 
     Args:
-        db_name: Database name. If provided, resolves to ~/.remind/{name}.db
+        db_name: Database name or absolute path. If a simple name, resolves to ~/.remind/{name}.db.
+                 If an absolute path (starting with /), uses it directly.
         project_aware: If True and db_name is None, uses <cwd>/.remind/remind.db
 
     Returns:
         Absolute path to database file.
 
     Raises:
-        ValueError: If db_name contains path separators or starts with special chars.
+        ValueError: If db_name is a relative path or parent directory doesn't exist.
 
     Examples:
         resolve_db_path("myproject") → ~/.remind/myproject.db
         resolve_db_path("myproject.db") → ~/.remind/myproject.db
+        resolve_db_path("/path/to/memory.db") → /path/to/memory.db
         resolve_db_path(None, project_aware=True) → <cwd>/.remind/remind.db
         resolve_db_path(None, project_aware=False) → ~/.remind/memory.db
     """
     if db_name:
         db_name = db_name.strip()
 
-        # Reject paths - only simple names allowed
+        # Accept absolute paths as-is
+        if db_name.startswith("/"):
+            # Ensure .db extension
+            if not db_name.endswith(".db"):
+                db_name = f"{db_name}.db"
+            path = Path(db_name)
+            # Create parent directory if it doesn't exist
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return str(path)
+
+        # Reject relative paths - only simple names allowed
         if "/" in db_name or db_name.startswith("~") or db_name.startswith("."):
             raise ValueError(
                 f"Invalid database name '{db_name}'. "
-                "Use a simple name like 'myproject', not a path."
+                "Use a simple name like 'myproject', or an absolute path."
             )
 
         # Ensure the ~/.remind directory exists
