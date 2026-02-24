@@ -567,6 +567,15 @@ wheels = [
 ]
 
 [[package]]
+name = "filelock"
+version = "3.24.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/73/92/a8e2479937ff39185d20dd6a851c1a63e55849e447a55e798cc2e1f49c65/filelock-3.24.3.tar.gz", hash = "sha256:011a5644dc937c22699943ebbfc46e969cdde3e171470a6e40b9533e5a72affa", size = 37935 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/0f/5d0c71a1aefeb08efff26272149e07ab922b64f46c63363756224bd6872e/filelock-3.24.3-py3-none-any.whl", hash = "sha256:426e9a4660391f7f8a810d71b0555bce9008b0a1cc342ab1f6947d37639e002d", size = 24331 },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1606,6 +1615,7 @@ dependencies = [
     { name = "anthropic" },
     { name = "click" },
     { name = "fastmcp" },
+    { name = "filelock" },
     { name = "httpx" },
     { name = "numpy" },
     { name = "openai" },
@@ -1627,6 +1637,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.39.0" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "fastmcp", specifier = ">=0.4.0" },
+    { name = "filelock", specifier = ">=3.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "openai", specifier = ">=1.52.0" },

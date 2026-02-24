@@ -13,12 +13,9 @@ from remind.models import EpisodeType
 
 logger = logging.getLogger(__name__)
 
-# Import from mcp_server - we share the same memory instance cache
-from remind.mcp_server import (
-    resolve_db_path,
-    get_memory_for_db,
-    REMIND_DIR,
-)
+# Import config and memory instance cache
+from remind.config import resolve_db_path, REMIND_DIR
+from remind.mcp_server import get_memory_for_db
 
 
 async def _get_memory_from_request(request: Request):

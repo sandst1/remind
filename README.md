@@ -119,6 +119,75 @@ LLM_PROVIDER=ollama
 EMBEDDING_PROVIDER=ollama
 ```
 
+## Configuration
+
+Remind supports a global configuration file at `~/.remind/remind.config.json`. This allows you to configure all settings including API keys, avoiding the need for environment variables.
+
+### Full Configuration Example
+
+```json
+{
+  "llm_provider": "anthropic",
+  "embedding_provider": "openai",
+  "consolidation_threshold": 5,
+  "auto_consolidate": true,
+
+  "anthropic": {
+    "api_key": "sk-ant-...",
+    "model": "claude-sonnet-4-20250514"
+  },
+
+  "openai": {
+    "api_key": "sk-...",
+    "base_url": null,
+    "model": "gpt-4.1",
+    "embedding_model": "text-embedding-3-small"
+  },
+
+  "azure_openai": {
+    "api_key": "...",
+    "base_url": "https://your-resource.openai.azure.com",
+    "api_version": "2024-02-15-preview",
+    "deployment_name": "gpt-4",
+    "embedding_deployment_name": "text-embedding-3-small",
+    "embedding_size": 1536
+  },
+
+  "ollama": {
+    "url": "http://localhost:11434",
+    "llm_model": "llama3.2",
+    "embedding_model": "nomic-embed-text"
+  }
+}
+```
+
+### Minimal Configuration
+
+You only need to include the settings you want to change:
+
+```json
+{
+  "llm_provider": "anthropic",
+  "embedding_provider": "openai",
+  "anthropic": {
+    "api_key": "sk-ant-..."
+  },
+  "openai": {
+    "api_key": "sk-..."
+  }
+}
+```
+
+### Configuration Priority
+
+Settings are resolved with this priority (highest to lowest):
+1. CLI arguments (`--llm`, `--embedding`)
+2. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
+3. Config file (`~/.remind/remind.config.json`)
+4. Defaults
+
+The config file is optional - Remind works without it using environment variables or defaults.
+
 ## Usage
 
 ### MCP Server (for AI Agents)
@@ -184,24 +253,30 @@ You can switch between multiple databases using the database selector in the UI.
 
 ### CLI
 
+The CLI is project-aware by default. When run without `--db`, it uses `<current_directory>/.remind/remind.db`, making each project have its own memory.
+
 ```bash
-# After pip install
+# Uses ./.remind/remind.db in current directory
 remind remember "User likes Python and Rust"
-remind consolidate
 remind recall "What languages does the user know?"
+
+# Use a global database in ~/.remind/
+remind --db myproject remember "..."
 
 # Or with uvx (no install needed)
 uvx --from remind-mcp remind remember "User likes Python and Rust"
 ```
 
+**Background consolidation**: When the episode threshold (default: 5) is reached, consolidation runs automatically in the background after `remember`, keeping the CLI fast.
+
 Full CLI examples:
 
 ```bash
-# Add episodes
+# Add episodes (consolidation runs in background when threshold reached)
 remind remember "User likes Python and Rust"
 remind remember "User works on backend systems"
 
-# Run consolidation
+# Manual consolidation
 remind consolidate
 
 # Query memory
@@ -326,7 +401,14 @@ Retrieval that goes beyond keyword matching:
 
 ## Database
 
-Remind uses SQLite for storage. All databases are stored in `~/.remind/`. By default, the database is `~/.remind/memory.db`.
+Remind uses SQLite for storage. Database location depends on context:
+
+**CLI (project-aware by default)**:
+- No `--db` flag: Uses `<current_directory>/.remind/remind.db`
+- With `--db name`: Uses `~/.remind/name.db`
+
+**MCP Server / Python API**:
+- Uses `~/.remind/{name}.db`
 
 ```python
 # Uses ~/.remind/memory.db

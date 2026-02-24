@@ -25,11 +25,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from remind.interface import create_memory, MemoryInterface
+from remind.config import REMIND_DIR, resolve_db_path, load_config
 
 logger = logging.getLogger(__name__)
-
-# Central directory for databases when using simple names
-REMIND_DIR = Path.home() / ".remind"
 
 # Context variable to track current database path per async context
 _current_db: ContextVar[str] = ContextVar('current_db', default='')
@@ -42,65 +40,30 @@ _memory_instances: dict[str, MemoryInterface] = {}
 _memory_locks: dict[str, asyncio.Lock] = {}
 _global_lock = asyncio.Lock()
 
-# Default providers - can be overridden via CLI args or env vars
-DEFAULT_LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai")
-DEFAULT_EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "openai")
-
-
-def resolve_db_path(db_name: str) -> str:
-    """Resolve a database name to ~/.remind/{name}.db.
-
-    Only simple names are accepted. Paths are not allowed.
-
-    Examples:
-        my-project → ~/.remind/my-project.db
-        my-project.db → ~/.remind/my-project.db
-
-    Raises:
-        ValueError: If the name contains path separators or starts with special characters.
-    """
-    db_name = db_name.strip()
-
-    # Reject paths - only simple names allowed
-    if "/" in db_name or db_name.startswith("~") or db_name.startswith("."):
-        raise ValueError(
-            f"Invalid database name '{db_name}'. "
-            "Only simple names are allowed (e.g., 'my-project'). "
-            "Paths are not supported."
-        )
-
-    # Ensure the ~/.remind directory exists
-    REMIND_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Add .db extension if not present
-    if not db_name.endswith(".db"):
-        db_name = f"{db_name}.db"
-
-    return str(REMIND_DIR / db_name)
-
 
 async def get_memory_for_db(db_path: str) -> MemoryInterface:
     """Get or create a MemoryInterface for the given database path.
 
     Note: db_path should already be resolved via resolve_db_path() by the caller.
     """
-    
+
     # Get or create lock for this db
     async with _global_lock:
         if db_path not in _memory_locks:
             _memory_locks[db_path] = asyncio.Lock()
         lock = _memory_locks[db_path]
-    
+
     # Get or create memory instance
     async with lock:
         if db_path not in _memory_instances:
+            config = load_config()
             logger.info(f"Creating MemoryInterface for database: {db_path}")
             _memory_instances[db_path] = create_memory(
-                llm_provider=DEFAULT_LLM_PROVIDER,
-                embedding_provider=DEFAULT_EMBEDDING_PROVIDER,
+                llm_provider=config.llm_provider,
+                embedding_provider=config.embedding_provider,
                 db_path=db_path,
-                auto_consolidate=True,
-                consolidation_threshold=10,
+                auto_consolidate=config.auto_consolidate,
+                consolidation_threshold=config.consolidation_threshold,
             )
         return _memory_instances[db_path]
 
@@ -968,14 +931,13 @@ Examples:
         level=logging.DEBUG if args.debug else logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
-    
-    # Set providers (CLI args > Env vars > Default)
-    global DEFAULT_LLM_PROVIDER, DEFAULT_EMBEDDING_PROVIDER
+
+    # Set providers via env vars if CLI args provided (so load_config() picks them up)
     if args.llm:
-        DEFAULT_LLM_PROVIDER = args.llm
+        os.environ["LLM_PROVIDER"] = args.llm
     if args.embedding:
-        DEFAULT_EMBEDDING_PROVIDER = args.embedding
-    
+        os.environ["EMBEDDING_PROVIDER"] = args.embedding
+
     run_server_sse(host=args.host, port=args.port)
 
 

@@ -77,7 +77,7 @@ class MemoryInterface:
         store: Optional[MemoryStore] = None,
         db_path: str = "memory.db",
         # Consolidation settings
-        consolidation_threshold: int = 10,  # episodes before auto-consolidation
+        consolidation_threshold: int = 5,  # episodes before auto-consolidation
         auto_consolidate: bool = True,
         # Retrieval settings
         default_recall_k: int = 5,
@@ -431,44 +431,79 @@ def create_memory(
         Configured MemoryInterface
     """
     import os
-    from remind.mcp_server import resolve_db_path
+    from remind.config import load_config, resolve_db_path
+
+    # Load config (priority: env vars > config file > defaults)
+    config = load_config()
 
     # Resolve database name to full path (skip if already absolute)
     if not os.path.isabs(db_path):
         db_path = resolve_db_path(db_path)
 
-    # Resolve providers from env vars if not provided
-    llm_provider = llm_provider or os.environ.get("LLM_PROVIDER", "anthropic")
-    embedding_provider = embedding_provider or os.environ.get("EMBEDDING_PROVIDER", "openai")
+    # Use config values if not explicitly provided
+    llm_provider = llm_provider or config.llm_provider
+    embedding_provider = embedding_provider or config.embedding_provider
+
+    # Apply config defaults for kwargs if not provided
+    if "consolidation_threshold" not in kwargs:
+        kwargs["consolidation_threshold"] = config.consolidation_threshold
+    if "auto_consolidate" not in kwargs:
+        kwargs["auto_consolidate"] = config.auto_consolidate
     
     # Import providers
     from remind.providers import (
         AnthropicLLM, OpenAILLM, OllamaLLM, AzureOpenAILLM,
         OpenAIEmbedding, OllamaEmbedding, AzureOpenAIEmbedding,
     )
-    
-    # Create LLM provider
-    llm_map = {
-        "anthropic": AnthropicLLM,
-        "openai": OpenAILLM,
-        "azure_openai": AzureOpenAILLM,
-        "ollama": OllamaLLM,
-    }
-    if llm_provider not in llm_map:
-        raise ValueError(f"Unknown LLM provider: {llm_provider}. Choose from: {list(llm_map.keys())}")
-    
-    llm = llm_map[llm_provider]()
-    
-    # Create embedding provider
-    embed_map = {
-        "openai": OpenAIEmbedding,
-        "azure_openai": AzureOpenAIEmbedding,
-        "ollama": OllamaEmbedding,
-    }
-    if embedding_provider not in embed_map:
-        raise ValueError(f"Unknown embedding provider: {embedding_provider}. Choose from: {list(embed_map.keys())}")
-    
-    embedding = embed_map[embedding_provider]()
+
+    # Create LLM provider with config values
+    if llm_provider == "anthropic":
+        llm = AnthropicLLM(
+            api_key=config.anthropic.api_key,
+            model=config.anthropic.model,
+        )
+    elif llm_provider == "openai":
+        llm = OpenAILLM(
+            api_key=config.openai.api_key,
+            base_url=config.openai.base_url,
+            model=config.openai.model,
+        )
+    elif llm_provider == "azure_openai":
+        llm = AzureOpenAILLM(
+            api_key=config.azure_openai.api_key,
+            base_url=config.azure_openai.base_url,
+            api_version=config.azure_openai.api_version,
+            deployment_name=config.azure_openai.deployment_name,
+        )
+    elif llm_provider == "ollama":
+        llm = OllamaLLM(
+            model=config.ollama.llm_model,
+            base_url=config.ollama.url,
+        )
+    else:
+        raise ValueError(f"Unknown LLM provider: {llm_provider}. Choose from: anthropic, openai, azure_openai, ollama")
+
+    # Create embedding provider with config values
+    if embedding_provider == "openai":
+        embedding = OpenAIEmbedding(
+            api_key=config.openai.api_key,
+            base_url=config.openai.base_url,
+        )
+    elif embedding_provider == "azure_openai":
+        embedding = AzureOpenAIEmbedding(
+            api_key=config.azure_openai.api_key,
+            base_url=config.azure_openai.base_url,
+            api_version=config.azure_openai.api_version,
+            deployment_name=config.azure_openai.embedding_deployment_name,
+            dimensions=config.azure_openai.embedding_size,
+        )
+    elif embedding_provider == "ollama":
+        embedding = OllamaEmbedding(
+            model=config.ollama.embedding_model,
+            base_url=config.ollama.url,
+        )
+    else:
+        raise ValueError(f"Unknown embedding provider: {embedding_provider}. Choose from: openai, azure_openai, ollama")
     
     return MemoryInterface(
         llm=llm,

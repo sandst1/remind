@@ -685,7 +685,7 @@ class TestMemoryInterfaceInitialization:
             db_path=temp_db_path,
         )
 
-        assert memory.consolidation_threshold == 10
+        assert memory.consolidation_threshold == 5
         assert memory.auto_consolidate == True
         assert memory.default_recall_k == 5
 

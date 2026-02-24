@@ -15,11 +15,14 @@ src/remind/
 ├── models.py          # Data models (Concept, Episode, Entity, Relation)
 ├── store.py           # SQLite persistence layer
 ├── interface.py       # MemoryInterface - main public API
+├── config.py          # Configuration loading (config file, env vars, defaults)
 ├── consolidation.py   # LLM-powered episode → concept transformation
 ├── extraction.py      # Entity/type extraction from episodes
 ├── retrieval.py       # Spreading activation retrieval
-├── cli.py             # Command-line interface
+├── cli.py             # Command-line interface (project-aware)
 ├── mcp_server.py      # MCP (Model Context Protocol) server
+├── background.py      # Background consolidation spawning
+├── background_worker.py # Subprocess entry point for background consolidation
 ├── api/               # REST API for web UI
 │   ├── __init__.py    # Exports api_routes
 │   └── routes.py      # Starlette route handlers
@@ -110,6 +113,89 @@ SQLite-based persistence. Tables:
 - `mentions` - Episode-entity junction table
 
 The `MemoryStore` protocol defines the interface for alternative storage backends.
+
+### Configuration (`config.py`)
+
+Centralized configuration management with provider-specific settings:
+
+```python
+REMIND_DIR = Path.home() / ".remind"
+CONFIG_FILE = REMIND_DIR / "remind.config.json"
+
+@dataclass
+class AnthropicConfig:
+    api_key: Optional[str] = None
+    model: str = "claude-sonnet-4-20250514"
+
+@dataclass
+class OpenAIConfig:
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    model: str = "gpt-4.1"
+    embedding_model: str = "text-embedding-3-small"
+
+@dataclass
+class AzureOpenAIConfig:
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    api_version: Optional[str] = None
+    deployment_name: Optional[str] = None
+    embedding_deployment_name: Optional[str] = None
+    embedding_size: int = 1536
+
+@dataclass
+class OllamaConfig:
+    url: str = "http://localhost:11434"
+    llm_model: str = "llama3.2"
+    embedding_model: str = "nomic-embed-text"
+
+@dataclass
+class RemindConfig:
+    llm_provider: str = "anthropic"
+    embedding_provider: str = "openai"
+    consolidation_threshold: int = 5
+    auto_consolidate: bool = True
+    # Nested provider configs
+    anthropic: AnthropicConfig
+    openai: OpenAIConfig
+    azure_openai: AzureOpenAIConfig
+    ollama: OllamaConfig
+
+def load_config() -> RemindConfig:
+    """Priority: env vars > config file > defaults"""
+
+def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
+    """
+    - db_name provided: ~/.remind/{name}.db
+    - db_name=None + project_aware=True: <cwd>/.remind/remind.db
+    - db_name=None + project_aware=False: ~/.remind/memory.db
+    """
+```
+
+**Config file format** (`~/.remind/remind.config.json`):
+```json
+{
+  "llm_provider": "anthropic",
+  "embedding_provider": "openai",
+  "consolidation_threshold": 5,
+  "auto_consolidate": true,
+  "anthropic": { "api_key": "sk-ant-..." },
+  "openai": { "api_key": "sk-..." },
+  "azure_openai": { "api_key": "...", "base_url": "..." },
+  "ollama": { "url": "http://localhost:11434" }
+}
+```
+
+### Background Consolidation (`background.py`, `background_worker.py`)
+
+Non-blocking consolidation for CLI:
+
+- `spawn_background_consolidation()` - Spawns a subprocess to consolidate
+- Uses `filelock` for cross-platform file locking to prevent concurrent runs
+- Lock files stored at `~/.remind/.consolidate-{hash}.lock`
+- Logs to `~/.remind/logs/consolidation.log`
+
+The CLI automatically triggers background consolidation after `remember` when the episode threshold is reached.
 
 ## Code Conventions
 
@@ -282,6 +368,8 @@ When making changes, these files are most commonly modified together:
 | Consolidation logic | `consolidation.py`, `extraction.py` |
 | Retrieval behavior | `retrieval.py` |
 | CLI commands | `cli.py` |
+| Configuration | `config.py`, `interface.py`, `mcp_server.py`, `cli.py` |
+| Background consolidation | `background.py`, `background_worker.py`, `cli.py` |
 | MCP tools | `mcp_server.py`, `docs/AGENTS.md` |
 | REST API endpoints | `api/routes.py` |
 | Public API | `interface.py`, `__init__.py`, `README.md` |
@@ -292,6 +380,9 @@ When making changes, these files are most commonly modified together:
 - **Retrieval misses**: Verify concepts have embeddings (`embedding` field not None)
 - **Entity linking**: Entity IDs are case-sensitive, use canonical forms
 - **MCP issues**: Check `db` query parameter in MCP URL, verify server is running
+- **Config issues**: Check `~/.remind/remind.config.json` exists and is valid JSON
+- **Background consolidation**: Check `~/.remind/logs/consolidation.log` for errors
+- **CLI database path**: Without `--db`, uses `<cwd>/.remind/remind.db` (project-aware)
 
 ## Database Schema
 
