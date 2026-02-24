@@ -1,6 +1,6 @@
 [project]
 name = "remind-mcp"
-version = "0.3.0"
+version = "0.3.1"
 description = "Generalization-capable memory layer for LLMs with episodic buffers, semantic graphs, and spreading activation retrieval"
 readme = "README.md"
 requires-python = ">=3.11"
