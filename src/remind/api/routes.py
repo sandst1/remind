@@ -10,6 +10,8 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from remind.models import EpisodeType
+from remind.config import load_config
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -632,6 +634,138 @@ async def list_databases(request: Request) -> JSONResponse:
 
 
 # =============================================================================
+# Decay Inspection
+# =============================================================================
+
+
+async def get_concept_decay(request: Request) -> JSONResponse:
+    """Get decay stats for a concept."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    concept_id: str = request.path_params.get("id", "")
+
+    try:
+        concept = memory.store.get_concept(concept_id)
+        if not concept:
+            return JSONResponse({"error": "Concept not found"}, status_code=404)
+
+        config = load_config()
+
+        # Compute recency factor
+        now = datetime.now()
+        if concept.last_accessed:
+            days_since_access = (now - concept.last_accessed).total_seconds() / 86400
+            recency_factor = 1.0 / (1.0 + days_since_access / config.decay.decay_half_life)
+        else:
+            recency_factor = 1.0
+
+        # Compute frequency factor
+        access_count = concept.access_count or 0
+        frequency_factor = min(access_count / config.decay.frequency_threshold, 1.0)
+
+        # Compute confidence boost
+        confidence_boost = (concept.confidence or 0.5) * 0.5
+
+        # Compute decay score
+        decay_score = (recency_factor * 0.4) + (frequency_factor * 0.4) + confidence_boost
+        decay_score = max(decay_score, config.decay.min_decay_score)
+
+        return JSONResponse({
+            "concept_id": concept_id,
+            "decay_score": round(decay_score, 4),
+            "access_count": access_count,
+            "last_accessed": concept.last_accessed.isoformat() if concept.last_accessed else None,
+            "recency_factor": round(recency_factor, 4),
+            "frequency_factor": round(frequency_factor, 4),
+        })
+    except Exception as e:
+        logger.exception("Failed to get decay stats")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def reset_concept_decay(request: Request) -> JSONResponse:
+    """Reset decay for a concept."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    concept_id = request.path_params.get("id")
+
+    try:
+        concept = memory.store.get_concept(concept_id)
+        if not concept:
+            return JSONResponse({"error": "Concept not found"}, status_code=404)
+
+        # Reset access count to 0 (keeps last_accessed)
+        concept.access_count = 0
+        memory.store.update_concept(concept)
+
+        # Compute new decay score
+        config = load_config()
+        confidence_boost = (concept.confidence or 0.5) * 0.5
+        decay_score = max(confidence_boost, config.decay.min_decay_score)
+
+        return JSONResponse({
+            "success": True,
+            "decay_score": round(decay_score, 4),
+            "access_count": 0,
+        })
+    except Exception as e:
+        logger.exception("Failed to reset decay")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def get_recent_accesses(request: Request) -> JSONResponse:
+    """Get recent concept accesses for monitoring."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        limit = int(request.query_params.get("limit", 50))
+        accesses = memory.store.get_recent_accesses(limit=limit)
+
+        # Format with activation level
+        formatted_accesses = []
+        for access in accesses:
+            formatted_accesses.append({
+                "concept_id": access["concept_id"],
+                "accessed_at": access["accessed_at"],
+                "activation_level": access["activation_level"],
+                "query_hash": access["query_hash"],
+            })
+
+        return JSONResponse({
+            "accesses": formatted_accesses,
+        })
+    except Exception as e:
+        logger.exception("Failed to get recent accesses")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def get_decay_config(request: Request) -> JSONResponse:
+    """Get current decay configuration."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        config = load_config()
+
+        return JSONResponse({
+            "enabled": config.decay.enabled,
+            "decay_half_life": config.decay.decay_half_life,
+            "frequency_threshold": config.decay.frequency_threshold,
+            "min_decay_score": config.decay.min_decay_score,
+        })
+    except Exception as e:
+        logger.exception("Failed to get decay config")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# =============================================================================
 # Route definitions
 # =============================================================================
 
@@ -640,6 +774,10 @@ api_routes = [
     Route("/api/v1/stats", get_stats, methods=["GET"]),
     Route("/api/v1/concepts", get_concepts, methods=["GET"]),
     Route("/api/v1/concepts/{id}", get_concept_detail, methods=["GET"]),
+    Route("/api/v1/concepts/{id}/decay", get_concept_decay, methods=["GET"]),
+    Route("/api/v1/concepts/{id}/decay/reset", reset_concept_decay, methods=["PUT"]),
+    Route("/api/v1/decay/recent", get_recent_accesses, methods=["GET"]),
+    Route("/api/v1/decay/config", get_decay_config, methods=["GET"]),
     Route("/api/v1/episodes", get_episodes, methods=["GET"]),
     Route("/api/v1/episodes/{id}", get_episode_detail, methods=["GET"]),
     Route("/api/v1/entities", get_entities, methods=["GET"]),
