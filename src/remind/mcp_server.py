@@ -16,6 +16,7 @@ import logging
 import os
 import uuid
 from contextvars import ContextVar
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -430,6 +431,117 @@ async def tool_inspect_entity(
     return "\n".join(lines)
 
 
+async def tool_get_decay_stats(concept_id: str) -> dict:
+    """Get decay statistics for a concept.
+    
+    Returns:
+        dict with decay_score, access_count, last_accessed, recency_factor,
+        frequency_factor, and concept summary
+    """
+    from remind.config import load_config
+    
+    memory = await get_memory()
+    store = memory.store
+    
+    concept = store.get_concept(concept_id)
+    if not concept:
+        return {
+            "error": f"Concept '{concept_id}' not found",
+            "success": False,
+        }
+    
+    config = load_config()
+    now = datetime.now()
+    
+    if concept.last_accessed:
+        days_since_access = (now - concept.last_accessed).total_seconds() / 86400
+        recency_factor = 1.0 / (1.0 + days_since_access / config.decay.decay_half_life)
+    else:
+        days_since_access = None
+        recency_factor = 1.0
+    
+    access_count = concept.access_count or 0
+    frequency_factor = min(access_count / config.decay.frequency_threshold, 1.0)
+    confidence_boost = (concept.confidence or 0.5) * 0.5
+    decay_score = (recency_factor * 0.4) + (frequency_factor * 0.4) + confidence_boost
+    decay_score = max(decay_score, config.decay.min_decay_score)
+    decay_score = min(decay_score, 1.0)  # Cap at 1.0
+    
+    return {
+        "success": True,
+        "concept_id": concept_id,
+        "decay_score": round(decay_score, 4),
+        "access_count": access_count,
+        "last_accessed": concept.last_accessed.isoformat() if concept.last_accessed else None,
+        "days_since_access": round(days_since_access, 2) if days_since_access is not None else None,
+        "recency_factor": round(recency_factor, 4),
+        "frequency_factor": round(frequency_factor, 4),
+        "confidence": concept.confidence,
+        "summary": concept.summary[:100] + "..." if len(concept.summary) > 100 else concept.summary,
+    }
+
+
+async def tool_reset_decay(concept_id: str) -> dict:
+    """Reset decay to maximum for a concept.
+    
+    Sets access_count to 0 and recalculates decay score.
+    
+    Returns:
+        dict with success status, new decay_score, and access_count
+    """
+    from remind.config import load_config
+    
+    memory = await get_memory()
+    store = memory.store
+    
+    concept = store.get_concept(concept_id)
+    if not concept:
+        return {
+            "error": f"Concept '{concept_id}' not found",
+            "success": False,
+        }
+    
+    concept.access_count = 0
+    store.update_concept(concept)
+    
+    config = load_config()
+    confidence_boost = (concept.confidence or 0.5) * 0.5
+    decay_score = max(confidence_boost, config.decay.min_decay_score)
+    
+    return {
+        "success": True,
+        "concept_id": concept_id,
+        "new_decay_score": round(decay_score, 4),
+        "access_count": 0,
+        "message": "Decay reset successfully",
+    }
+
+
+async def tool_get_recent_accesses(limit: int = 20) -> list[dict]:
+    """Get recent memory access patterns for analysis.
+    
+    Returns recent concept accesses with activation levels.
+    
+    Args:
+        limit: Maximum number of recent accesses to return (default: 20)
+    
+    Returns:
+        List of dicts with concept_id, accessed_at, and activation_level
+    """
+    memory = await get_memory()
+    accesses = memory.store.get_recent_accesses(limit=limit)
+    
+    formatted_accesses = []
+    for access in accesses:
+        formatted_accesses.append({
+            "concept_id": access["concept_id"],
+            "accessed_at": access["accessed_at"],
+            "activation_level": access["activation_level"],
+        })
+    
+    return formatted_accesses
+
+
 # ============================================================================
 # FastMCP Server Setup
 # ============================================================================
@@ -621,6 +733,60 @@ def create_mcp_server():
             Entity details with relationships
         """
         return await tool_inspect_entity(entity_id, show_relations)
+
+    @mcp.tool()
+    async def get_decay_stats(concept_id: str) -> dict:
+        """Get decay statistics for a concept.
+
+        Decay scoring tracks concept freshness based on:
+        - Recency: When was the concept last accessed?
+        - Frequency: How many times has it been accessed?
+        - Confidence: How well-supported is the concept?
+
+        The decay score (0.0-1.0) helps prioritize which concepts to revisit.
+        Low decay scores indicate concepts that may need updating or verification.
+
+        Args:
+            concept_id: ID of the concept to inspect (e.g., "a1b2c3d4")
+
+        Returns:
+            Dict with decay_score, access_count, last_accessed, recency_factor,
+            frequency_factor, and concept summary
+        """
+        return await tool_get_decay_stats(concept_id)
+
+    @mcp.tool()
+    async def reset_decay(concept_id: str) -> dict:
+        """Reset decay to maximum for a concept.
+
+        Resets the access counter to 0, effectively "refreshing" the concept
+        and setting its decay score back to maximum based on confidence.
+
+        Use this when you've verified a concept is still accurate and want
+        to prioritize it in retrieval.
+
+        Args:
+            concept_id: ID of the concept to reset (e.g., "a1b2c3d4")
+
+        Returns:
+            Dict with success status, new decay_score, and access_count
+        """
+        return await tool_reset_decay(concept_id)
+
+    @mcp.tool()
+    async def get_recent_accesses(limit: int = 20) -> list[dict]:
+        """Get recent memory access patterns for analysis.
+
+        Shows which concepts have been accessed most recently, useful for
+        understanding usage patterns or debugging retrieval issues.
+
+        Args:
+            limit: Maximum number of recent accesses to return (default: 20)
+
+        Returns:
+            List of dicts with concept_id, accessed_at, and activation_level
+        """
+        return await tool_get_recent_accesses(limit)
 
     return mcp
 

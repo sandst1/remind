@@ -15,6 +15,9 @@ External memory layer that persists across sessions and generalizes experiences 
 | `entities([entity_type], [limit])` | List entities with mention counts |
 | `inspect_entity(entity_id, [show_relations])` | View entity details/relationships |
 | `stats()` | Memory statistics |
+| `get_decay_stats(concept_id)` | Get decay score and access statistics |
+| `reset_decay(concept_id)` | Reset decay to maximum for a concept |
+| `get_recent_accesses([limit])` | View recent memory access patterns |
 
 ## remember
 
@@ -76,6 +79,22 @@ consolidate(force=True)
 - **Relations**: `implies`, `contradicts`, `specializes`, `generalizes`, `causes`, `part_of`
 - **Confidence**: 0.0-1.0 based on supporting episodes
 
+## Decay Management
+
+Concepts have a decay score (0.0-1.0) based on recency, frequency, and confidence. Low decay scores indicate concepts that may need updating.
+
+```
+get_decay_stats(concept_id="a1b2c3d4")
+reset_decay(concept_id="a1b2c3d4")
+get_recent_accesses(limit=20)
+```
+
+**get_decay_stats**: Returns decay_score, access_count, last_accessed, recency_factor, frequency_factor, and concept summary. Use to identify stale concepts.
+
+**reset_decay**: Resets access counter to 0 and recalculates decay score to maximum. Use after verifying a concept is still accurate.
+
+**get_recent_accesses**: Returns list of recent concept accesses with activation levels. Useful for understanding usage patterns.
+
 ## Best Practices
 
 1. Be selective — skip trivial info
@@ -85,3 +104,5 @@ consolidate(force=True)
 5. Use entity recall for specific files/people
 6. Consolidate at natural boundaries
 7. Remember updates to flag contradictions
+8. Check decay stats before relying on old concepts
+9. Reset decay for verified, important concepts
