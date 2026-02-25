@@ -954,3 +954,197 @@ class TestDecayScoreComputation:
         
         # Should get zero frequency
         assert frequency == 0.0
+
+
+class TestRetrievalAccessTracking:
+    """Tests for access tracking during retrieval."""
+
+    @pytest.fixture
+    def retriever(self, mock_embedding, memory_store):
+        return MemoryRetriever(
+            embedding=mock_embedding,
+            store=memory_store,
+            initial_k=10,
+            spread_hops=2,
+            spread_decay=0.5,
+            activation_threshold=0.1,
+        )
+
+    @pytest.mark.asyncio
+    async def test_retrieve_records_access(self, retriever, memory_store, mock_embedding):
+        """Test that retrieve records concept accesses."""
+        # Add concept to store
+        concept = Concept(
+            id="test_concept",
+            summary="Test concept for access tracking",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+            access_count=0,
+        )
+        memory_store.add_concept(concept)
+
+        # Set embedding for query to match concept
+        mock_embedding.set_embedding(
+            "test query",
+            [1.0, 0.0, 0.0] + [0.0] * 125
+        )
+
+        # Retrieve
+        result = await retriever.retrieve("test query", k=5)
+
+        # Verify access was recorded
+        assert len(result) == 1
+        assert result[0].concept.id == "test_concept"
+        assert result[0].concept.access_count == 1
+        assert result[0].concept.last_accessed is not None
+        assert len(result[0].concept.access_history) == 1
+
+    @pytest.mark.asyncio
+    async def test_retrieve_increment_access_count(self, retriever, memory_store, mock_embedding):
+        """Test that access count increments on each retrieval."""
+        concept = Concept(
+            id="test_concept",
+            summary="Test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+            access_count=5,
+            last_accessed=datetime.now() - timedelta(days=1),
+            access_history=[(datetime.now() - timedelta(days=1), 0.8)],
+        )
+        memory_store.add_concept(concept)
+
+        mock_embedding.set_embedding(
+            "test query",
+            [1.0, 0.0, 0.0] + [0.0] * 125
+        )
+
+        await retriever.retrieve("test query", k=5)
+
+        # Verify access count incremented
+        stored_concept = memory_store.get_concept("test_concept")
+        assert stored_concept.access_count == 6
+
+    @pytest.mark.asyncio
+    async def test_retrieve_updates_last_accessed(self, retriever, memory_store, mock_embedding):
+        """Test that last_accessed is updated to current timestamp."""
+        old_time = datetime.now() - timedelta(days=5)
+        concept = Concept(
+            id="test_concept",
+            summary="Test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+            last_accessed=old_time,
+        )
+        memory_store.add_concept(concept)
+
+        mock_embedding.set_embedding(
+            "test query",
+            [1.0, 0.0, 0.0] + [0.0] * 125
+        )
+
+        await retriever.retrieve("test query", k=5)
+
+        stored_concept = memory_store.get_concept("test_concept")
+        assert stored_concept.last_accessed is not None
+        assert stored_concept.last_accessed > old_time
+
+    @pytest.mark.asyncio
+    async def test_retrieve_appends_to_access_history(self, retriever, memory_store, mock_embedding):
+        """Test that access is appended to access_history."""
+        old_time = datetime.now() - timedelta(days=1)
+        concept = Concept(
+            id="test_concept",
+            summary="Test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+            access_history=[(old_time, 0.7)],
+        )
+        memory_store.add_concept(concept)
+
+        mock_embedding.set_embedding(
+            "test query",
+            [1.0, 0.0, 0.0] + [0.0] * 125
+        )
+
+        await retriever.retrieve("test query", k=5)
+
+        stored_concept = memory_store.get_concept("test_concept")
+        assert len(stored_concept.access_history) == 2
+        assert stored_concept.access_history[-1][1] > 0  # Activation level
+
+    @pytest.mark.asyncio
+    async def test_retrieve_truncates_history_to_100(self, retriever, memory_store, mock_embedding):
+        """Test that access_history is truncated to max 100 entries."""
+        # Create concept with 150 history entries
+        history = [
+            (datetime.now() - timedelta(days=i), 0.5)
+            for i in range(150)
+        ]
+        concept = Concept(
+            id="test_concept",
+            summary="Test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+            access_count=150,
+            access_history=history,
+        )
+        memory_store.add_concept(concept)
+
+        mock_embedding.set_embedding(
+            "test query",
+            [1.0, 0.0, 0.0] + [0.0] * 125
+        )
+
+        await retriever.retrieve("test query", k=5)
+
+        stored_concept = memory_store.get_concept("test_concept")
+        assert len(stored_concept.access_history) == 100
+
+    @pytest.mark.asyncio
+    async def test_retrieve_persists_to_store(self, retriever, memory_store, mock_embedding):
+        """Test that changes are persisted to store."""
+        concept = Concept(
+            id="test_concept",
+            summary="Test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+            access_count=0,
+        )
+        memory_store.add_concept(concept)
+
+        mock_embedding.set_embedding(
+            "test query",
+            [1.0, 0.0, 0.0] + [0.0] * 125
+        )
+
+        await retriever.retrieve("test query", k=5)
+
+        # Fetch from store (not from cache)
+        stored_concept = memory_store.get_concept("test_concept")
+        assert stored_concept.access_count == 1
+        assert stored_concept.last_accessed is not None
+        assert len(stored_concept.access_history) == 1
+
+    @pytest.mark.asyncio
+    async def test_retrieve_records_access_in_db(self, retriever, memory_store, mock_embedding):
+        """Test that access is recorded in retrieval_access_log table."""
+        concept = Concept(
+            id="test_concept",
+            summary="Test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+        )
+        memory_store.add_concept(concept)
+
+        mock_embedding.set_embedding(
+            "test query",
+            [1.0, 0.0, 0.0] + [0.0] * 125
+        )
+
+        await retriever.retrieve("test query", k=5)
+
+        # Check access log
+        access_stats = memory_store.get_concept_access_stats("test_concept")
+        assert access_stats["total_accesses"] == 1
+        assert access_stats["last_accessed"] is not None
+        assert access_stats["avg_activation"] > 0

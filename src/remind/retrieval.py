@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Optional
 from datetime import datetime
 import logging
+import hashlib
 
 from remind.models import Concept, Episode, Entity, RelationType
 from remind.store import MemoryStore
@@ -79,6 +80,10 @@ class MemoryRetriever:
             RelationType.CAUSES: 0.7,        # Causal link is meaningful
             RelationType.CONTRADICTS: 0.3,   # Weak spreading (but still useful)
         }
+    
+    def _compute_query_hash(self, query: str) -> str:
+        """Compute a hash of the query for tracking unique queries."""
+        return hashlib.md5(query.encode()).hexdigest()
     
     async def retrieve(
         self,
@@ -191,6 +196,28 @@ class MemoryRetriever:
         
         # Sort by activation (highest first) and take top k
         results.sort(key=lambda x: x.activation, reverse=True)
+        
+        # Record accesses for threshold concepts
+        query_hash = self._compute_query_hash(query)
+        for activated_concept in results:
+            concept = activated_concept.concept
+            
+            # Record access in store
+            self.store.record_concept_access(
+                concept_id=concept.id,
+                activation=activated_concept.activation,
+                query_hash=query_hash,
+            )
+            
+            # Update concept tracking data
+            concept.access_count += 1
+            concept.last_accessed = datetime.now()
+            concept.access_history.append((concept.last_accessed, activated_concept.activation))
+            concept.access_history = concept.access_history[-100:]
+            
+            # Persist changes
+            self.store.update_concept(concept)
+        
         return results[:k]
     
     async def retrieve_by_tags(
