@@ -56,3 +56,5 @@ web/node_modules/
 web/dist/
 src/remind/static/*
 !src/remind/static/.gitkeep
+
+.nav
