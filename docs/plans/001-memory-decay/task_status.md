@@ -10,6 +10,6 @@
 - [x] task-008-add-cli-decay-command
 - [x] task-009-test-decay-config-loading
 - [x] task-010-test-concept-access-tracking
-- [ ] task-011-test-decay-execution
+- [x] task-011-test-decay-execution
 - [ ] task-012-test-batch-trigger
 - [ ] task-013-test-decay-disabled-mode
