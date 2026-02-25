@@ -8,11 +8,13 @@ relationship structure, mimicking associative memory in the brain.
 
 from dataclasses import dataclass
 from typing import Optional
+from datetime import datetime
 import logging
 
 from remind.models import Concept, Episode, Entity, RelationType
 from remind.store import MemoryStore
 from remind.providers.base import EmbeddingProvider
+from remind.config import load_config, RemindConfig
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,8 @@ class MemoryRetriever:
         activation_threshold: float = 0.1,  # minimum activation to spread
         # Relation type weights (how much different relations spread activation)
         relation_weights: Optional[dict[RelationType, float]] = None,
+        # Configuration
+        config: Optional[RemindConfig] = None,
     ):
         self.embedding = embedding
         self.store = store
@@ -62,6 +66,7 @@ class MemoryRetriever:
         self.spread_hops = spread_hops
         self.spread_decay = spread_decay
         self.activation_threshold = activation_threshold
+        self.config = config or load_config()
         
         # Default relation weights - some relations spread activation more
         self.relation_weights = relation_weights or {
@@ -267,6 +272,57 @@ class MemoryRetriever:
                 results.append((entity, count))
         
         return results
+    
+    def _compute_decay_score(self, concept: Concept) -> float:
+        """Compute decay score based on access patterns."""
+        
+        # Recency factor (40% weight)
+        recency_factor = self._compute_recency_factor(concept)
+        
+        # Frequency factor (40% weight)
+        frequency_factor = self._compute_frequency_factor(concept)
+        
+        # Confidence boost (20% weight)
+        confidence_boost = (concept.confidence or 0.5) * 0.5
+        
+        decay_score = (recency_factor * 0.4) + (frequency_factor * 0.4) + confidence_boost
+        
+        # Apply minimum threshold
+        return max(decay_score, self.config.decay.min_decay_score)
+    
+    def _compute_recency_factor(self, concept: Concept) -> float:
+        """Compute recency factor using exponential decay.
+        
+        Formula: 1 / (1 + days_since_access / decay_half_life)
+        """
+        if not self.config.decay.enabled:
+            return 1.0
+        
+        now = datetime.now()
+        
+        # New concepts (never accessed) get full recency score
+        if not concept.last_accessed:
+            return 1.0
+        
+        days_since_access = (now - concept.last_accessed).total_seconds() / 86400
+        
+        # Exponential decay formula
+        recency_factor = 1.0 / (1.0 + days_since_access / self.config.decay.decay_half_life)
+        
+        return recency_factor
+    
+    def _compute_frequency_factor(self, concept: Concept) -> float:
+        """Compute frequency factor capped at 1.0.
+        
+        Formula: min(access_count / frequency_threshold, 1.0)
+        """
+        if not self.config.decay.enabled:
+            return 1.0
+        
+        access_count = concept.access_count or 0
+        frequency_factor = min(access_count / self.config.decay.frequency_threshold, 1.0)
+        
+        return frequency_factor
     
     async def find_related_chain(
         self,
