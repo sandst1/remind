@@ -11,5 +11,5 @@
 - [x] task-009-test-decay-config-loading
 - [x] task-010-test-concept-access-tracking
 - [x] task-011-test-decay-execution
-- [ ] task-012-test-batch-trigger
+- [x] task-012-test-batch-trigger
 - [ ] task-013-test-decay-disabled-mode

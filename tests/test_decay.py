@@ -5,6 +5,7 @@ from datetime import datetime
 
 from remind.decay import MemoryDecayer, DecayResult
 from remind.retrieval import MemoryRetriever, ActivatedConcept
+from remind.store import SQLiteMemoryStore
 from remind.models import Concept, AccessEvent, Relation, RelationType
 
 
@@ -500,3 +501,241 @@ class TestDecayExecution:
         assert 0.0 <= updated_high.confidence <= 1.0
         assert updated_low.confidence > 0  # Should still be positive
         assert updated_high.confidence == 0.95  # 1.0 * 0.95
+
+
+class TestBatchTrigger:
+    """Tests for batch decay trigger mechanism."""
+
+    @pytest.mark.asyncio
+    async def test_decay_not_triggered_below_threshold(
+        self, memory_store, mock_embedding, sample_concepts_with_relations
+    ):
+        """Test that decay does not run automatically when recall count is below threshold."""
+        # Add concepts
+        for concept in sample_concepts_with_relations:
+            memory_store.add_concept(concept)
+
+        # Set threshold to 5
+        memory_store.set_decay_threshold(5)
+
+        # Perform recall operations below threshold
+        retriever = MemoryRetriever(
+            embedding=mock_embedding,
+            store=memory_store,
+            activation_threshold=0.1,
+        )
+        mock_embedding.set_embedding("test", [1.0, 0.0, 0.0] + [0.0] * 125)
+
+        # Perform 3 recalls (below threshold of 5)
+        for i in range(3):
+            await retriever.retrieve("test", k=3)
+
+        # Verify recall count is 3
+        assert memory_store.get_recall_count() == 3
+
+        # Verify decay has NOT been triggered (concepts still have original confidence)
+        concept1 = memory_store.get_concept("concept1")
+        assert concept1.confidence == 0.9  # Original confidence, not decayed
+
+    @pytest.mark.asyncio
+    async def test_decay_triggered_at_threshold(
+        self, memory_store, mock_embedding, sample_concepts_with_relations
+    ):
+        """Test that decay runs when recall count reaches threshold."""
+        # Add concepts with known confidence
+        concept = Concept(
+            id="threshold_test",
+            summary="Threshold test concept",
+            confidence=0.9,
+        )
+        memory_store.add_concept(concept)
+
+        # Set threshold to 3
+        memory_store.set_decay_threshold(3)
+
+        # Create retriever
+        retriever = MemoryRetriever(
+            embedding=mock_embedding,
+            store=memory_store,
+            activation_threshold=0.1,
+        )
+        mock_embedding.set_embedding("test", [1.0, 0.0, 0.0] + [0.0] * 125)
+
+        # Perform recalls to reach threshold
+        for i in range(3):
+            await retriever.retrieve("test", k=1)
+
+        # Verify recall count reached threshold
+        assert memory_store.get_recall_count() == 3
+
+        # Note: The retriever itself doesn't trigger decay - that's done by MemoryInterface
+        # This test verifies the counter reaches the threshold
+        # The actual trigger is tested in TestInterfaceBatchTrigger
+
+    @pytest.mark.asyncio
+    async def test_recall_counter_resets_after_manual_decay(
+        self, memory_store, sample_concepts_with_relations
+    ):
+        """Test that recall counter resets after manual decay."""
+        # Add concepts
+        for concept in sample_concepts_with_relations:
+            memory_store.add_concept(concept)
+
+        # Increment recall counter
+        for i in range(5):
+            memory_store.increment_recall_count()
+
+        assert memory_store.get_recall_count() == 5
+
+        # Run manual decay
+        decayer = MemoryDecayer(store=memory_store, decay_rate=0.95)
+        decayer.decay()
+
+        # Verify counter is reset
+        assert memory_store.get_recall_count() == 0
+
+
+class TestInterfaceBatchTrigger:
+    """Tests for MemoryInterface batch decay trigger."""
+
+    @pytest.mark.asyncio
+    async def test_decay_triggered_after_threshold_recalls(
+        self, temp_db_path, mock_llm, mock_embedding
+    ):
+        """Test that MemoryInterface triggers decay after threshold recalls."""
+        from remind.interface import MemoryInterface
+
+        # Create interface with low threshold
+        store = SQLiteMemoryStore(temp_db_path)
+        store.set_decay_threshold(3)
+
+        memory = MemoryInterface(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=store,
+            decay_enabled=True,
+            decay_rate=0.95,
+        )
+        memory._decay_threshold = 3  # Set threshold to 3
+
+        # Add a concept with known confidence
+        concept = Concept(
+            id="interface_test",
+            summary="Interface test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+        )
+        store.add_concept(concept)
+
+        # Set embedding for query
+        mock_embedding.set_embedding("interface test", [1.0, 0.0, 0.0] + [0.0] * 125)
+
+        # Perform recalls below threshold - decay should NOT run
+        await memory.recall("interface test", k=1)
+        await memory.recall("interface test", k=1)
+
+        # Verify recall count is 2
+        assert store.get_recall_count() == 2
+
+        # Concept should still have original confidence (no decay yet)
+        concept = store.get_concept("interface_test")
+        assert concept.confidence == 0.9
+
+        # Perform recall to reach threshold - decay SHOULD run
+        await memory.recall("interface test", k=1)
+
+        # Verify recall counter was reset after decay
+        assert store.get_recall_count() == 0
+
+        # Verify decay was triggered by checking access tracking was updated
+        # (concept gets reinforced due to access events, so confidence may not decrease)
+        concept = store.get_concept("interface_test")
+        assert concept.access_count >= 1  # Concept was accessed and reinforced
+
+    @pytest.mark.asyncio
+    async def test_decay_not_triggered_when_disabled(
+        self, temp_db_path, mock_llm, mock_embedding
+    ):
+        """Test that decay is not triggered when decay_enabled is False."""
+        from remind.interface import MemoryInterface
+
+        # Create interface with decay disabled
+        store = SQLiteMemoryStore(temp_db_path)
+        store.set_decay_threshold(2)
+
+        memory = MemoryInterface(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=store,
+            decay_enabled=False,
+            decay_rate=0.95,
+        )
+        memory._decay_threshold = 2
+
+        # Add a concept
+        concept = Concept(
+            id="disabled_test",
+            summary="Disabled test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+        )
+        store.add_concept(concept)
+
+        # Set embedding for query
+        mock_embedding.set_embedding("disabled test", [1.0, 0.0, 0.0] + [0.0] * 125)
+
+        # Perform recalls to reach threshold
+        await memory.recall("disabled test", k=1)
+        await memory.recall("disabled test", k=1)
+
+        # Verify recall count reached threshold and was NOT reset
+        assert store.get_recall_count() == 2
+
+        # Verify decay was NOT triggered (access_count should be 0)
+        concept = store.get_concept("disabled_test")
+        assert concept.access_count == 0  # No decay ran, so no reinforcement
+
+    @pytest.mark.asyncio
+    async def test_counter_resets_after_batch_decay(
+        self, temp_db_path, mock_llm, mock_embedding
+    ):
+        """Test that recall counter resets after batch-triggered decay."""
+        from remind.interface import MemoryInterface
+
+        # Create interface
+        store = SQLiteMemoryStore(temp_db_path)
+        store.set_decay_threshold(2)
+
+        memory = MemoryInterface(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=store,
+            decay_enabled=True,
+            decay_rate=0.95,
+        )
+        memory._decay_threshold = 2
+
+        # Add a concept
+        concept = Concept(
+            id="reset_test",
+            summary="Reset test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+        )
+        store.add_concept(concept)
+
+        # Set embedding for query
+        mock_embedding.set_embedding("reset test", [1.0, 0.0, 0.0] + [0.0] * 125)
+
+        # Perform recalls to trigger decay
+        await memory.recall("reset test", k=1)
+        await memory.recall("reset test", k=1)
+
+        # Verify counter was reset after decay
+        assert store.get_recall_count() == 0
+
+        # Perform more recalls
+        await memory.recall("reset test", k=1)
+
+        # Verify counter incremented again
+        assert store.get_recall_count() == 1

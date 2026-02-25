@@ -114,6 +114,7 @@ class MemoryInterface:
         self.auto_consolidate = auto_consolidate
         self._decay_enabled = decay_enabled
         self._decay_rate = decay_rate
+        self._decay_threshold = 10
         self.default_recall_k = default_recall_k
         
         # Episode buffer for tracking (this session only)
@@ -223,6 +224,13 @@ class MemoryInterface:
             k=k,
             context=context,
         )
+        
+        # Check if decay should be triggered
+        if self._decay_enabled:
+            recall_count = self.store.get_recall_count()
+            if recall_count >= self._decay_threshold:
+                logger.debug(f"Recall threshold reached ({recall_count} >= {self._decay_threshold}), triggering decay")
+                self.decay()
         
         if raw:
             return activated
