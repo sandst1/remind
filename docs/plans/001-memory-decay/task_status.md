@@ -1,6 +1,6 @@
 # Task Status: Memory Decay
 
-- [ ] task-001-add-concept-access-tracking
+- [x] task-001-add-concept-access-tracking
 - [ ] task-002-add-decay-config-options
 - [ ] task-003-add-access-event-tracking-to-store
 - [ ] task-004-add-recall-counter-to-store

@@ -217,6 +217,10 @@ class Concept:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     
+    # Access tracking for memory decay
+    last_accessed_at: Optional[datetime] = None
+    access_count: int = 0
+    
     # Relational structure (edges in the concept graph)
     relations: list[Relation] = field(default_factory=list)
     
@@ -241,6 +245,8 @@ class Concept:
             "instance_count": self.instance_count,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+            "last_accessed_at": self.last_accessed_at.isoformat() if self.last_accessed_at else None,
+            "access_count": self.access_count,
             "relations": [r.to_dict() for r in self.relations],
             "source_episodes": self.source_episodes,
             "conditions": self.conditions,
@@ -260,6 +266,8 @@ class Concept:
             instance_count=data.get("instance_count", 1),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
             updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now(),
+            last_accessed_at=datetime.fromisoformat(data["last_accessed_at"]) if data.get("last_accessed_at") else None,
+            access_count=data.get("access_count", 0),
             relations=[Relation.from_dict(r) for r in data.get("relations", [])],
             source_episodes=data.get("source_episodes", []),
             conditions=data.get("conditions"),
