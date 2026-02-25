@@ -9,7 +9,7 @@
 - [x] task-007-update-retriever-to-record-access-events
 - [x] task-008-add-cli-decay-command
 - [x] task-009-test-decay-config-loading
-- [ ] task-010-test-concept-access-tracking
+- [x] task-010-test-concept-access-tracking
 - [ ] task-011-test-decay-execution
 - [ ] task-012-test-batch-trigger
 - [ ] task-013-test-decay-disabled-mode
