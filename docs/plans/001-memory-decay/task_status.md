@@ -5,7 +5,7 @@
 - [x] task-003-add-access-event-tracking-to-store
 - [x] task-004-add-recall-counter-to-store
 - [x] task-005-implement-memory-decayer-class
-- [ ] task-006-add-decay-method-to-interface
+- [x] task-006-add-decay-method-to-interface
 - [ ] task-007-update-retriever-to-record-access-events
 - [ ] task-008-add-cli-decay-command
 - [ ] task-009-test-decay-config-loading
