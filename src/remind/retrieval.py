@@ -25,9 +25,10 @@ class ActivatedConcept:
     """A concept with its activation level and retrieval metadata."""
     
     concept: Concept
-    activation: float  # 0.0 - 1.0, how strongly activated
+    activation: float  # Final ranked score (combines retrieval + decay)
     source: str  # "embedding" or "spread"
     hops: int = 0  # how many hops from initial activation
+    decay_score: float = 0.0  # Separate decay component for transparency
     
     def __repr__(self) -> str:
         return f"ActivatedConcept({self.concept.id}, activation={self.activation:.3f}, source={self.source})"
@@ -176,7 +177,7 @@ class MemoryRetriever:
             
             logger.debug(f"After hop {hop + 1}: {len(activation_map)} concepts")
         
-        # Step 3: Build result list
+        # Step 3: Build result list with combined ranking
         results = []
         for concept_id, (activation, source, hops) in activation_map.items():
             if not include_weak and activation < self.activation_threshold * 2:
@@ -187,14 +188,21 @@ class MemoryRetriever:
                 concept = self.store.get_concept(concept_id)
             
             if concept:
+                # Compute decay score for this concept
+                decay_score = self._compute_decay_score(concept)
+                
+                # Compute final ranking: 70% retrieval relevance, 30% decay (recency/popularity)
+                final_score = (activation * 0.7) + (decay_score * 0.3)
+                
                 results.append(ActivatedConcept(
                     concept=concept,
-                    activation=activation,
+                    activation=final_score,
                     source=source,
                     hops=hops,
+                    decay_score=decay_score,
                 ))
         
-        # Sort by activation (highest first) and take top k
+        # Sort by final score (highest first) and take top k
         results.sort(key=lambda x: x.activation, reverse=True)
         
         # Record accesses for threshold concepts
