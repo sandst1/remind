@@ -12,36 +12,40 @@ class TestActivatedConcept:
     """Tests for ActivatedConcept dataclass."""
 
     def test_creation(self, sample_concept):
-        """Test creating an activated concept."""
+        """Test creating an activated concept with decay score."""
         ac = ActivatedConcept(
             concept=sample_concept,
             activation=0.85,
             source="embedding",
             hops=0,
+            decay_score=0.75,
         )
         assert ac.activation == 0.85
         assert ac.source == "embedding"
         assert ac.hops == 0
+        assert ac.decay_score == 0.75
 
     def test_repr(self, sample_concept):
-        """Test string representation."""
+        """Test string representation with decay score."""
         ac = ActivatedConcept(
             concept=sample_concept,
             activation=0.75,
             source="spread",
             hops=1,
+            decay_score=0.65,
         )
         repr_str = repr(ac)
         assert "activation=0.750" in repr_str
         assert "source=spread" in repr_str
 
     def test_repr_embedding_source(self, sample_concept):
-        """Test repr with embedding source."""
+        """Test repr with embedding source and decay score."""
         ac = ActivatedConcept(
             concept=sample_concept,
             activation=0.9,
             source="embedding",
             hops=0,
+            decay_score=0.85,
         )
         repr_str = repr(ac)
         assert "source=embedding" in repr_str
