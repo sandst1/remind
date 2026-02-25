@@ -22,6 +22,7 @@ from remind.providers.base import LLMProvider, EmbeddingProvider
 from remind.consolidation import Consolidator
 from remind.retrieval import MemoryRetriever, ActivatedConcept
 from remind.extraction import EntityExtractor
+from remind.decay import MemoryDecayer, DecayResult
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,9 @@ class MemoryInterface:
         # Consolidation settings
         consolidation_threshold: int = 5,  # episodes before auto-consolidation
         auto_consolidate: bool = True,
+        # Decay settings
+        decay_enabled: bool = True,
+        decay_rate: float = 0.95,
         # Retrieval settings
         default_recall_k: int = 5,
         spread_hops: int = 2,
@@ -108,6 +112,9 @@ class MemoryInterface:
         # Settings
         self.consolidation_threshold = consolidation_threshold
         self.auto_consolidate = auto_consolidate
+        self._decay_enabled = decay_enabled
+        self._decay_rate = decay_rate
+        self._decay_threshold = 10
         self.default_recall_k = default_recall_k
         
         # Episode buffer for tracking (this session only)
@@ -218,6 +225,13 @@ class MemoryInterface:
             context=context,
         )
         
+        # Check if decay should be triggered
+        if self._decay_enabled:
+            recall_count = self.store.get_recall_count()
+            if recall_count >= self._decay_threshold:
+                logger.debug(f"Recall threshold reached ({recall_count} >= {self._decay_threshold}), triggering decay")
+                self.decay()
+        
         if raw:
             return activated
         
@@ -248,6 +262,41 @@ class MemoryInterface:
             self._episode_buffer = []  # Clear buffer after successful consolidation
         
         return result
+    
+    def decay(self, force: bool = False) -> DecayResult:
+        """
+        Run memory decay and reinforcement.
+        
+        Applies decay to all concept confidences and reinforces
+        recently accessed concepts based on access events.
+        
+        This is the "forgetting" process where:
+        - All concepts gradually lose confidence (decay)
+        - Accessed concepts are reinforced (strengthened)
+        - Reinforcement spreads to related concepts
+        
+        Use this for:
+        - Manual decay triggers
+        - Periodic maintenance
+        - Explicit control over decay timing
+        
+        Args:
+            force: If True, run decay even when decay_enabled is False.
+                   Use this to manually trigger decay regardless of config.
+        
+        Returns:
+            DecayResult with statistics about the operation
+        """
+        if not self._decay_enabled and not force:
+            logger.debug("Decay is disabled, skipping")
+            return DecayResult()
+        
+        decayer = MemoryDecayer(
+            store=self.store,
+            decay_rate=self._decay_rate,
+        )
+        
+        return decayer.decay()
     
     async def end_session(self) -> ConsolidationResult:
         """

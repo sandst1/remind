@@ -12,6 +12,7 @@ from pathlib import Path
 from remind.models import (
     Concept, Episode, Relation, RelationType,
     Entity, EntityType, EntityRelation, EpisodeType,
+    AccessEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,48 @@ class MemoryStore(ABC):
         """
         ...
 
+    # Access event tracking for memory decay
+    @abstractmethod
+    def record_access(self, concept_id: str, activation: float) -> None:
+        """Record that a concept was accessed with a given activation level."""
+        ...
+
+    @abstractmethod
+    def get_access_events(self) -> list[AccessEvent]:
+        """Get all recorded access events."""
+        ...
+
+    @abstractmethod
+    def clear_access_events(self) -> None:
+        """Clear all recorded access events."""
+        ...
+
+    # Recall counter for batch decay triggering
+    @abstractmethod
+    def increment_recall_count(self) -> int:
+        """Increment the recall counter and return the new count."""
+        ...
+
+    @abstractmethod
+    def get_recall_count(self) -> int:
+        """Get the current recall counter value."""
+        ...
+
+    @abstractmethod
+    def reset_recall_count(self) -> None:
+        """Reset the recall counter to zero."""
+        ...
+
+    @abstractmethod
+    def get_decay_threshold(self) -> int:
+        """Get the decay threshold (number of recalls before decay runs)."""
+        ...
+
+    @abstractmethod
+    def set_decay_threshold(self, threshold: int) -> None:
+        """Set the decay threshold."""
+        ...
+
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -378,6 +421,28 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_source ON entity_relations(source_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(target_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_episode ON entity_relations(source_episode_id)")
+
+            # Access events table - tracks concept access for memory decay
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS access_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    concept_id TEXT NOT NULL,
+                    activation REAL NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (concept_id) REFERENCES concepts(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Access events index
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_access_events_concept ON access_events(concept_id)")
+
+            # Metadata table for counters and settings
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
 
             conn.commit()
             
@@ -1367,7 +1432,112 @@ class SQLiteMemoryStore(MemoryStore):
             }
         finally:
             conn.close()
-    
+
+    # Access event tracking for memory decay
+
+    def record_access(self, concept_id: str, activation: float) -> None:
+        """Record that a concept was accessed with a given activation level."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO access_events (concept_id, activation, timestamp) VALUES (?, ?, ?)",
+                (concept_id, activation, datetime.now().isoformat())
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_access_events(self) -> list[AccessEvent]:
+        """Get all recorded access events."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT concept_id, activation, timestamp FROM access_events ORDER BY timestamp DESC"
+            ).fetchall()
+            return [
+                AccessEvent(
+                    concept_id=row["concept_id"],
+                    activation=row["activation"],
+                    timestamp=datetime.fromisoformat(row["timestamp"]),
+                )
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def clear_access_events(self) -> None:
+        """Clear all recorded access events."""
+        conn = self._get_conn()
+        try:
+            conn.execute("DELETE FROM access_events")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def increment_recall_count(self) -> int:
+        """Increment the recall counter and return the new count."""
+        conn = self._get_conn()
+        try:
+            current = conn.execute(
+                "SELECT value FROM metadata WHERE key = 'recall_count'"
+            ).fetchone()
+            count = int(current["value"]) if current else 0
+            count += 1
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                ("recall_count", str(count))
+            )
+            conn.commit()
+            return count
+        finally:
+            conn.close()
+
+    def get_recall_count(self) -> int:
+        """Get the current recall counter value."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key = 'recall_count'"
+            ).fetchone()
+            return int(row["value"]) if row else 0
+        finally:
+            conn.close()
+
+    def reset_recall_count(self) -> None:
+        """Reset the recall counter to zero."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                ("recall_count", "0")
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_decay_threshold(self) -> int:
+        """Get the decay threshold (number of recalls before decay runs)."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key = 'decay_threshold'"
+            ).fetchone()
+            return int(row["value"]) if row else 10  # Default to 10
+        finally:
+            conn.close()
+
+    def set_decay_threshold(self, threshold: int) -> None:
+        """Set the decay threshold."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                ("decay_threshold", str(threshold))
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def export_data(self) -> dict:
         """Export all data for backup."""
         conn = self._get_conn()

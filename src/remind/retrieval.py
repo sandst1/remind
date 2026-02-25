@@ -186,7 +186,16 @@ class MemoryRetriever:
         
         # Sort by activation (highest first) and take top k
         results.sort(key=lambda x: x.activation, reverse=True)
-        return results[:k]
+        top_k = results[:k]
+        
+        # Record access events for all activated concepts (not just top k)
+        for ac in results:
+            self.store.record_access(ac.concept.id, ac.activation)
+        
+        # Increment recall counter for batch decay trigger
+        self.store.increment_recall_count()
+        
+        return top_k
     
     async def retrieve_by_tags(
         self,
