@@ -263,7 +263,7 @@ class MemoryInterface:
         
         return result
     
-    def decay(self) -> DecayResult:
+    def decay(self, force: bool = False) -> DecayResult:
         """
         Run memory decay and reinforcement.
         
@@ -280,12 +280,14 @@ class MemoryInterface:
         - Periodic maintenance
         - Explicit control over decay timing
         
-        Note: Decay only runs if enabled in config.
+        Args:
+            force: If True, run decay even when decay_enabled is False.
+                   Use this to manually trigger decay regardless of config.
         
         Returns:
             DecayResult with statistics about the operation
         """
-        if not self._decay_enabled:
+        if not self._decay_enabled and not force:
             logger.debug("Decay is disabled, skipping")
             return DecayResult()
         

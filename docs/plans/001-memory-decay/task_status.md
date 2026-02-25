@@ -12,4 +12,4 @@
 - [x] task-010-test-concept-access-tracking
 - [x] task-011-test-decay-execution
 - [x] task-012-test-batch-trigger
-- [ ] task-013-test-decay-disabled-mode
+- [x] task-013-test-decay-disabled-mode

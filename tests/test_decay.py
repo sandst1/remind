@@ -739,3 +739,187 @@ class TestInterfaceBatchTrigger:
 
         # Verify counter incremented again
         assert store.get_recall_count() == 1
+
+
+class TestDecayDisabledMode:
+    """Tests for decay disabled mode."""
+
+    @pytest.mark.asyncio
+    async def test_access_events_accumulate_when_decay_disabled(
+        self, temp_db_path, mock_llm, mock_embedding
+    ):
+        """Test that access events accumulate but aren't processed when decay is disabled."""
+        from remind.interface import MemoryInterface
+
+        # Create interface with decay disabled
+        store = SQLiteMemoryStore(temp_db_path)
+        store.set_decay_threshold(2)
+
+        memory = MemoryInterface(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=store,
+            decay_enabled=False,
+            decay_rate=0.95,
+        )
+        memory._decay_threshold = 2
+
+        # Add a concept
+        concept = Concept(
+            id="accumulate_test",
+            summary="Accumulate test concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+        )
+        store.add_concept(concept)
+
+        # Set embedding for query
+        mock_embedding.set_embedding("accumulate test", [1.0, 0.0, 0.0] + [0.0] * 125)
+
+        # Perform multiple recalls
+        await memory.recall("accumulate test", k=1)
+        await memory.recall("accumulate test", k=1)
+        await memory.recall("accumulate test", k=1)
+
+        # Verify access events accumulated
+        access_events = store.get_access_events()
+        assert len(access_events) >= 3  # At least 3 access events recorded
+
+        # Verify recall counter accumulated (not reset)
+        assert store.get_recall_count() == 3
+
+        # Verify concept was NOT reinforced (access_count should be 0)
+        concept = store.get_concept("accumulate_test")
+        assert concept.access_count == 0
+        assert concept.last_accessed_at is None
+
+    @pytest.mark.asyncio
+    async def test_manual_decay_works_when_disabled_with_force(
+        self, temp_db_path, mock_llm, mock_embedding
+    ):
+        """Test that manual decay with force=True works even when decay_enabled=False."""
+        from remind.interface import MemoryInterface
+
+        # Create interface with decay disabled
+        store = SQLiteMemoryStore(temp_db_path)
+
+        memory = MemoryInterface(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=store,
+            decay_enabled=False,
+            decay_rate=0.90,
+        )
+
+        # Add a concept with known confidence
+        concept = Concept(
+            id="force_test",
+            summary="Force test concept",
+            confidence=0.9,
+        )
+        store.add_concept(concept)
+
+        # Record an access event with high activation
+        store.record_access("force_test", 0.95)
+
+        # Manual decay without force should return empty result
+        result = memory.decay()
+        assert result.concepts_decayed == 0
+        assert result.concepts_reinforced == 0
+
+        # Verify concept was not modified
+        concept = store.get_concept("force_test")
+        assert concept.confidence == 0.9
+        assert concept.access_count == 0
+
+        # Manual decay with force=True should work
+        result = memory.decay(force=True)
+        assert result.concepts_decayed == 1
+        assert result.concepts_reinforced == 1
+
+        # Verify concept was modified
+        concept = store.get_concept("force_test")
+        assert concept.confidence == pytest.approx(0.95, rel=0.001)
+        assert concept.access_count == 1
+
+        # Verify access events were cleared
+        assert len(store.get_access_events()) == 0
+
+    @pytest.mark.asyncio
+    async def test_state_consistent_after_enabling_decay(
+        self, temp_db_path, mock_llm, mock_embedding
+    ):
+        """Test that state remains consistent when enabling decay after it was disabled."""
+        from remind.interface import MemoryInterface
+
+        # Create interface with decay disabled
+        store = SQLiteMemoryStore(temp_db_path)
+        store.set_decay_threshold(2)
+
+        memory = MemoryInterface(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=store,
+            decay_enabled=False,
+            decay_rate=0.95,
+        )
+        memory._decay_threshold = 2
+
+        # Add a concept with relation
+        concept1 = Concept(
+            id="state_test_1",
+            summary="Parent concept",
+            confidence=0.9,
+            embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
+            relations=[
+                Relation(
+                    type=RelationType.IMPLIES,
+                    target_id="state_test_2",
+                    strength=1.0,
+                )
+            ],
+        )
+        concept2 = Concept(
+            id="state_test_2",
+            summary="Child concept",
+            confidence=0.8,
+            embedding=[0.5, 0.5, 0.0] + [0.0] * 125,
+        )
+        store.add_concept(concept1)
+        store.add_concept(concept2)
+
+        # Set embedding for query
+        mock_embedding.set_embedding("state test", [1.0, 0.0, 0.0] + [0.0] * 125)
+
+        # Perform recalls with decay disabled
+        await memory.recall("state test", k=2)
+        await memory.recall("state test", k=2)
+
+        # Verify access events accumulated
+        access_events = store.get_access_events()
+        assert len(access_events) > 0
+
+        # Verify concepts were not modified
+        concept1 = store.get_concept("state_test_1")
+        concept2 = store.get_concept("state_test_2")
+        assert concept1.confidence == 0.9
+        assert concept2.confidence == 0.8
+        assert concept1.access_count == 0
+        assert concept2.access_count == 0
+
+        # Enable decay and run manually with force
+        memory._decay_enabled = True
+        result = memory.decay(force=True)
+
+        # Verify decay ran and processed accumulated access events
+        assert result.access_events_processed > 0
+        assert result.concepts_decayed == 2
+
+        # Verify concepts were updated
+        concept1 = store.get_concept("state_test_1")
+        concept2 = store.get_concept("state_test_2")
+        assert concept1.access_count >= 1  # Was accessed
+
+        # Verify state is clean after decay
+        assert len(store.get_access_events()) == 0
+        assert store.get_recall_count() == 0
