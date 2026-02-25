@@ -7,7 +7,7 @@
 - [x] task-005-implement-memory-decayer-class
 - [x] task-006-add-decay-method-to-interface
 - [x] task-007-update-retriever-to-record-access-events
-- [ ] task-008-add-cli-decay-command
+- [x] task-008-add-cli-decay-command
 - [ ] task-009-test-decay-config-loading
 - [ ] task-010-test-concept-access-tracking
 - [ ] task-011-test-decay-execution

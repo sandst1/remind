@@ -406,6 +406,66 @@ def end_session(ctx):
 
 
 @main.command()
+@click.option("--force", "-f", is_flag=True, help="Run decay even if threshold not reached")
+@click.pass_context
+def decay(ctx, force: bool):
+    """Run memory decay and reinforcement.
+    
+    Applies decay to all concept confidences and reinforces
+    recently accessed concepts based on access events.
+    
+    Decay can be triggered:
+    - Manually via this command
+    - Automatically after N recall operations (threshold-based)
+    - Via explicit decay() method call
+    
+    Use --force to run decay even if the recall threshold has not been reached.
+    """
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    
+    # Check if decay is enabled
+    if not memory._decay_enabled:
+        console.print("[yellow]Decay is disabled in configuration[/yellow]")
+        console.print("  Set decay_enabled=true in config to enable decay")
+        return
+    
+    # Check recall count
+    recall_count = memory.store.get_recall_count()
+    threshold = memory.store.get_decay_threshold()
+    
+    if not force and recall_count < threshold:
+        console.print(f"[yellow]Decay threshold not reached[/yellow]")
+        console.print(f"  Recall count: {recall_count}/{threshold}")
+        console.print(f"  Use --force to run decay anyway")
+        return
+    
+    console.print(f"[cyan]Running memory decay...[/cyan]")
+    console.print(f"  Recall count: {recall_count}")
+    console.print(f"  Decay threshold: {threshold}")
+    console.print(f"  Decay rate: {memory._decay_rate}")
+    
+    result = memory.decay()
+    
+    console.print(f"\n[green]✓ Decay complete[/green]")
+    console.print(f"  Concepts decayed: {result.concepts_decayed}")
+    console.print(f"  Concepts reinforced: {result.concepts_reinforced}")
+    console.print(f"  Access events processed: {result.access_events_processed}")
+    
+    # Show some confidence changes if available
+    if result.confidence_changes:
+        changes = result.confidence_changes[:5]
+        console.print(f"\n[dim]Sample confidence changes:[/dim]")
+        for change in changes:
+            delta = change["new_confidence"] - change["old_confidence"]
+            delta_str = f"{delta:+.3f}"
+            reason = change.get("reason", "unknown")
+            console.print(f"  [{change['concept_id']}] {change['old_confidence']:.3f} → {change['new_confidence']:.3f} ({delta_str}) - {reason}")
+        
+        if len(result.confidence_changes) > 5:
+            console.print(f"  ... and {len(result.confidence_changes) - 5} more changes")
+
+
+@main.command()
 @click.argument("concept_id", required=False)
 @click.option("--episodes", "-e", is_flag=True, help="Show recent episodes instead")
 @click.option("--limit", "-n", default=10, help="Number of items to show")

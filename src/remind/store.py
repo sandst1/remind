@@ -265,6 +265,16 @@ class MemoryStore(ABC):
         """Reset the recall counter to zero."""
         ...
 
+    @abstractmethod
+    def get_decay_threshold(self) -> int:
+        """Get the decay threshold (number of recalls before decay runs)."""
+        ...
+
+    @abstractmethod
+    def set_decay_threshold(self, threshold: int) -> None:
+        """Set the decay threshold."""
+        ...
+
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -1500,6 +1510,29 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute(
                 "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
                 ("recall_count", "0")
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_decay_threshold(self) -> int:
+        """Get the decay threshold (number of recalls before decay runs)."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key = 'decay_threshold'"
+            ).fetchone()
+            return int(row["value"]) if row else 10  # Default to 10
+        finally:
+            conn.close()
+
+    def set_decay_threshold(self, threshold: int) -> None:
+        """Set the decay threshold."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                ("decay_threshold", str(threshold))
             )
             conn.commit()
         finally:
