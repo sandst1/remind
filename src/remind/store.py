@@ -249,6 +249,22 @@ class MemoryStore(ABC):
         """Clear all recorded access events."""
         ...
 
+    # Recall counter for batch decay triggering
+    @abstractmethod
+    def increment_recall_count(self) -> int:
+        """Increment the recall counter and return the new count."""
+        ...
+
+    @abstractmethod
+    def get_recall_count(self) -> int:
+        """Get the current recall counter value."""
+        ...
+
+    @abstractmethod
+    def reset_recall_count(self) -> None:
+        """Reset the recall counter to zero."""
+        ...
+
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -409,6 +425,14 @@ class SQLiteMemoryStore(MemoryStore):
 
             # Access events index
             conn.execute("CREATE INDEX IF NOT EXISTS idx_access_events_concept ON access_events(concept_id)")
+
+            # Metadata table for counters and settings
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
 
             conn.commit()
             
@@ -1439,7 +1463,48 @@ class SQLiteMemoryStore(MemoryStore):
             conn.commit()
         finally:
             conn.close()
-    
+
+    def increment_recall_count(self) -> int:
+        """Increment the recall counter and return the new count."""
+        conn = self._get_conn()
+        try:
+            current = conn.execute(
+                "SELECT value FROM metadata WHERE key = 'recall_count'"
+            ).fetchone()
+            count = int(current["value"]) if current else 0
+            count += 1
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                ("recall_count", str(count))
+            )
+            conn.commit()
+            return count
+        finally:
+            conn.close()
+
+    def get_recall_count(self) -> int:
+        """Get the current recall counter value."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key = 'recall_count'"
+            ).fetchone()
+            return int(row["value"]) if row else 0
+        finally:
+            conn.close()
+
+    def reset_recall_count(self) -> None:
+        """Reset the recall counter to zero."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                ("recall_count", "0")
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def export_data(self) -> dict:
         """Export all data for backup."""
         conn = self._get_conn()
