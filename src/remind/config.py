@@ -74,6 +74,9 @@ class RemindConfig:
     embedding_provider: str = DEFAULT_EMBEDDING_PROVIDER
     consolidation_threshold: int = DEFAULT_CONSOLIDATION_THRESHOLD
     auto_consolidate: bool = True
+    decay_enabled: bool = True
+    decay_threshold: int = 10
+    decay_rate: float = 0.95
 
     # Provider-specific configs
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
@@ -120,6 +123,12 @@ def load_config() -> RemindConfig:
                 config.consolidation_threshold = int(file_config["consolidation_threshold"])
             if "auto_consolidate" in file_config:
                 config.auto_consolidate = bool(file_config["auto_consolidate"])
+            if "decay_enabled" in file_config:
+                config.decay_enabled = bool(file_config["decay_enabled"])
+            if "decay_threshold" in file_config:
+                config.decay_threshold = int(file_config["decay_threshold"])
+            if "decay_rate" in file_config:
+                config.decay_rate = float(file_config["decay_rate"])
 
             # Provider-specific settings
             config.anthropic = _load_provider_config(file_config, "anthropic", AnthropicConfig)
@@ -143,6 +152,18 @@ def load_config() -> RemindConfig:
             logger.warning(f"Invalid CONSOLIDATION_THRESHOLD: {threshold}")
     if auto_consolidate := os.environ.get("AUTO_CONSOLIDATE"):
         config.auto_consolidate = auto_consolidate.lower() in ("true", "1", "yes")
+    if decay_enabled := os.environ.get("DECAY_ENABLED"):
+        config.decay_enabled = decay_enabled.lower() in ("true", "1", "yes")
+    if decay_threshold := os.environ.get("DECAY_THRESHOLD"):
+        try:
+            config.decay_threshold = int(decay_threshold)
+        except ValueError:
+            logger.warning(f"Invalid DECAY_THRESHOLD: {decay_threshold}")
+    if decay_rate := os.environ.get("DECAY_RATE"):
+        try:
+            config.decay_rate = float(decay_rate)
+        except ValueError:
+            logger.warning(f"Invalid DECAY_RATE: {decay_rate}")
 
     # Override provider settings with environment variables
     # Anthropic
