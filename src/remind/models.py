@@ -397,6 +397,36 @@ class ConsolidationResult:
 
 
 @dataclass
+class AccessEvent:
+    """
+    Tracks when a concept was accessed during retrieval.
+    
+    Used by the decay system to reinforce frequently accessed concepts.
+    """
+    
+    concept_id: str
+    activation: float  # 0.0-1.0 activation level during retrieval
+    timestamp: datetime = field(default_factory=datetime.now)
+    
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        return {
+            "concept_id": self.concept_id,
+            "activation": self.activation,
+            "timestamp": self.timestamp.isoformat(),
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "AccessEvent":
+        """Deserialize from dictionary."""
+        return cls(
+            concept_id=data["concept_id"],
+            activation=data["activation"],
+            timestamp=datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(),
+        )
+
+
+@dataclass
 class ExtractionResult:
     """Result of entity/type extraction from an episode."""
 

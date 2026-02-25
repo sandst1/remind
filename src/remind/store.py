@@ -12,6 +12,7 @@ from pathlib import Path
 from remind.models import (
     Concept, Episode, Relation, RelationType,
     Entity, EntityType, EntityRelation, EpisodeType,
+    AccessEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,22 @@ class MemoryStore(ABC):
         """
         ...
 
+    # Access event tracking for memory decay
+    @abstractmethod
+    def record_access(self, concept_id: str, activation: float) -> None:
+        """Record that a concept was accessed with a given activation level."""
+        ...
+
+    @abstractmethod
+    def get_access_events(self) -> list[AccessEvent]:
+        """Get all recorded access events."""
+        ...
+
+    @abstractmethod
+    def clear_access_events(self) -> None:
+        """Clear all recorded access events."""
+        ...
+
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -378,6 +395,20 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_source ON entity_relations(source_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(target_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_episode ON entity_relations(source_episode_id)")
+
+            # Access events table - tracks concept access for memory decay
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS access_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    concept_id TEXT NOT NULL,
+                    activation REAL NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (concept_id) REFERENCES concepts(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Access events index
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_access_events_concept ON access_events(concept_id)")
 
             conn.commit()
             
@@ -1365,6 +1396,47 @@ class SQLiteMemoryStore(MemoryStore):
                     for row in episode_types
                 },
             }
+        finally:
+            conn.close()
+
+    # Access event tracking for memory decay
+
+    def record_access(self, concept_id: str, activation: float) -> None:
+        """Record that a concept was accessed with a given activation level."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO access_events (concept_id, activation, timestamp) VALUES (?, ?, ?)",
+                (concept_id, activation, datetime.now().isoformat())
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_access_events(self) -> list[AccessEvent]:
+        """Get all recorded access events."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT concept_id, activation, timestamp FROM access_events ORDER BY timestamp DESC"
+            ).fetchall()
+            return [
+                AccessEvent(
+                    concept_id=row["concept_id"],
+                    activation=row["activation"],
+                    timestamp=datetime.fromisoformat(row["timestamp"]),
+                )
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def clear_access_events(self) -> None:
+        """Clear all recorded access events."""
+        conn = self._get_conn()
+        try:
+            conn.execute("DELETE FROM access_events")
+            conn.commit()
         finally:
             conn.close()
     

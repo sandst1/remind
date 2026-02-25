@@ -2,7 +2,7 @@
 
 - [x] task-001-add-concept-access-tracking
 - [x] task-002-add-decay-config-options
-- [ ] task-003-add-access-event-tracking-to-store
+- [x] task-003-add-access-event-tracking-to-store
 - [ ] task-004-add-recall-counter-to-store
 - [ ] task-005-implement-memory-decayer-class
 - [ ] task-006-add-decay-method-to-interface
