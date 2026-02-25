@@ -192,15 +192,50 @@ class MemoryInterface:
         """
         Retrieve relevant memory for a query.
         
+        Uses spreading activation to find related concepts through the
+        concept graph, combining semantic similarity with access patterns.
+        
         Args:
             query: What to search for
-            k: Number of concepts to return
+            k: Number of concepts to return (default: 5)
             context: Additional context for the search
             entity: If provided, retrieve by entity instead of semantic search
             raw: If True, return raw objects instead of formatted string
             
         Returns:
-            Formatted memory string for LLM injection, or raw objects if raw=True
+            When raw=False (default): Formatted memory string for LLM injection
+            
+            When raw=True: List of ActivatedConcept objects with:
+                - concept: The Concept object
+                - activation: Final ranked score (combines retrieval + decay)
+                - decay_score: Separate decay component (0.0-1.0) based on recency
+                  and frequency of access. Higher scores indicate more recently/
+                  frequently accessed concepts.
+                - source: "embedding" (direct semantic match) or "spread"
+                  (activated through concept relations)
+                - hops: Number of hops from initial embedding match (0 for direct
+                  matches, 1+ for concepts found via spreading activation)
+                
+        Decay vs. Confidence:
+            - Confidence (on Concept): How reliable the knowledge is, based on
+              number of supporting episodes during consolidation (0.0-1.0)
+            - Decay Score: How "fresh" or "active" the concept is, based on
+              when it was last accessed and how often (0.0-1.0)
+              
+            A concept can have high confidence (well-supported) but low decay
+            (not accessed recently), or vice versa.
+            
+        Example:
+            # Get formatted string for LLM context
+            context = await memory.recall("How does user prefer to handle errors?")
+            
+            # Get raw objects with decay info
+            results = await memory.recall("error handling", raw=True)
+            for activated in results:
+                print(f"Concept: {activated.concept.summary}")
+                print(f"  Activation: {activated.activation:.3f}")
+                print(f"  Decay Score: {activated.decay_score:.3f}")
+                print(f"  Source: {activated.source} ({activated.hops} hops)")
         """
         k = k or self.default_recall_k
         

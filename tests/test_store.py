@@ -223,3 +223,114 @@ class TestSQLiteMemoryStore:
         
         os.unlink(path)
 
+
+class TestRetrievalAccessLog:
+    @pytest.fixture
+    def store(self):
+        """Create a temporary store for testing."""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        store = SQLiteMemoryStore(path)
+        yield store
+        os.unlink(path)
+
+    def test_record_concept_access(self, store):
+        """Test recording a concept access."""
+        from datetime import datetime
+        
+        concept = Concept(summary="Test concept")
+        store.add_concept(concept)
+        
+        accessed_at = datetime(2024, 1, 15, 10, 30, 0)
+        store.record_concept_access(
+            concept_id=concept.id,
+            activation=0.85,
+            query_hash="abc123",
+            accessed_at=accessed_at,
+        )
+        
+        stats = store.get_concept_access_stats(concept.id)
+        assert stats["total_accesses"] == 1
+        assert stats["avg_activation"] == 0.85
+        assert stats["last_accessed"] == "2024-01-15T10:30:00"
+
+    def test_record_multiple_concept_accesses(self, store):
+        """Test recording multiple accesses to the same concept."""
+        concept = Concept(summary="Test concept")
+        store.add_concept(concept)
+        
+        # Record multiple accesses
+        store.record_concept_access(concept.id, 0.9, "query1")
+        store.record_concept_access(concept.id, 0.7, "query2")
+        store.record_concept_access(concept.id, 0.8, "query3")
+        
+        stats = store.get_concept_access_stats(concept.id)
+        assert stats["total_accesses"] == 3
+        assert abs(stats["avg_activation"] - 0.8) < 0.001  # (0.9 + 0.7 + 0.8) / 3
+
+    def test_get_concept_access_stats_no_accesses(self, store):
+        """Test stats for concept with no accesses."""
+        concept = Concept(summary="Test concept")
+        store.add_concept(concept)
+        
+        stats = store.get_concept_access_stats(concept.id)
+        assert stats["total_accesses"] == 0
+        assert stats["last_accessed"] is None
+        assert stats["avg_activation"] == 0.0
+
+    def test_get_recent_accesses(self, store):
+        """Test retrieving recent accesses."""
+        from datetime import datetime
+        
+        c1 = Concept(summary="Concept 1")
+        c2 = Concept(summary="Concept 2")
+        store.add_concept(c1)
+        store.add_concept(c2)
+        
+        # Record accesses
+        store.record_concept_access(c1.id, 0.9, "q1")
+        store.record_concept_access(c2.id, 0.8, "q2")
+        store.record_concept_access(c1.id, 0.7, "q3")
+        
+        recent = store.get_recent_accesses(limit=5)
+        assert len(recent) == 3
+        
+        # Check order (most recent first)
+        assert recent[0]["concept_id"] == c1.id
+        assert recent[0]["activation_level"] == 0.7
+
+    def test_get_recent_accesses_limit(self, store):
+        """Test limiting recent accesses."""
+        concept = Concept(summary="Test concept")
+        store.add_concept(concept)
+        
+        # Record 10 accesses
+        for i in range(10):
+            store.record_concept_access(concept.id, float(i), f"query{i}")
+        
+        recent = store.get_recent_accesses(limit=3)
+        assert len(recent) == 3
+
+    def test_retrieval_access_log_integration(self, store):
+        """Test retrieval access log with concept retrieval flow."""
+        c1 = Concept(summary="Python programming", embedding=[1.0, 0.0, 0.0])
+        c2 = Concept(summary="JavaScript programming", embedding=[0.8, 0.2, 0.0])
+        store.add_concept(c1)
+        store.add_concept(c2)
+        
+        # Simulate retrieval
+        results = store.find_by_embedding([1.0, 0.0, 0.0], k=2)
+        
+        # Record accesses
+        for concept, similarity in results:
+            store.record_concept_access(
+                concept_id=concept.id,
+                activation=similarity,
+                query_hash="test_query_hash",
+            )
+        
+        # Verify stats
+        stats = store.get_concept_access_stats(c1.id)
+        assert stats["total_accesses"] == 1
+        assert stats["avg_activation"] > 0.9
+

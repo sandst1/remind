@@ -67,6 +67,16 @@ class OllamaConfig:
 
 
 @dataclass
+class DecayConfig:
+    """Decay behavior configuration."""
+
+    enabled: bool = True
+    decay_half_life: float = 30.0  # days
+    frequency_threshold: int = 10
+    min_decay_score: float = 0.1
+
+
+@dataclass
 class RemindConfig:
     """Configuration settings for Remind."""
 
@@ -80,6 +90,9 @@ class RemindConfig:
     openai: OpenAIConfig = field(default_factory=OpenAIConfig)
     azure_openai: AzureOpenAIConfig = field(default_factory=AzureOpenAIConfig)
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
+
+    # Decay configuration
+    decay: DecayConfig = field(default_factory=DecayConfig)
 
 
 def _load_provider_config(file_config: dict, key: str, config_class: type) -> object:
@@ -120,6 +133,14 @@ def load_config() -> RemindConfig:
                 config.consolidation_threshold = int(file_config["consolidation_threshold"])
             if "auto_consolidate" in file_config:
                 config.auto_consolidate = bool(file_config["auto_consolidate"])
+            if "decay" in file_config:
+                decay_data = file_config["decay"]
+                config.decay = DecayConfig(
+                    enabled=decay_data.get("enabled", True),
+                    decay_half_life=decay_data.get("decay_half_life", 30.0),
+                    frequency_threshold=decay_data.get("frequency_threshold", 10),
+                    min_decay_score=decay_data.get("min_decay_score", 0.1),
+                )
 
             # Provider-specific settings
             config.anthropic = _load_provider_config(file_config, "anthropic", AnthropicConfig)
@@ -143,6 +164,25 @@ def load_config() -> RemindConfig:
             logger.warning(f"Invalid CONSOLIDATION_THRESHOLD: {threshold}")
     if auto_consolidate := os.environ.get("AUTO_CONSOLIDATE"):
         config.auto_consolidate = auto_consolidate.lower() in ("true", "1", "yes")
+
+    # Override decay settings with environment variables
+    if enabled := os.environ.get("DECAY_ENABLED"):
+        config.decay.enabled = enabled.lower() in ("true", "1", "yes")
+    if half_life := os.environ.get("DECAY_HALF_LIFE"):
+        try:
+            config.decay.decay_half_life = float(half_life)
+        except ValueError:
+            logger.warning(f"Invalid DECAY_HALF_LIFE: {half_life}")
+    if threshold := os.environ.get("DECAY_FREQUENCY_THRESHOLD"):
+        try:
+            config.decay.frequency_threshold = int(threshold)
+        except ValueError:
+            logger.warning(f"Invalid DECAY_FREQUENCY_THRESHOLD: {threshold}")
+    if min_score := os.environ.get("DECAY_MIN_SCORE"):
+        try:
+            config.decay.min_decay_score = float(min_score)
+        except ValueError:
+            logger.warning(f"Invalid DECAY_MIN_SCORE: {min_score}")
 
     # Override provider settings with environment variables
     # Anthropic

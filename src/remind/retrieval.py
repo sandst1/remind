@@ -8,11 +8,14 @@ relationship structure, mimicking associative memory in the brain.
 
 from dataclasses import dataclass
 from typing import Optional
+from datetime import datetime
 import logging
+import hashlib
 
 from remind.models import Concept, Episode, Entity, RelationType
 from remind.store import MemoryStore
 from remind.providers.base import EmbeddingProvider
+from remind.config import load_config, RemindConfig
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +25,10 @@ class ActivatedConcept:
     """A concept with its activation level and retrieval metadata."""
     
     concept: Concept
-    activation: float  # 0.0 - 1.0, how strongly activated
+    activation: float  # Final ranked score (combines retrieval + decay)
     source: str  # "embedding" or "spread"
     hops: int = 0  # how many hops from initial activation
+    decay_score: float = 0.0  # Separate decay component for transparency
     
     def __repr__(self) -> str:
         return f"ActivatedConcept({self.concept.id}, activation={self.activation:.3f}, source={self.source})"
@@ -55,6 +59,8 @@ class MemoryRetriever:
         activation_threshold: float = 0.1,  # minimum activation to spread
         # Relation type weights (how much different relations spread activation)
         relation_weights: Optional[dict[RelationType, float]] = None,
+        # Configuration
+        config: Optional[RemindConfig] = None,
     ):
         self.embedding = embedding
         self.store = store
@@ -62,6 +68,7 @@ class MemoryRetriever:
         self.spread_hops = spread_hops
         self.spread_decay = spread_decay
         self.activation_threshold = activation_threshold
+        self.config = config or load_config()
         
         # Default relation weights - some relations spread activation more
         self.relation_weights = relation_weights or {
@@ -74,6 +81,10 @@ class MemoryRetriever:
             RelationType.CAUSES: 0.7,        # Causal link is meaningful
             RelationType.CONTRADICTS: 0.3,   # Weak spreading (but still useful)
         }
+    
+    def _compute_query_hash(self, query: str) -> str:
+        """Compute a hash of the query for tracking unique queries."""
+        return hashlib.md5(query.encode()).hexdigest()
     
     async def retrieve(
         self,
@@ -166,7 +177,7 @@ class MemoryRetriever:
             
             logger.debug(f"After hop {hop + 1}: {len(activation_map)} concepts")
         
-        # Step 3: Build result list
+        # Step 3: Build result list with combined ranking
         results = []
         for concept_id, (activation, source, hops) in activation_map.items():
             if not include_weak and activation < self.activation_threshold * 2:
@@ -177,15 +188,44 @@ class MemoryRetriever:
                 concept = self.store.get_concept(concept_id)
             
             if concept:
+                # Compute decay score for this concept
+                decay_score = self._compute_decay_score(concept)
+                
+                # Compute final ranking: 70% retrieval relevance, 30% decay (recency/popularity)
+                final_score = (activation * 0.7) + (decay_score * 0.3)
+                
                 results.append(ActivatedConcept(
                     concept=concept,
-                    activation=activation,
+                    activation=final_score,
                     source=source,
                     hops=hops,
+                    decay_score=decay_score,
                 ))
         
-        # Sort by activation (highest first) and take top k
+        # Sort by final score (highest first) and take top k
         results.sort(key=lambda x: x.activation, reverse=True)
+        
+        # Record accesses for threshold concepts
+        query_hash = self._compute_query_hash(query)
+        for activated_concept in results:
+            concept = activated_concept.concept
+            
+            # Record access in store
+            self.store.record_concept_access(
+                concept_id=concept.id,
+                activation=activated_concept.activation,
+                query_hash=query_hash,
+            )
+            
+            # Update concept tracking data
+            concept.access_count += 1
+            concept.last_accessed = datetime.now()
+            concept.access_history.append((concept.last_accessed, activated_concept.activation))
+            concept.access_history = concept.access_history[-100:]
+            
+            # Persist changes
+            self.store.update_concept(concept)
+        
         return results[:k]
     
     async def retrieve_by_tags(
@@ -267,6 +307,57 @@ class MemoryRetriever:
                 results.append((entity, count))
         
         return results
+    
+    def _compute_decay_score(self, concept: Concept) -> float:
+        """Compute decay score based on access patterns."""
+        
+        # Recency factor (40% weight)
+        recency_factor = self._compute_recency_factor(concept)
+        
+        # Frequency factor (40% weight)
+        frequency_factor = self._compute_frequency_factor(concept)
+        
+        # Confidence boost (20% weight)
+        confidence_boost = (concept.confidence or 0.5) * 0.5
+        
+        decay_score = (recency_factor * 0.4) + (frequency_factor * 0.4) + confidence_boost
+        
+        # Apply minimum threshold
+        return max(decay_score, self.config.decay.min_decay_score)
+    
+    def _compute_recency_factor(self, concept: Concept) -> float:
+        """Compute recency factor using exponential decay.
+        
+        Formula: 1 / (1 + days_since_access / decay_half_life)
+        """
+        if not self.config.decay.enabled:
+            return 1.0
+        
+        now = datetime.now()
+        
+        # New concepts (never accessed) get full recency score
+        if not concept.last_accessed:
+            return 1.0
+        
+        days_since_access = (now - concept.last_accessed).total_seconds() / 86400
+        
+        # Exponential decay formula
+        recency_factor = 1.0 / (1.0 + days_since_access / self.config.decay.decay_half_life)
+        
+        return recency_factor
+    
+    def _compute_frequency_factor(self, concept: Concept) -> float:
+        """Compute frequency factor capped at 1.0.
+        
+        Formula: min(access_count / frequency_threshold, 1.0)
+        """
+        if not self.config.decay.enabled:
+            return 1.0
+        
+        access_count = concept.access_count or 0
+        frequency_factor = min(access_count / self.config.decay.frequency_threshold, 1.0)
+        
+        return frequency_factor
     
     async def find_related_chain(
         self,

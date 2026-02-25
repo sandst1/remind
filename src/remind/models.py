@@ -231,8 +231,19 @@ class Concept:
     embedding: Optional[list[float]] = None
     tags: list[str] = field(default_factory=list)
     
+    # Access tracking
+    last_accessed: Optional[datetime] = None
+    access_count: int = 0
+    access_history: list[tuple[datetime, float]] = field(default_factory=list)
+    
     def to_dict(self) -> dict:
         """Serialize to dictionary for storage."""
+        # Truncate access_history to last 100 entries when persisting
+        history_to_serialize = self.access_history[-100:] if self.access_history else []
+        history_serialized = [
+            [entry[0].isoformat(), entry[1]] for entry in history_to_serialize
+        ]
+        
         return {
             "id": self.id,
             "title": self.title,
@@ -247,11 +258,27 @@ class Concept:
             "exceptions": self.exceptions,
             "embedding": self.embedding,
             "tags": self.tags,
+            "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
+            "access_count": self.access_count,
+            "access_history": history_serialized,
         }
     
     @classmethod
     def from_dict(cls, data: dict) -> "Concept":
         """Deserialize from dictionary."""
+        # Deserialize access_history from list of lists to list of tuples
+        history_serialized = data.get("access_history", [])
+        access_history = []
+        for entry in history_serialized:
+            if isinstance(entry, list) and len(entry) >= 2:
+                timestamp = datetime.fromisoformat(entry[0]) if entry[0] else datetime.now()
+                score = entry[1]
+                access_history.append((timestamp, score))
+        
+        last_accessed = None
+        if data.get("last_accessed"):
+            last_accessed = datetime.fromisoformat(data["last_accessed"])
+        
         return cls(
             id=data["id"],
             title=data.get("title"),
@@ -266,6 +293,9 @@ class Concept:
             exceptions=data.get("exceptions", []),
             embedding=data.get("embedding"),
             tags=data.get("tags", []),
+            last_accessed=last_accessed,
+            access_count=data.get("access_count", 0),
+            access_history=access_history,
         )
     
     def add_relation(self, relation: Relation) -> None:

@@ -993,6 +993,190 @@ def skill_install():
     console.print("Invoke with: [cyan]/remind[/cyan]")
 
 
+@main.group()
+def decay():
+    """Manage decay inspection and configuration."""
+    pass
+
+
+@decay.command()
+@click.argument("concept_id")
+@click.pass_context
+def inspect(ctx, concept_id: str):
+    """Show decay stats for a concept.
+    
+    Displays decay score, access count, last accessed, recency, and frequency factors.
+    """
+    from remind.store import SQLiteMemoryStore
+    from datetime import datetime
+    from remind.config import load_config
+    
+    config = load_config()
+    store = SQLiteMemoryStore(ctx.obj["db"])
+    
+    concept = store.get_concept(concept_id)
+    
+    if not concept:
+        console.print(f"[red]Concept {concept_id} not found[/red]")
+        return
+    
+    # Recency factor
+    now = datetime.now()
+    if concept.last_accessed:
+        days_since_access = (now - concept.last_accessed).total_seconds() / 86400
+        recency_factor = 1.0 / (1.0 + days_since_access / config.decay.decay_half_life)
+    else:
+        days_since_access = None
+        recency_factor = 1.0
+    
+    # Frequency factor
+    access_count = concept.access_count or 0
+    frequency_factor = min(access_count / config.decay.frequency_threshold, 1.0)
+    
+    # Confidence boost
+    confidence_boost = (concept.confidence or 0.5) * 0.5
+    
+    # Decay score
+    decay_score = (recency_factor * 0.4) + (frequency_factor * 0.4) + confidence_boost
+    decay_score = max(decay_score, config.decay.min_decay_score)
+    
+    # Display
+    panel_content = f"""[bold]{concept_id}[/bold]
+
+[cyan]Decay Score:[/cyan] {decay_score:.3f} ({'high' if decay_score > 0.7 else 'medium' if decay_score > 0.4 else 'low'})
+[cyan]Access Count:[/cyan] {access_count}
+"""
+    
+    if concept.last_accessed:
+        panel_content += f"[cyan]Last Accessed:[/cyan] {concept.last_accessed.strftime('%Y-%m-%d %H:%M')} ({days_since_access:.1f} days ago)\n"
+    else:
+        panel_content += "[cyan]Last Accessed:[/cyan] never\n"
+    
+    panel_content += f"""[cyan]Recency Factor:[/cyan] {recency_factor:.3f}
+[cyan]Frequency Factor:[/cyan] {frequency_factor:.3f}
+[cyan]Confidence:[/cyan] {concept.confidence:.2f}
+
+[cyan]Configuration:[/cyan]
+  Decay half-life: {config.decay.decay_half_life:.1f} days
+  Frequency threshold: {config.decay.frequency_threshold}
+  Min decay score: {config.decay.min_decay_score:.2f}
+"""
+    
+    console.print(Panel(panel_content, title="Decay Inspection", border_style="cyan"))
+
+
+@decay.command()
+@click.argument("concept_id")
+@click.confirmation_option(prompt="Reset decay for this concept?")
+@click.pass_context
+def reset(ctx, concept_id: str):
+    """Reset decay to maximum for a concept.
+    
+    Sets decay_score to 1.0 by resetting access_count to 0 while keeping last_accessed.
+    """
+    from remind.store import SQLiteMemoryStore
+    from datetime import datetime
+    
+    store = SQLiteMemoryStore(ctx.obj["db"])
+    
+    concept = store.get_concept(concept_id)
+    
+    if not concept:
+        console.print(f"[red]Concept {concept_id} not found[/red]")
+        return
+    
+    # Reset access tracking
+    concept.access_count = 0
+    concept.updated_at = datetime.now()
+    store.update_concept(concept)
+    
+    console.print(f"[green]✓[/green] Decay reset for [cyan]{concept_id}[/cyan]")
+    console.print(f"  Access count: {concept.access_count}")
+    console.print(f"  Last accessed: {concept.last_accessed.strftime('%Y-%m-%d %H:%M') if concept.last_accessed else 'never'}")
+
+
+@decay.command()
+@click.option("--limit", "-n", default=20, help="Number of recent accesses to show")
+@click.pass_context
+def recent(ctx, limit: int):
+    """Show recent concept accesses.
+    
+    Displays concepts with their last accessed timestamps and activation levels.
+    """
+    from remind.store import SQLiteMemoryStore
+    from datetime import datetime
+    
+    store = SQLiteMemoryStore(ctx.obj["db"])
+    concepts = store.get_all_concepts()
+    
+    # Filter to concepts with last_accessed, sort by last_accessed descending
+    accessed = [c for c in concepts if c.last_accessed is not None]
+    accessed.sort(key=lambda c: c.last_accessed or datetime.min, reverse=True)
+    
+    if not accessed:
+        console.print("[yellow]No concept accesses recorded yet[/yellow]")
+        return
+    
+    table = Table(title=f"Recent Accesses (Last {limit})")
+    table.add_column("ID", style="cyan", width=12)
+    table.add_column("Title", width=30)
+    table.add_column("Last Accessed", style="dim", width=20)
+    table.add_column("Days Ago", justify="right", width=8)
+    table.add_column("Accesses", justify="right", width=8)
+    table.add_column("Confidence", justify="right", width=10)
+    
+    now = datetime.now()
+    for concept in accessed[:limit]:
+        last_access = concept.last_accessed
+        if last_access is None:
+            continue
+        days_ago = (now - last_access).total_seconds() / 86400
+        title = (concept.title or concept.summary[:28]) + "..." if len(concept.summary) > 28 else (concept.title or concept.summary)
+        table.add_row(
+            concept.id,
+            title[:28],
+            last_access.strftime("%Y-%m-%d %H:%M"),
+            f"{days_ago:.1f}",
+            str(concept.access_count or 0),
+            f"{concept.confidence:.2f}",
+        )
+    
+    console.print(table)
+
+
+@decay.command()
+@click.pass_context
+def config(ctx):
+    """Show current decay configuration."""
+    from remind.config import load_config
+    
+    config = load_config()
+    
+    panel_content = f"""[bold]Decay Configuration[/bold]
+
+[cyan]Enabled:[/cyan] {'Yes' if config.decay.enabled else 'No'}
+
+[cyan]Parameters:[/cyan]
+  Decay half-life:     {config.decay.decay_half_life:.1f} days
+  Frequency threshold: {config.decay.frequency_threshold} accesses
+  Min decay score:     {config.decay.min_decay_score:.2f}
+
+[cyan]Scoring Weights:[/cyan]
+  Recency factor:      40%
+  Frequency factor:    40%
+  Confidence boost:    20%
+
+[cyan]Formula:[/cyan]
+  decay_score = (recency × 0.4) + (frequency × 0.4) + (confidence × 0.5)
+  
+  where:
+    recency = 1 / (1 + days_since_access / decay_half_life)
+    frequency = min(access_count / frequency_threshold, 1.0)
+"""
+    
+    console.print(Panel(panel_content, title="Decay Configuration", border_style="cyan"))
+
+
 if __name__ == "__main__":
     main()
 

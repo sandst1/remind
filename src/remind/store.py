@@ -2,12 +2,13 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 import sqlite3
 import json
 import logging
 import numpy as np
 from pathlib import Path
+import uuid
 
 from remind.models import (
     Concept, Episode, Relation, RelationType,
@@ -238,6 +239,36 @@ class MemoryStore(ABC):
         """Get storage statistics."""
         ...
 
+    # Retrieval access log operations
+    @abstractmethod
+    def record_concept_access(
+        self,
+        concept_id: str,
+        activation: float,
+        query_hash: str,
+        accessed_at: Optional[datetime] = None
+    ) -> None:
+        """Record a concept access for decay computation."""
+        ...
+
+    @abstractmethod
+    def get_concept_access_stats(self, concept_id: str) -> dict:
+        """Get access statistics for a concept.
+
+        Returns:
+            Dictionary with 'total_accesses', 'last_accessed', 'avg_activation'
+        """
+        ...
+
+    @abstractmethod
+    def get_recent_accesses(self, limit: int = 100) -> list[dict]:
+        """Get recent concept accesses for monitoring.
+
+        Returns:
+            List of dictionaries with 'concept_id', 'accessed_at', 'activation_level', 'query_hash'
+        """
+        ...
+
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two vectors."""
@@ -379,6 +410,23 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(target_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_episode ON entity_relations(source_episode_id)")
 
+            # Retrieval access log
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS retrieval_access_log (
+                    id TEXT PRIMARY KEY,
+                    concept_id TEXT NOT NULL,
+                    accessed_at TIMESTAMP NOT NULL,
+                    activation_level REAL NOT NULL,
+                    query_hash TEXT NOT NULL,
+                    FOREIGN KEY (concept_id) REFERENCES concepts(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Retrieval access log indexes
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_access_concept ON retrieval_access_log(concept_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_access_timestamp ON retrieval_access_log(accessed_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_access_query ON retrieval_access_log(query_hash)")
+
             conn.commit()
             
             # Run migrations for existing databases
@@ -409,11 +457,20 @@ class SQLiteMemoryStore(MemoryStore):
             conn.commit()
             logger.info("Migration: Added title column to episodes table")
 
+        # Migration: Add retrieval_access_log table if it doesn't exist
+        try:
+            conn.execute("SELECT id FROM retrieval_access_log LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.debug("Retrieval access log table will be created by schema init")
+
         # Log migration status
         try:
             entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
             mention_count = conn.execute("SELECT COUNT(*) FROM mentions").fetchone()[0]
-            logger.debug(f"Schema v2: {entity_count} entities, {mention_count} mentions")
+            access_log_count = conn.execute(
+                "SELECT COUNT(*) FROM retrieval_access_log"
+            ).fetchone()[0]
+            logger.debug(f"Schema v2: {entity_count} entities, {mention_count} mentions, {access_log_count} access logs")
         except sqlite3.OperationalError:
             # Tables don't exist yet (shouldn't happen, but handle gracefully)
             logger.warning("Entity tables not found, will be created on next init")
@@ -1360,11 +1417,102 @@ class SQLiteMemoryStore(MemoryStore):
                 "relation_types": {row["type"]: row["count"] for row in relation_types},
                 "entity_relation_types": {row["relation_type"]: row["count"] for row in entity_relation_types},
                 "entity_types": {row["type"]: row["count"] for row in entity_types},
-                "episode_types": {
-                    (row["type"] or "observation"): row["count"]
-                    for row in episode_types
-                },
+            "episode_types": {
+                (row["type"] or "observation"): row["count"]
+                for row in episode_types
+            },
+        }
+        finally:
+            conn.close()
+    
+    # Retrieval access log operations
+    
+    def record_concept_access(
+        self,
+        concept_id: str,
+        activation: float,
+        query_hash: str,
+        accessed_at: Optional[datetime] = None
+    ) -> None:
+        """Record a concept access for decay computation."""
+        if accessed_at is None:
+            accessed_at = datetime.now()
+        
+        access_id = str(uuid.uuid4())
+        
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT INTO retrieval_access_log (id, concept_id, accessed_at, activation_level, query_hash)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    access_id,
+                    concept_id,
+                    accessed_at.isoformat(),
+                    activation,
+                    query_hash,
+                )
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    
+    def get_concept_access_stats(self, concept_id: str) -> dict:
+        """Get access statistics for a concept."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT 
+                    COUNT(*) as total_accesses,
+                    MAX(accessed_at) as last_accessed,
+                    AVG(activation_level) as avg_activation
+                FROM retrieval_access_log
+                WHERE concept_id = ?
+                """,
+                (concept_id,)
+            ).fetchone()
+            
+            if row["total_accesses"] == 0:
+                return {
+                    "total_accesses": 0,
+                    "last_accessed": None,
+                    "avg_activation": 0.0,
+                }
+            
+            return {
+                "total_accesses": row["total_accesses"],
+                "last_accessed": row["last_accessed"],
+                "avg_activation": row["avg_activation"],
             }
+        finally:
+            conn.close()
+    
+    def get_recent_accesses(self, limit: int = 100) -> list[dict]:
+        """Get recent concept accesses for monitoring."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT concept_id, accessed_at, activation_level, query_hash
+                FROM retrieval_access_log
+                ORDER BY accessed_at DESC
+                LIMIT ?
+                """,
+                (limit,)
+            ).fetchall()
+            
+            return [
+                {
+                    "concept_id": row["concept_id"],
+                    "accessed_at": row["accessed_at"],
+                    "activation_level": row["activation_level"],
+                    "query_hash": row["query_hash"],
+                }
+                for row in rows
+            ]
         finally:
             conn.close()
     

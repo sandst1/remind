@@ -259,6 +259,26 @@ class TestMemoryInterface:
         calls = mock_embedding.get_call_history()
         assert any("additional context" in c.get("text", "") for c in calls)
 
+    @pytest.mark.asyncio
+    async def test_recall_raw_includes_decay_info(
+        self, memory, mock_embedding, sample_concept
+    ):
+        """Test recall with raw=True includes decay_score in ActivatedConcept."""
+        memory.store.add_concept(sample_concept)
+        mock_embedding.set_embedding("python", sample_concept.embedding)
+
+        result = await memory.recall("python", raw=True)
+
+        assert isinstance(result, list)
+        if result:
+            from remind.retrieval import ActivatedConcept
+            activated = result[0]
+            assert isinstance(activated, ActivatedConcept)
+            assert hasattr(activated, "decay_score")
+            assert hasattr(activated, "activation")
+            assert hasattr(activated, "source")
+            assert hasattr(activated, "hops")
+
     # =========================================================================
     # consolidate() and end_session() tests
     # =========================================================================
