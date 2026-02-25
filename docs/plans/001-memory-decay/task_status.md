@@ -1,0 +1,15 @@
+# Task Status: Memory Decay
+
+- [ ] task-001-add-concept-access-tracking
+- [ ] task-002-add-decay-config-options
+- [ ] task-003-add-access-event-tracking-to-store
+- [ ] task-004-add-recall-counter-to-store
+- [ ] task-005-implement-memory-decayer-class
+- [ ] task-006-add-decay-method-to-interface
+- [ ] task-007-update-retriever-to-record-access-events
+- [ ] task-008-add-cli-decay-command
+- [ ] task-009-test-decay-config-loading
+- [ ] task-010-test-concept-access-tracking
+- [ ] task-011-test-decay-execution
+- [ ] task-012-test-batch-trigger
+- [ ] task-013-test-decay-disabled-mode
