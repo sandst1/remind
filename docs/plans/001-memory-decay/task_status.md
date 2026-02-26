@@ -8,4 +8,4 @@
 - [x] task-006-add-rejuvenation
 - [x] task-007-hook-periodic-decay
 - [x] task-008-add-decay-stats
-- [ ] task-009-test-decay-behavior
+- [x] task-009-test-decay-behavior
