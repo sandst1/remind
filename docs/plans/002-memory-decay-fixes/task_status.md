@@ -2,7 +2,7 @@
 
 - [x] task-001-add-metadata-table
 - [x] task-002-implement-recall-persistence
-- [ ] fix-memoryinterface-recall-count
+- [x] fix-memoryinterface-recall-count
 - [ ] task-004-fix-create-memory-config
 - [ ] task-005-remove-related-decay
 - [ ] task-006-implement-sql-decay
