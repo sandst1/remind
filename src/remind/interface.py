@@ -369,17 +369,21 @@ class MemoryInterface:
 
     def _rejuvenate_concepts(self, activated: list[ActivatedConcept]) -> None:
         """
-        Reset decay for recalled concepts (rejuvenation).
+        Apply proportional rejuvenation to recalled concepts.
         
-        When a concept is recalled, it gets "refreshed" - decay_factor resets to 1.0,
-        access_count increments, and last_accessed timestamp updates.
+        When a concept is recalled, it gets a boost scaled by its activation score.
+        Higher activation = larger boost (max 0.3), lower activation = smaller boost.
+        This prevents barely-above-threshold concepts from getting the same boost as top results.
         
         Args:
             activated: List of ActivatedConcept objects that were just recalled
         """
         for ac in activated:
             concept = ac.concept
-            concept.decay_factor = 1.0
+            # Scale boost by activation score (0.0-1.0)
+            # Max boost is 0.3, scaled by how strongly the concept was activated
+            activation_boost = 0.3 * ac.activation
+            concept.decay_factor = min(1.0, concept.decay_factor + activation_boost)
             concept.access_count += 1
             concept.last_accessed = datetime.now()
             concept.updated_at = datetime.now()
@@ -387,7 +391,7 @@ class MemoryInterface:
             # Save updated concept back to store
             self.store.update_concept(concept)
             
-            logger.debug(f"Rejuvenated concept {concept.id}: decay_factor=1.0, access_count={concept.access_count}, last_accessed={concept.last_accessed.isoformat()}")
+            logger.debug(f"Rejuvenated concept {concept.id}: activation={ac.activation:.3f}, boost={activation_boost:.3f}, decay_factor={concept.decay_factor:.3f}, access_count={concept.access_count}, last_accessed={concept.last_accessed.isoformat()}")
     
     # Direct access methods
     
