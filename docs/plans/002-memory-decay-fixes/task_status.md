@@ -11,4 +11,4 @@
 - [x] task-009-fix-proportional-rejuvenation
 - [x] task-010-consolidate-imports
 - [x] task-011-create-integration-tests
-- [ ] task-012-rename-misleading-test
+- [x] task-012-rename-misleading-test

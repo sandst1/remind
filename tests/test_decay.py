@@ -176,7 +176,7 @@ class TestDecayAlgorithm:
         # The key test is that decay happens at all
         assert child.decay_factor <= 0.8  # At least main decay applied
 
-    def test_decay_only_applies_once_per_interval(self, store):
+    def test_decay_accumulates_across_multiple_calls(self, store):
         """Test that calling decay multiple times applies it multiple times."""
         concept = Concept(
             id="multi-decay",
