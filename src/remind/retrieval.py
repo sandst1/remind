@@ -115,9 +115,14 @@ class MemoryRetriever:
         for concept, similarity in initial_matches:
             # Weight similarity by concept confidence
             weighted_activation = similarity * concept.confidence
-            if weighted_activation > self.activation_threshold:
-                activation_map[concept.id] = (weighted_activation, "embedding", 0)
+            # Apply decay factor - concepts with low decay_factor rank lower
+            decay_factor = max(0.0, min(1.0, concept.decay_factor))
+            final_activation = weighted_activation * decay_factor
+            if final_activation > self.activation_threshold:
+                activation_map[concept.id] = (final_activation, "embedding", 0)
                 concept_cache[concept.id] = concept
+                if decay_factor < 0.5:
+                    logger.debug(f"Concept {concept.id} activation reduced by decay_factor {decay_factor:.2f}: {weighted_activation:.3f} -> {final_activation:.3f}")
         
         logger.debug(f"Initial activation: {len(activation_map)} concepts")
         
@@ -135,12 +140,15 @@ class MemoryRetriever:
                 for related_concept, relation in related:
                     # Calculate spread activation, weighted by target concept's confidence
                     relation_weight = self.relation_weights.get(relation.type, 0.5)
+                    # Apply decay factor to target concept
+                    target_decay = max(0.0, min(1.0, related_concept.decay_factor))
                     spread_activation = (
                         activation
                         * relation.strength
                         * relation_weight
                         * (self.spread_decay ** (hop + 1))
                         * related_concept.confidence  # Weight by target's reliability
+                        * target_decay  # Weight by target's decay factor
                     )
                     
                     if spread_activation < self.activation_threshold:
