@@ -1346,12 +1346,12 @@ class SQLiteMemoryStore(MemoryStore):
         """Apply linear decay to all concepts.
         
         Applies linear decay formula: new_decay_factor = max(0.0, old_decay_factor - decay_rate)
-        Also decays related concepts by decay_rate * related_decay_factor.
+        Each concept decays independently based on its own decay_factor.
         
         Args:
             decay_interval: Number of recalls between decay runs (for tracking)
             decay_rate: How much decay_factor decreases per interval
-            related_decay_factor: How much related concepts decay when parent decays
+            related_decay_factor: Deprecated parameter, no longer used
             
         Returns:
             Count of concepts that were decayed
@@ -1378,23 +1378,6 @@ class SQLiteMemoryStore(MemoryStore):
                     concept.updated_at = datetime.now()
                     self.update_concept(concept)
                     decayed_count += 1
-                    
-                    # Decay related concepts
-                    related = self.get_related(concept.id)
-                    related_decay_amount = decay_rate * related_decay_factor
-                    
-                    for related_concept, relation in related:
-                        related_old_decay = max(0.0, min(1.0, related_concept.decay_factor))
-                        related_new_decay = max(0.0, related_old_decay - related_decay_amount)
-                        
-                        if related_new_decay < related_old_decay:
-                            related_concept.decay_factor = related_new_decay
-                            related_concept.updated_at = datetime.now()
-                            self.update_concept(related_concept)
-                            logger.debug(
-                                f"Related concept {related_concept.id} decayed by {related_decay_amount:.3f}: "
-                                f"{related_old_decay:.3f} -> {related_new_decay:.3f}"
-                            )
                     
                     logger.debug(
                         f"Concept {concept.id} decayed: {old_decay:.3f} -> {new_decay:.3f}"

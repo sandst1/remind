@@ -4,7 +4,7 @@
 - [x] task-002-implement-recall-persistence
 - [x] fix-memoryinterface-recall-count
 - [x] task-004-fix-create-memory-config
-- [ ] task-005-remove-related-decay
+- [x] task-005-remove-related-decay
 - [ ] task-006-implement-sql-decay
 - [ ] task-007-fix-stats-performance
 - [ ] task-008-fix-entity-recall-decay
