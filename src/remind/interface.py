@@ -117,8 +117,8 @@ class MemoryInterface:
         from remind.config import DecayConfig
         self.decay_config = decay_config or DecayConfig()
         
-        # Recall tracking for decay
-        self._recall_count: int = 0
+        # Recall tracking for decay (persisted in metadata table)
+        self._recall_count: int = self._load_recall_count()
         
         # Episode buffer for tracking (this session only)
         self._episode_buffer: list[str] = []
@@ -214,8 +214,9 @@ class MemoryInterface:
         """
         k = k or self.default_recall_k
         
-        # Increment recall count
+        # Increment recall count and persist
         self._recall_count += 1
+        self._save_recall_count()
         
         # Entity-based retrieval
         if entity:
@@ -329,6 +330,21 @@ class MemoryInterface:
         - Custom filtering logic
         """
         return self.store.get_unconsolidated_episodes(limit=limit)
+    
+    def _load_recall_count(self) -> int:
+        """Load recall count from persistent metadata storage."""
+        value = self.store.get_metadata("recall_count")
+        if value is None:
+            return 0
+        try:
+            return int(value)
+        except ValueError:
+            logger.warning(f"Invalid recall_count in metadata: {value}, defaulting to 0")
+            return 0
+    
+    def _save_recall_count(self) -> None:
+        """Save recall count to persistent metadata storage."""
+        self.store.set_metadata("recall_count", str(self._recall_count))
     
     def _trigger_decay(self) -> None:
         """

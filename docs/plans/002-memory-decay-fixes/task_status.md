@@ -1,7 +1,7 @@
 # Task Status: Memory Decay Fixes
 
 - [x] task-001-add-metadata-table
-- [ ] task-002-implement-recall-persistence
+- [x] task-002-implement-recall-persistence
 - [ ] fix-memoryinterface-recall-count
 - [ ] task-004-fix-create-memory-config
 - [ ] task-005-remove-related-decay
