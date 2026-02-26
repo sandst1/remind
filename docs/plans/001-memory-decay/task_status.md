@@ -1,6 +1,6 @@
 # Task Status: Memory Decay
 
-- [ ] task-001-add-decay-fields
+- [x] task-001-add-decay-fields
 - [ ] task-002-add-decay-config
 - [ ] task-003-update-serialization
 - [ ] task-004-modify-retrieval
