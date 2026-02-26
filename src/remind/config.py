@@ -67,6 +67,15 @@ class OllamaConfig:
 
 
 @dataclass
+class DecayConfig:
+    """Memory decay configuration."""
+
+    decay_interval: int = 20
+    decay_rate: float = 0.1
+    related_decay_factor: float = 0.5
+
+
+@dataclass
 class RemindConfig:
     """Configuration settings for Remind."""
 
@@ -80,6 +89,9 @@ class RemindConfig:
     openai: OpenAIConfig = field(default_factory=OpenAIConfig)
     azure_openai: AzureOpenAIConfig = field(default_factory=AzureOpenAIConfig)
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
+
+    # Decay config
+    decay: DecayConfig = field(default_factory=DecayConfig)
 
 
 def _load_provider_config(file_config: dict, key: str, config_class: type) -> object:
@@ -126,6 +138,17 @@ def load_config() -> RemindConfig:
             config.openai = _load_provider_config(file_config, "openai", OpenAIConfig)
             config.azure_openai = _load_provider_config(file_config, "azure_openai", AzureOpenAIConfig)
             config.ollama = _load_provider_config(file_config, "ollama", OllamaConfig)
+
+            # Decay settings
+            if "decay" in file_config:
+                decay_data = file_config["decay"]
+                config.decay = DecayConfig()
+                if "decay_interval" in decay_data:
+                    config.decay.decay_interval = int(decay_data["decay_interval"])
+                if "decay_rate" in decay_data:
+                    config.decay.decay_rate = float(decay_data["decay_rate"])
+                if "related_decay_factor" in decay_data:
+                    config.decay.related_decay_factor = float(decay_data["related_decay_factor"])
 
             logger.debug(f"Loaded config from {CONFIG_FILE}")
         except (json.JSONDecodeError, IOError, ValueError) as e:
