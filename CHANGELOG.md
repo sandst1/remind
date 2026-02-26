@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-26
+
 ### Added
 - Memory decay system: concepts gradually lose retrieval priority based on how rarely they are recalled, mimicking human forgetting
   - `decay_factor` (0.0–1.0) multiplies each concept's retrieval activation score
@@ -13,6 +15,7 @@ All notable changes to this project will be documented in this file.
   - Decay stats visible in `remind stats` (enabled state, recall count, next decay, avg/min decay factor)
 - `DecayConfig` in `~/.remind/remind.config.json` under the `"decay"` key with `enabled`, `decay_interval`, and `decay_rate` options
 - Metadata table in SQLite for persistent key-value storage (currently used for recall count)
+- Memory status panel in web UI and recall count shown in concepts view
 
 ## [0.3.1] - 2026-02-25
 
