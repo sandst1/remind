@@ -231,6 +231,11 @@ class Concept:
     embedding: Optional[list[float]] = None
     tags: list[str] = field(default_factory=list)
     
+    # Decay tracking
+    last_accessed: Optional[datetime] = None
+    access_count: int = 0
+    decay_factor: float = 1.0
+    
     def to_dict(self) -> dict:
         """Serialize to dictionary for storage."""
         return {
@@ -247,6 +252,9 @@ class Concept:
             "exceptions": self.exceptions,
             "embedding": self.embedding,
             "tags": self.tags,
+            "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
+            "access_count": self.access_count,
+            "decay_factor": self.decay_factor,
         }
     
     @classmethod
@@ -266,6 +274,9 @@ class Concept:
             exceptions=data.get("exceptions", []),
             embedding=data.get("embedding"),
             tags=data.get("tags", []),
+            last_accessed=datetime.fromisoformat(data["last_accessed"]) if data.get("last_accessed") else None,
+            access_count=data.get("access_count", 0),
+            decay_factor=data.get("decay_factor", 1.0),
         )
     
     def add_relation(self, relation: Relation) -> None:

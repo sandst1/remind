@@ -579,6 +579,17 @@ def stats(ctx):
   LLM: {stats.get('llm_provider', 'unknown')}
   Embedding: {stats.get('embedding_provider', 'unknown')}
 
+[bold]Decay:[/bold]
+  Enabled: {'yes' if stats.get('decay_enabled', True) else 'no'}
+  Recall count: {stats.get('recall_count', 0)}
+  Recalls since last decay: {stats.get('recalls_since_last_decay', 0)}
+  Next decay at: {stats.get('next_decay_at', 'N/A')}
+  Decay interval: {stats.get('decay_interval', 20)}
+  Decay rate: {stats.get('decay_rate', 0.1)}
+  Concepts with decay: {stats.get('concepts_with_decay', 0)}
+  Avg decay factor: {stats.get('avg_decay_factor', 1.0)}
+  Min decay factor: {stats.get('min_decay_factor', 1.0)}
+
 [bold]Database:[/bold] {ctx.obj['db']}
 """,
         title="Memory Stats",

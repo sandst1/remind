@@ -232,6 +232,39 @@ class MemoryStore(ABC):
         """
         ...
 
+    # Decay operations
+    @abstractmethod
+    def decay_concepts(
+        self,
+        decay_rate: float,
+        skip_recently_accessed_seconds: int = 60,
+    ) -> int:
+        """Apply linear decay to all concepts.
+
+        Concepts accessed within skip_recently_accessed_seconds are exempt from
+        this decay pass so that just-recalled concepts are not immediately penalised.
+
+        Args:
+            decay_rate: How much decay_factor decreases per interval
+            skip_recently_accessed_seconds: Grace period in seconds; concepts whose
+                last_accessed timestamp is within this window are not decayed.
+
+        Returns:
+            Count of concepts that were decayed
+        """
+        ...
+
+    # Metadata operations
+    @abstractmethod
+    def get_metadata(self, key: str) -> Optional[str]:
+        """Get a metadata value by key. Returns None if not found."""
+        ...
+    
+    @abstractmethod
+    def set_metadata(self, key: str, value: str) -> None:
+        """Set a metadata value. Updates if key exists."""
+        ...
+    
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -353,6 +386,14 @@ class SQLiteMemoryStore(MemoryStore):
                     FOREIGN KEY (source_id) REFERENCES entities(id) ON DELETE CASCADE,
                     FOREIGN KEY (target_id) REFERENCES entities(id) ON DELETE CASCADE,
                     FOREIGN KEY (source_episode_id) REFERENCES episodes(id) ON DELETE SET NULL
+                )
+            """)
+
+            # Metadata table - persistent key-value pairs
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 )
             """)
 
@@ -1296,6 +1337,94 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
 
+    # Decay operations
+
+    def decay_concepts(
+        self,
+        decay_rate: float,
+        skip_recently_accessed_seconds: int = 60,
+    ) -> int:
+        """Apply linear decay to all concepts using SQL-level update.
+
+        Applies linear decay formula: new_decay_factor = max(0.0, old_decay_factor - decay_rate)
+        Each concept decays independently based on its own decay_factor.
+        Concepts accessed within skip_recently_accessed_seconds are skipped so that
+        just-recalled concepts are not immediately penalised.
+        Uses a single SQL UPDATE for O(1) performance regardless of concept count.
+
+        Args:
+            decay_rate: How much decay_factor decreases per interval
+            skip_recently_accessed_seconds: Grace period in seconds; concepts whose
+                last_accessed timestamp is within this window are not decayed.
+
+        Returns:
+            Count of concepts that were decayed
+        """
+        conn = self._get_conn()
+        try:
+            # Grace period expressed as fractional days for julianday arithmetic
+            grace_days = skip_recently_accessed_seconds / 86400.0
+
+            # Timestamps are stored as local-time ISO strings (datetime.now().isoformat()).
+            # SQLite's julianday('now') is UTC, so we use julianday('now', 'localtime') to
+            # match. Microseconds are stripped with SUBSTR/REPLACE since julianday() doesn't
+            # handle them.
+            cursor = conn.execute(
+                """
+                UPDATE concepts
+                SET data = json_set(
+                    data,
+                    '$.decay_factor',
+                    max(0, json_extract(data, '$.decay_factor') - ?)
+                ),
+                updated_at = CURRENT_TIMESTAMP
+                WHERE json_extract(data, '$.decay_factor') > 0
+                  AND json_extract(data, '$.access_count') > 0
+                  AND (
+                    json_extract(data, '$.last_accessed') IS NULL
+                    OR julianday('now', 'localtime')
+                       - julianday(SUBSTR(REPLACE(json_extract(data, '$.last_accessed'), 'T', ' '), 1, 19))
+                       > ?
+                  )
+                """,
+                (decay_rate, grace_days),
+            )
+
+            affected_count = cursor.rowcount
+            conn.commit()
+
+            logger.info(f"Decay complete: {affected_count} concepts decayed")
+            return affected_count
+
+        finally:
+            conn.close()
+
+    # Metadata operations
+
+    def get_metadata(self, key: str) -> Optional[str]:
+        """Get a metadata value by key. Returns None if not found."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key = ?",
+                (key,)
+            ).fetchone()
+            return row["value"] if row else None
+        finally:
+            conn.close()
+
+    def set_metadata(self, key: str, value: str) -> None:
+        """Set a metadata value. Updates if key exists."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (key, value)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     # Statistics
 
     def get_stats(self) -> dict:
@@ -1348,6 +1477,34 @@ class SQLiteMemoryStore(MemoryStore):
                 """
             ).fetchone()[0]
             
+            # Decay statistics - use SQL queries for performance (O(1) vs O(n))
+            # Count concepts with decay_factor < 1.0
+            concepts_with_decay_row = conn.execute(
+                """
+                SELECT COUNT(*) FROM concepts 
+                WHERE json_extract(data, '$.decay_factor') < 1.0
+                """
+            ).fetchone()
+            concepts_with_decay = concepts_with_decay_row[0]
+            
+            # Get average decay_factor (COALESCE handles NULL/missing values)
+            avg_decay_row = conn.execute(
+                """
+                SELECT COALESCE(AVG(json_extract(data, '$.decay_factor')), 1.0) 
+                FROM concepts
+                """
+            ).fetchone()
+            avg_decay_factor = round(avg_decay_row[0], 3)
+            
+            # Get minimum decay_factor (COALESCE handles NULL/missing values)
+            min_decay_row = conn.execute(
+                """
+                SELECT COALESCE(MIN(json_extract(data, '$.decay_factor')), 1.0) 
+                FROM concepts
+                """
+            ).fetchone()
+            min_decay_factor = round(min_decay_row[0], 3)
+            
             return {
                 "concepts": concept_count,
                 "episodes": episode_count,
@@ -1364,6 +1521,9 @@ class SQLiteMemoryStore(MemoryStore):
                     (row["type"] or "observation"): row["count"]
                     for row in episode_types
                 },
+                "concepts_with_decay": concepts_with_decay,
+                "avg_decay_factor": avg_decay_factor,
+                "min_decay_factor": min_decay_factor,
             }
         finally:
             conn.close()

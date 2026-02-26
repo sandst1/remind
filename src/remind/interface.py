@@ -22,6 +22,7 @@ from remind.providers.base import LLMProvider, EmbeddingProvider
 from remind.consolidation import Consolidator
 from remind.retrieval import MemoryRetriever, ActivatedConcept
 from remind.extraction import EntityExtractor
+from remind.config import load_config, DecayConfig
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,8 @@ class MemoryInterface:
         # Retrieval settings
         default_recall_k: int = 5,
         spread_hops: int = 2,
+        # Decay settings
+        decay_config=None,
     ):
         self.llm = llm
         self.embedding = embedding
@@ -109,6 +112,12 @@ class MemoryInterface:
         self.consolidation_threshold = consolidation_threshold
         self.auto_consolidate = auto_consolidate
         self.default_recall_k = default_recall_k
+        
+        # Decay settings
+        self.decay_config = decay_config or DecayConfig()
+        
+        # Recall tracking for decay (persisted in metadata table)
+        self._recall_count: int = self._load_recall_count()
         
         # Episode buffer for tracking (this session only)
         self._episode_buffer: list[str] = []
@@ -204,9 +213,17 @@ class MemoryInterface:
         """
         k = k or self.default_recall_k
         
+        # Increment recall count and persist when decay is enabled
+        self._recall_count += 1
+        if self.decay_config.enabled:
+            self._save_recall_count()
+        
         # Entity-based retrieval
         if entity:
             episodes = await self.retriever.retrieve_by_entity(entity, limit=k * 4)
+            # Trigger decay every N recalls (consistent with concept-based path)
+            if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
+                self._trigger_decay()
             if raw:
                 return episodes
             return self.retriever.format_entity_context(entity, episodes)
@@ -217,6 +234,14 @@ class MemoryInterface:
             k=k,
             context=context,
         )
+        
+        # Rejuvenation: reset decay for recalled concepts (only for concept-based)
+        if activated and self.decay_config.enabled:
+            self._rejuvenate_concepts(activated)
+        
+        # Trigger decay every N recalls
+        if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
+            self._trigger_decay()
         
         if raw:
             return activated
@@ -309,6 +334,66 @@ class MemoryInterface:
         """
         return self.store.get_unconsolidated_episodes(limit=limit)
     
+    def _load_recall_count(self) -> int:
+        """Load recall count from persistent metadata storage."""
+        value = self.store.get_metadata("recall_count")
+        if value is None:
+            return 0
+        try:
+            return int(value)
+        except ValueError:
+            logger.warning(f"Invalid recall_count in metadata: {value}, defaulting to 0")
+            return 0
+    
+    def _save_recall_count(self) -> None:
+        """Save recall count to persistent metadata storage."""
+        self.store.set_metadata("recall_count", str(self._recall_count))
+    
+    def _trigger_decay(self) -> None:
+        """
+        Trigger decay process on concepts.
+        
+        Applies linear decay to all concepts and their related concepts.
+        This is called automatically every N recalls (based on decay_interval).
+        """
+        logger.info(
+            f"Triggering decay (recall #{self._recall_count}): "
+            f"decay_rate={self.decay_config.decay_rate}"
+        )
+        
+        decayed_count = self.store.decay_concepts(
+            decay_rate=self.decay_config.decay_rate,
+            skip_recently_accessed_seconds=60,
+        )
+        
+        logger.info(f"Decay complete: {decayed_count} concepts affected")
+
+    def _rejuvenate_concepts(self, activated: list[ActivatedConcept]) -> None:
+        """
+        Apply proportional rejuvenation to recalled concepts.
+        
+        When a concept is recalled, it gets a boost scaled by its activation score.
+        Higher activation = larger boost (max 0.3), lower activation = smaller boost.
+        This prevents barely-above-threshold concepts from getting the same boost as top results.
+        
+        Args:
+            activated: List of ActivatedConcept objects that were just recalled
+        """
+        for ac in activated:
+            concept = ac.concept
+            # Scale boost by activation score (0.0-1.0)
+            # Max boost is 0.3, scaled by how strongly the concept was activated
+            activation_boost = 0.3 * ac.activation
+            concept.decay_factor = min(1.0, concept.decay_factor + activation_boost)
+            concept.access_count += 1
+            concept.last_accessed = datetime.now()
+            concept.updated_at = datetime.now()
+            
+            # Save updated concept back to store
+            self.store.update_concept(concept)
+            
+            logger.debug(f"Rejuvenated concept {concept.id}: activation={ac.activation:.3f}, boost={activation_boost:.3f}, decay_factor={concept.decay_factor:.3f}, access_count={concept.access_count}, last_accessed={concept.last_accessed.isoformat()}")
+    
     # Direct access methods
     
     def get_concept(self, concept_id: str) -> Optional[Concept]:
@@ -355,6 +440,18 @@ class MemoryInterface:
         stats["last_consolidation"] = self._last_consolidation.isoformat() if self._last_consolidation else None
         stats["llm_provider"] = self.llm.name
         stats["embedding_provider"] = self.embedding.name
+        
+        # Decay stats
+        stats["decay_enabled"] = self.decay_config.enabled
+        stats["recall_count"] = self._recall_count
+        stats["decay_interval"] = self.decay_config.decay_interval
+        stats["decay_rate"] = self.decay_config.decay_rate
+        stats["next_decay_at"] = (
+            ((self._recall_count // self.decay_config.decay_interval) + 1) * 
+            self.decay_config.decay_interval
+        )
+        stats["recalls_since_last_decay"] = self._recall_count % self.decay_config.decay_interval
+        
         return stats
     
     # Import/Export
@@ -449,6 +546,8 @@ def create_memory(
         kwargs["consolidation_threshold"] = config.consolidation_threshold
     if "auto_consolidate" not in kwargs:
         kwargs["auto_consolidate"] = config.auto_consolidate
+    if "decay_config" not in kwargs:
+        kwargs["decay_config"] = config.decay
     
     # Import providers
     from remind.providers import (

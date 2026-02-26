@@ -6,7 +6,6 @@ import type {
   Entity,
   DatabaseInfo,
   EntityGraphData,
-  GraphData,
 } from './types';
 
 // Current database
@@ -41,13 +40,8 @@ export const entitiesLoading = writable(false);
 export const entitiesError = writable<string | null>(null);
 
 // Navigation
-export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'concept-map' | 'entity-graph';
+export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'memory-health' | 'entity-graph';
 export const currentView = writable<View>('dashboard');
-
-// Concept Map (circle packing) visualization state
-export const conceptMapData = writable<GraphData | null>(null);
-export const conceptMapLoading = writable(false);
-export const conceptMapError = writable<string | null>(null);
 
 // Entity Graph (network) visualization state
 export const entityGraphData = writable<EntityGraphData | null>(null);
