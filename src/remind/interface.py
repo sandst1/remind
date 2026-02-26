@@ -213,15 +213,16 @@ class MemoryInterface:
         """
         k = k or self.default_recall_k
         
-        # Increment recall count and persist (always)
+        # Increment recall count and persist when decay is enabled
         self._recall_count += 1
-        self._save_recall_count()
+        if self.decay_config.enabled:
+            self._save_recall_count()
         
         # Entity-based retrieval
         if entity:
             episodes = await self.retriever.retrieve_by_entity(entity, limit=k * 4)
             # Trigger decay every N recalls (consistent with concept-based path)
-            if self._recall_count % self.decay_config.decay_interval == 0:
+            if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
                 self._trigger_decay()
             if raw:
                 return episodes
@@ -235,11 +236,11 @@ class MemoryInterface:
         )
         
         # Rejuvenation: reset decay for recalled concepts (only for concept-based)
-        if activated:
+        if activated and self.decay_config.enabled:
             self._rejuvenate_concepts(activated)
         
         # Trigger decay every N recalls
-        if self._recall_count % self.decay_config.decay_interval == 0:
+        if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
             self._trigger_decay()
         
         if raw:
@@ -362,6 +363,7 @@ class MemoryInterface:
         
         decayed_count = self.store.decay_concepts(
             decay_rate=self.decay_config.decay_rate,
+            skip_recently_accessed_seconds=60,
         )
         
         logger.info(f"Decay complete: {decayed_count} concepts affected")
@@ -440,10 +442,10 @@ class MemoryInterface:
         stats["embedding_provider"] = self.embedding.name
         
         # Decay stats
+        stats["decay_enabled"] = self.decay_config.enabled
         stats["recall_count"] = self._recall_count
         stats["decay_interval"] = self.decay_config.decay_interval
         stats["decay_rate"] = self.decay_config.decay_rate
-        stats["related_decay_factor"] = self.decay_config.related_decay_factor
         stats["next_decay_at"] = (
             ((self._recall_count // self.decay_config.decay_interval) + 1) * 
             self.decay_config.decay_interval

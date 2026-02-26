@@ -70,9 +70,9 @@ class OllamaConfig:
 class DecayConfig:
     """Memory decay configuration."""
 
+    enabled: bool = True
     decay_interval: int = 20
     decay_rate: float = 0.1
-    related_decay_factor: float = 0.5
 
 
 @dataclass
@@ -143,12 +143,12 @@ def load_config() -> RemindConfig:
             if "decay" in file_config:
                 decay_data = file_config["decay"]
                 config.decay = DecayConfig()
+                if "enabled" in decay_data:
+                    config.decay.enabled = bool(decay_data["enabled"])
                 if "decay_interval" in decay_data:
                     config.decay.decay_interval = int(decay_data["decay_interval"])
                 if "decay_rate" in decay_data:
                     config.decay.decay_rate = float(decay_data["decay_rate"])
-                if "related_decay_factor" in decay_data:
-                    config.decay.related_decay_factor = float(decay_data["related_decay_factor"])
 
             logger.debug(f"Loaded config from {CONFIG_FILE}")
         except (json.JSONDecodeError, IOError, ValueError) as e:

@@ -580,6 +580,7 @@ def stats(ctx):
   Embedding: {stats.get('embedding_provider', 'unknown')}
 
 [bold]Decay:[/bold]
+  Enabled: {'yes' if stats.get('decay_enabled', True) else 'no'}
   Recall count: {stats.get('recall_count', 0)}
   Recalls since last decay: {stats.get('recalls_since_last_decay', 0)}
   Next decay at: {stats.get('next_decay_at', 'N/A')}

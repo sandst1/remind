@@ -101,33 +101,51 @@ class TestInterfaceDecayTrigger:
         )
 
     def test_decay_triggers_at_interval(self, interface):
-        """Test that calling recall() 20 times triggers decay at the correct interval."""
-        # Add a concept with high decay_factor
-        concept = Concept(
-            id="interval-test",
-            summary="Interval test",
+        """Test that decay runs at the correct recall interval.
+
+        A bystander concept (never recalled, so no last_accessed) should decay
+        after the 5th recall triggers the decay pass. The recalled concept is
+        protected by the grace window and stays at 1.0.
+        """
+        # Recalled concept — matches the query embedding
+        recalled = Concept(
+            id="recalled",
+            summary="Recalled concept",
             decay_factor=1.0,
             embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
         )
-        interface.store.add_concept(concept)
-        
+        # Bystander — orthogonal embedding, never returned by the query
+        bystander = Concept(
+            id="bystander",
+            summary="Bystander concept",
+            decay_factor=1.0,
+            embedding=[0.0, 1.0, 0.0] + [0.0] * 125,
+        )
+        interface.store.add_concept(recalled)
+        interface.store.add_concept(bystander)
+
         # First 4 recalls - no decay should trigger (interval is 5)
         for i in range(4):
             asyncio.run(interface.recall("test query"))
-        
-        # Verify no decay yet
-        concept = interface.store.get_concept("interval-test")
-        assert concept.decay_factor == 1.0
-        
-        # 5th recall - decay should trigger
+
+        assert interface.store.get_concept("bystander").decay_factor == 1.0
+
+        # 5th recall - decay triggers
         asyncio.run(interface.recall("test query"))
-        
-        # Verify decay was applied
-        concept = interface.store.get_concept("interval-test")
-        assert concept.decay_factor == 0.9  # 1.0 - 0.1
+
+        # Bystander has no last_accessed, so it decays normally
+        assert abs(interface.store.get_concept("bystander").decay_factor - 0.9) < 0.001
+
+        # Recalled concept was just rejuvenated — grace window protects it
+        assert interface.store.get_concept("recalled").decay_factor == 1.0
 
     def test_decay_triggers_multiple_times(self, interface):
-        """Test that decay triggers multiple times at correct intervals."""
+        """Test that a frequently-recalled concept stays at 1.0 despite multiple decay passes.
+
+        Because _rejuvenate_concepts() sets last_accessed just before _trigger_decay() runs,
+        the decay SQL skips recently-accessed concepts (grace window = 60s).
+        A concept recalled every time should never drop below 1.0.
+        """
         concept = Concept(
             id="multi-decay-test",
             summary="Multi decay test",
@@ -135,17 +153,41 @@ class TestInterfaceDecayTrigger:
             embedding=[1.0, 0.0, 0.0] + [0.0] * 125,
         )
         interface.store.add_concept(concept)
-        
-        # Call recall 10 times (should trigger decay twice at recalls 5 and 10)
+
+        # Call recall 10 times (decay triggers at recalls 5 and 10)
         for i in range(10):
             asyncio.run(interface.recall("test query"))
-        
-        # Decay triggers at recalls 5 and 10, but rejuvenation happens on every recall
-        # Order: rejuvenation (boosts to ~1.0) -> decay (lowers by 0.1)
-        # So after recall 5: ~1.0 - 0.1 = 0.9
-        # After recall 10: ~1.0 - 0.1 = 0.9
+
+        # The concept was recalled on every iteration so last_accessed is always fresh.
+        # Decay skips it each time => decay_factor stays at 1.0
         concept = interface.store.get_concept("multi-decay-test")
-        assert concept.decay_factor == 0.9
+        assert concept.decay_factor == 1.0
+
+    def test_unrecalled_concept_decays_normally(self, interface):
+        """Test that concepts NOT recalled within the grace window still decay."""
+        # A concept that is never matched by the query (different embedding direction)
+        bystander = Concept(
+            id="bystander",
+            summary="Bystander concept",
+            decay_factor=1.0,
+            embedding=[0.0, 1.0, 0.0] + [0.0] * 125,  # orthogonal to query
+        )
+        interface.store.add_concept(bystander)
+
+        # Force last_accessed to None so the grace-window check always allows decay
+        # (default for a new concept that has never been rejuvenated)
+        assert bystander.last_accessed is None
+
+        # Call recall 5 times to trigger one decay pass
+        mock_embedding = interface.embedding
+        mock_embedding.set_embedding("test query", [1.0, 0.0, 0.0] + [0.0] * 125)
+        for i in range(5):
+            asyncio.run(interface.recall("test query"))
+
+        # Bystander was never recalled (orthogonal embedding, never rejuvenated)
+        # so it has no last_accessed and is not protected by the grace window
+        updated = interface.store.get_concept("bystander")
+        assert updated.decay_factor == 0.9  # 1.0 - 0.1
 
 
 class TestInterfacePersistentRecallCount:

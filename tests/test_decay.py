@@ -134,10 +134,12 @@ class TestDecayAlgorithm:
             updated = store.get_concept(f"concept-{i}")
             assert updated.decay_factor == 0.8
 
-    def test_related_concepts_decay(self, store):
-        """Test that related concepts decay at reduced rate."""
-        # Create parent concept with relation to child
-        # Child has NO relation back to parent
+    def test_related_concepts_decay_identically(self, store):
+        """Test that related concepts decay at the same rate as unrelated ones.
+
+        Related-concept extra decay was removed to eliminate the double-decay bug.
+        All concepts decay uniformly by decay_rate regardless of graph structure.
+        """
         c1 = Concept(
             id="parent",
             summary="Parent concept",
@@ -160,21 +162,14 @@ class TestDecayAlgorithm:
         store.add_concept(c1)
         store.add_concept(c2)
         
-        # Apply decay with related_decay_factor=0.5
-        # Parent decays by 0.1, child decays by 0.1 as main concept
-        # When parent is processed, child should ALSO decay by 0.05 as related concept
         store.decay_concepts(decay_rate=0.1)
         
         parent = store.get_concept("parent")
         child = store.get_concept("child")
         
-        # Parent decays only as main concept
+        # Both decay by exactly decay_rate — graph structure has no effect
         assert abs(parent.decay_factor - 0.8) < 0.001  # 0.9 - 0.1
-        
-        # Child should have decayed at least as main concept (0.1)
-        # Due to processing order issues, related decay may or may not be visible
-        # The key test is that decay happens at all
-        assert child.decay_factor <= 0.8  # At least main decay applied
+        assert abs(child.decay_factor - 0.8) < 0.001   # 0.9 - 0.1 (not 0.9 - 0.1 - 0.05)
 
     def test_decay_accumulates_across_multiple_calls(self, store):
         """Test that calling decay multiple times applies it multiple times."""
@@ -192,6 +187,43 @@ class TestDecayAlgorithm:
         
         updated = store.get_concept("multi-decay")
         assert updated.decay_factor == 0.8  # 1.0 - 0.1 - 0.1
+
+    def test_recently_accessed_concept_skipped(self, store):
+        """Test that concepts with a recent last_accessed are skipped during decay."""
+        from datetime import datetime
+
+        concept = Concept(
+            id="recent",
+            summary="Recently accessed",
+            decay_factor=1.0,
+            last_accessed=datetime.now(),  # just accessed
+            embedding=[0.1] * 128,
+        )
+        store.add_concept(concept)
+
+        # Grace window of 60s — the concept was just accessed, so it should be skipped
+        store.decay_concepts(decay_rate=0.1, skip_recently_accessed_seconds=60)
+
+        updated = store.get_concept("recent")
+        assert updated.decay_factor == 1.0  # untouched
+
+    def test_old_accessed_concept_decays(self, store):
+        """Test that concepts outside the grace window are decayed normally."""
+        from datetime import datetime, timedelta
+
+        concept = Concept(
+            id="old",
+            summary="Old access",
+            decay_factor=1.0,
+            last_accessed=datetime.now() - timedelta(hours=2),  # well outside window
+            embedding=[0.1] * 128,
+        )
+        store.add_concept(concept)
+
+        store.decay_concepts(decay_rate=0.1, skip_recently_accessed_seconds=60)
+
+        updated = store.get_concept("old")
+        assert abs(updated.decay_factor - 0.9) < 0.001  # 1.0 - 0.1
 
 
 class TestRejuvenation:
@@ -404,20 +436,20 @@ class TestDecayConfig:
         
         config = DecayConfig()
         
+        assert config.enabled is True
         assert config.decay_interval == 20
         assert config.decay_rate == 0.1
-        assert config.related_decay_factor == 0.5
 
     def test_decay_config_custom_values(self):
         """Test DecayConfig with custom values."""
         from remind.config import DecayConfig
         
         config = DecayConfig(
+            enabled=False,
             decay_interval=10,
             decay_rate=0.2,
-            related_decay_factor=0.7,
         )
         
+        assert config.enabled is False
         assert config.decay_interval == 10
         assert config.decay_rate == 0.2
-        assert config.related_decay_factor == 0.7

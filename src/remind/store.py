@@ -235,14 +235,20 @@ class MemoryStore(ABC):
     # Decay operations
     @abstractmethod
     def decay_concepts(
-        self, 
+        self,
         decay_rate: float,
+        skip_recently_accessed_seconds: int = 60,
     ) -> int:
         """Apply linear decay to all concepts.
-        
+
+        Concepts accessed within skip_recently_accessed_seconds are exempt from
+        this decay pass so that just-recalled concepts are not immediately penalised.
+
         Args:
             decay_rate: How much decay_factor decreases per interval
-            
+            skip_recently_accessed_seconds: Grace period in seconds; concepts whose
+                last_accessed timestamp is within this window are not decayed.
+
         Returns:
             Count of concepts that were decayed
         """
@@ -1334,44 +1340,61 @@ class SQLiteMemoryStore(MemoryStore):
     # Decay operations
 
     def decay_concepts(
-        self, 
+        self,
         decay_rate: float,
+        skip_recently_accessed_seconds: int = 60,
     ) -> int:
         """Apply linear decay to all concepts using SQL-level update.
-        
+
         Applies linear decay formula: new_decay_factor = max(0.0, old_decay_factor - decay_rate)
         Each concept decays independently based on its own decay_factor.
-        Uses a single SQL UPDATE statement for O(1) performance regardless of concept count.
-        
+        Concepts accessed within skip_recently_accessed_seconds are skipped so that
+        just-recalled concepts are not immediately penalised.
+        Uses a single SQL UPDATE for O(1) performance regardless of concept count.
+
         Args:
             decay_rate: How much decay_factor decreases per interval
-            
+            skip_recently_accessed_seconds: Grace period in seconds; concepts whose
+                last_accessed timestamp is within this window are not decayed.
+
         Returns:
             Count of concepts that were decayed
         """
         conn = self._get_conn()
         try:
-            # Single SQL UPDATE statement - no Python-level looping
+            # Grace period expressed as fractional days for julianday arithmetic
+            grace_days = skip_recently_accessed_seconds / 86400.0
+
+            # Timestamps are stored as local-time ISO strings (datetime.now().isoformat()).
+            # SQLite's julianday('now') is UTC, so we use julianday('now', 'localtime') to
+            # match. Microseconds are stripped with SUBSTR/REPLACE since julianday() doesn't
+            # handle them.
             cursor = conn.execute(
                 """
-                UPDATE concepts 
+                UPDATE concepts
                 SET data = json_set(
-                    data, 
-                    '$.decay_factor', 
+                    data,
+                    '$.decay_factor',
                     max(0, json_extract(data, '$.decay_factor') - ?)
                 ),
                 updated_at = CURRENT_TIMESTAMP
                 WHERE json_extract(data, '$.decay_factor') > 0
+                  AND (
+                    json_extract(data, '$.last_accessed') IS NULL
+                    OR julianday('now', 'localtime')
+                       - julianday(SUBSTR(REPLACE(json_extract(data, '$.last_accessed'), 'T', ' '), 1, 19))
+                       > ?
+                  )
                 """,
-                (decay_rate,)
+                (decay_rate, grace_days),
             )
-            
+
             affected_count = cursor.rowcount
             conn.commit()
-            
+
             logger.info(f"Decay complete: {affected_count} concepts decayed")
             return affected_count
-            
+
         finally:
             conn.close()
 

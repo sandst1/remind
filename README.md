@@ -157,6 +157,12 @@ Remind supports a global configuration file at `~/.remind/remind.config.json`. T
     "url": "http://localhost:11434",
     "llm_model": "llama3.2",
     "embedding_model": "nomic-embed-text"
+  },
+
+  "decay": {
+    "enabled": true,
+    "decay_interval": 20,
+    "decay_rate": 0.1
   }
 }
 ```
@@ -187,6 +193,36 @@ Settings are resolved with this priority (highest to lowest):
 4. Defaults
 
 The config file is optional - Remind works without it using environment variables or defaults.
+
+### Memory Decay
+
+Remind implements usage-based memory decay: concepts that are rarely recalled gradually lose retrieval priority, mimicking how human memory fades for things you don't think about.
+
+**How it works:**
+- Every N recalls (`decay_interval`), all concepts have their `decay_factor` reduced by `decay_rate`
+- `decay_factor` multiplies the retrieval activation score, so decayed concepts rank lower in results
+- When a concept is recalled, it is **rejuvenated** — its `decay_factor` gets a boost proportional to how strongly it matched the query
+- Concepts recalled recently are protected from the current decay pass (60-second grace window), so active knowledge is never immediately penalised
+
+**Config options** (all optional, shown with defaults):
+
+```json
+{
+  "decay": {
+    "enabled": true,
+    "decay_interval": 20,
+    "decay_rate": 0.1
+  }
+}
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `true` | Set to `false` to disable decay entirely |
+| `decay_interval` | `20` | Number of recalls between decay passes |
+| `decay_rate` | `0.1` | How much `decay_factor` drops per interval (0.0–1.0) |
+
+The recall count is persisted in the database, so decay continues across CLI invocations and process restarts. View decay stats with `remind stats`.
 
 ## Usage
 
