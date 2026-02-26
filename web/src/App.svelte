@@ -6,12 +6,12 @@
   import EntityList from './components/EntityList.svelte';
   import ConceptList from './components/ConceptList.svelte';
   import EpisodeTimeline from './components/EpisodeTimeline.svelte';
-  import ConceptMap from './components/ConceptMap.svelte';
+  import MemoryHealth from './components/MemoryHealth.svelte';
   import EntityGraph from './components/EntityGraph.svelte';
   import DatabaseSelector from './components/DatabaseSelector.svelte';
 
   // Icons
-  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Circle, Network, PanelLeftClose, PanelLeft } from 'lucide-svelte';
+  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Activity, Network, PanelLeftClose, PanelLeft } from 'lucide-svelte';
 
   let initialized = false;
 
@@ -62,7 +62,7 @@
     { view: 'episodes', label: 'Episodes', icon: History },
     { view: 'entities', label: 'Entities', icon: Tag },
     { view: 'concepts', label: 'Concepts', icon: Lightbulb },
-    { view: 'concept-map', label: 'Concept Map', icon: Circle },
+    { view: 'memory-health', label: 'Memory Status', icon: Activity },
     { view: 'entity-graph', label: 'Entity Graph', icon: Network },
   ];
 
@@ -161,8 +161,8 @@
         <EpisodeTimeline />
       {:else if $currentView === 'concepts'}
         <ConceptList />
-      {:else if $currentView === 'concept-map'}
-        <ConceptMap />
+      {:else if $currentView === 'memory-health'}
+        <MemoryHealth />
       {:else if $currentView === 'entity-graph'}
         <EntityGraph />
       {/if}

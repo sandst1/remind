@@ -20,10 +20,15 @@
     ChevronRight,
     ChevronDown,
     X,
-    ArrowRight
+    ArrowRight,
+    ArrowUp,
+    ArrowDown,
   } from 'lucide-svelte';
 
+  type SortKey = 'alpha' | 'recalls';
+
   let search = '';
+  let sortKey: SortKey = 'recalls';
   let page = 0;
   const pageSize = 20;
   let mounted = false;
@@ -31,18 +36,21 @@
   let expandedEpisodes: Record<string, Episode | null> = {};
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // All concepts fetched; filtering/sorting done client-side
+  let allConcepts: Concept[] = [];
+  let loadGen = 0;
+
   onMount(() => {
     mounted = true;
-    loadConcepts();
   });
 
   // React to database changes
   $: if (mounted && $currentDb) {
-    loadConcepts();
+    loadAll();
     conceptPath.set([]);
   }
 
-  // Live filtering: trigger search when typing 2+ characters
+  // Live filtering
   $: if (mounted && $currentDb && search.length >= 2) {
     debouncedSearch();
   }
@@ -51,36 +59,76 @@
   $: if (mounted && $currentDb && search === '') {
     if (debounceTimer) clearTimeout(debounceTimer);
     page = 0;
-    loadConcepts();
   }
 
   function debouncedSearch() {
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      page = 0;
-      loadConcepts();
-    }, 300);
+    debounceTimer = setTimeout(() => { page = 0; }, 300);
   }
 
-  async function loadConcepts() {
+  async function loadAll() {
     if (!$currentDb) return;
-
+    const gen = ++loadGen;
     conceptsLoading.set(true);
     conceptsError.set(null);
 
     try {
-      const response = await fetchConcepts({
-        offset: page * pageSize,
-        limit: pageSize,
-        search: search || undefined,
-      });
-      concepts.set(response.concepts);
-      conceptsTotal.set(response.total);
+      const batchSize = 500;
+      let offset = 0;
+      let total = Infinity;
+      const collected: Concept[] = [];
+
+      while (offset < total) {
+        const response = await fetchConcepts({ offset, limit: batchSize });
+        if (gen !== loadGen) return;
+        total = response.total;
+        collected.push(...response.concepts);
+        offset += batchSize;
+        if (response.concepts.length < batchSize) break;
+      }
+
+      allConcepts = collected;
     } catch (e) {
+      if (gen !== loadGen) return;
       conceptsError.set(e instanceof Error ? e.message : 'Failed to load concepts');
     } finally {
-      conceptsLoading.set(false);
+      if (gen === loadGen) conceptsLoading.set(false);
     }
+  }
+
+  function setSort(key: SortKey) {
+    sortKey = key;
+    page = 0;
+  }
+
+  $: filtered = (() => {
+    let list = allConcepts;
+    if (search.length >= 2) {
+      const q = search.toLowerCase();
+      list = list.filter(c =>
+        (c.title || c.summary).toLowerCase().includes(q) ||
+        c.tags.some(t => t.toLowerCase().includes(q))
+      );
+    }
+    if (sortKey === 'alpha') {
+      list = [...list].sort((a, b) =>
+        (a.title || a.summary).toLowerCase().localeCompare((b.title || b.summary).toLowerCase())
+      );
+    } else {
+      list = [...list].sort((a, b) => (b.access_count ?? 0) - (a.access_count ?? 0));
+    }
+    return list;
+  })();
+
+  $: {
+    // Keep store in sync for downstream consumers
+    concepts.set(filtered.slice(page * pageSize, page * pageSize + pageSize));
+    conceptsTotal.set(filtered.length);
+  }
+
+  function handleSearch() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    page = 0;
   }
 
   async function selectConcept(concept: Concept) {
@@ -126,22 +174,12 @@
     }
   }
 
-  function handleSearch() {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    page = 0;
-    loadConcepts();
-  }
-
   function nextPage() {
-    page++;
-    loadConcepts();
+    if ((page + 1) * pageSize < filtered.length) page++;
   }
 
   function prevPage() {
-    if (page > 0) {
-      page--;
-      loadConcepts();
-    }
+    if (page > 0) page--;
   }
 
   function formatConfidence(confidence: number): string {
@@ -212,15 +250,33 @@
   {/if}
   <div class="header">
     <h2>Concepts</h2>
-    <div class="search-bar">
-      <Search size={14} class="search-icon" />
-      <input
-        type="text"
-        placeholder="Search concepts..."
-        bind:value={search}
-        onkeydown={(e) => e.key === 'Enter' && handleSearch()}
-      />
-      <!-- <button onclick={handleSearch}>Search</button> -->
+    <div class="header-controls">
+      <div class="sort-toggle">
+        <button
+          class="sort-btn"
+          class:active={sortKey === 'recalls'}
+          onclick={() => setSort('recalls')}
+        >
+          <ArrowDown size={13} />
+          Recalls
+        </button>
+        <button
+          class="sort-btn"
+          class:active={sortKey === 'alpha'}
+          onclick={() => setSort('alpha')}
+        >
+          A–Z
+        </button>
+      </div>
+      <div class="search-bar">
+        <Search size={14} class="search-icon" />
+        <input
+          type="text"
+          placeholder="Search concepts..."
+          bind:value={search}
+          onkeydown={(e) => e.key === 'Enter' && handleSearch()}
+        />
+      </div>
     </div>
   </div>
 
@@ -240,30 +296,28 @@
               class:selected={$conceptPath.length > 0 && $conceptPath[0].id === concept.id}
               onclick={() => selectConcept(concept)}
             >
-              <div class="concept-header">
-                <span class="concept-confidence confidence-{getConfidenceClass(concept.confidence)}">
-                  {formatConfidence(concept.confidence)}
-                </span>
-              </div>
               {#if concept.title}
                 <div class="concept-title">{concept.title}</div>
               {/if}
               <div class="concept-summary">{concept.summary}</div>
-              {#if concept.tags.length > 0}
-                <div class="concept-tags">
-                  {#each concept.tags.slice(0, 3) as tag}
-                    <span class="tag">{tag}</span>
-                  {/each}
-                </div>
-              {/if}
+              <div class="concept-footer">
+                {#if concept.tags.length > 0}
+                  <div class="concept-tags">
+                    {#each concept.tags.slice(0, 3) as tag}
+                      <span class="tag">{tag}</span>
+                    {/each}
+                  </div>
+                {/if}
+                <span class="recall-count">{concept.access_count ?? 0} recall{(concept.access_count ?? 0) !== 1 ? 's' : ''}</span>
+              </div>
             </button>
           {/each}
         </div>
 
         <div class="pagination">
           <button onclick={prevPage} disabled={page === 0}>Previous</button>
-          <span>Page {page + 1} of {Math.ceil($conceptsTotal / pageSize)}</span>
-          <button onclick={nextPage} disabled={(page + 1) * pageSize >= $conceptsTotal}>Next</button>
+          <span>Page {page + 1} of {Math.ceil(filtered.length / pageSize) || 1}</span>
+          <button onclick={nextPage} disabled={(page + 1) * pageSize >= filtered.length}>Next</button>
         </div>
       {/if}
     </div>
@@ -466,6 +520,48 @@
     font-weight: 700;
   }
 
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .sort-toggle {
+    display: flex;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .sort-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: var(--space-xs) var(--space-md);
+    background: var(--color-surface);
+    border: none;
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+
+  .sort-btn:not(:last-child) {
+    border-right: 1px solid var(--color-border);
+  }
+
+  .sort-btn:hover {
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+
+  .sort-btn.active {
+    background: var(--color-primary-bg);
+    color: var(--color-primary);
+  }
+
   .search-bar {
     position: relative;
     display: flex;
@@ -533,20 +629,27 @@
     background: var(--color-primary-bg);
   }
 
-  .concept-header {
+  .concept-footer {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    margin-bottom: var(--space-xs);
-    font-size: var(--font-size-sm);
+    margin-top: var(--space-sm);
+    gap: var(--space-sm);
   }
 
-  .concept-confidence {
-    font-weight: 600;
+  .concept-tags {
+    display: flex;
+    gap: var(--space-xs);
+    flex-wrap: wrap;
+    flex: 1;
   }
 
-  .confidence-high { color: var(--color-success); }
-  .confidence-medium { color: var(--color-warning); }
-  .confidence-low { color: var(--color-error); }
+  .recall-count {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
 
   .concept-title {
     font-weight: 600;
@@ -565,11 +668,6 @@
     color: var(--color-text-secondary);
   }
 
-  .concept-tags {
-    display: flex;
-    gap: var(--space-xs);
-    margin-top: var(--space-sm);
-  }
 
   .tag {
     padding: 2px 8px;

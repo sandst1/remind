@@ -58,6 +58,10 @@ export interface Concept {
   conditions: string | null;
   exceptions: string[];
   tags: string[];
+  // Decay tracking
+  decay_factor: number;
+  access_count: number;
+  last_accessed: string | null;
 }
 
 export interface Episode {
@@ -111,6 +115,10 @@ export interface Stats {
   relation_types: Record<RelationType, number>;
   entity_relation_types: Record<string, number>;
   entity_types: Record<EntityType, number>;
+  // Decay stats
+  concepts_with_decay?: number;
+  avg_decay_factor?: number;
+  min_decay_factor?: number;
 }
 
 export interface GraphNode {
