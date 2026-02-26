@@ -218,6 +218,10 @@ class MemoryInterface:
             context=context,
         )
         
+        # Rejuvenation: reset decay for recalled concepts
+        if activated:
+            self._rejuvenate_concepts(activated)
+        
         if raw:
             return activated
         
@@ -308,6 +312,28 @@ class MemoryInterface:
         - Custom filtering logic
         """
         return self.store.get_unconsolidated_episodes(limit=limit)
+    
+    def _rejuvenate_concepts(self, activated: list[ActivatedConcept]) -> None:
+        """
+        Reset decay for recalled concepts (rejuvenation).
+        
+        When a concept is recalled, it gets "refreshed" - decay_factor resets to 1.0,
+        access_count increments, and last_accessed timestamp updates.
+        
+        Args:
+            activated: List of ActivatedConcept objects that were just recalled
+        """
+        for ac in activated:
+            concept = ac.concept
+            concept.decay_factor = 1.0
+            concept.access_count += 1
+            concept.last_accessed = datetime.now()
+            concept.updated_at = datetime.now()
+            
+            # Save updated concept back to store
+            self.store.update_concept(concept)
+            
+            logger.debug(f"Rejuvenated concept {concept.id}: decay_factor=1.0, access_count={concept.access_count}, last_accessed={concept.last_accessed.isoformat()}")
     
     # Direct access methods
     
