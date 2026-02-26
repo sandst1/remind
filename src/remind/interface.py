@@ -541,6 +541,8 @@ def create_memory(
         kwargs["consolidation_threshold"] = config.consolidation_threshold
     if "auto_consolidate" not in kwargs:
         kwargs["auto_consolidate"] = config.auto_consolidate
+    if "decay_config" not in kwargs:
+        kwargs["decay_config"] = config.decay
     
     # Import providers
     from remind.providers import (
