@@ -22,7 +22,7 @@ from remind.providers.base import LLMProvider, EmbeddingProvider
 from remind.consolidation import Consolidator
 from remind.retrieval import MemoryRetriever, ActivatedConcept
 from remind.extraction import EntityExtractor
-from remind.config import load_config
+from remind.config import load_config, DecayConfig
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,6 @@ class MemoryInterface:
         self.default_recall_k = default_recall_k
         
         # Decay settings
-        from remind.config import DecayConfig
         self.decay_config = decay_config or DecayConfig()
         
         # Recall tracking for decay (persisted in metadata table)

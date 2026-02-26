@@ -9,6 +9,6 @@
 - [x] task-007-fix-stats-performance
 - [x] task-008-fix-entity-recall-decay
 - [x] task-009-fix-proportional-rejuvenation
-- [ ] task-010-consolidate-imports
+- [x] task-010-consolidate-imports
 - [ ] task-011-create-integration-tests
 - [ ] task-012-rename-misleading-test
