@@ -214,13 +214,16 @@ class MemoryInterface:
         """
         k = k or self.default_recall_k
         
-        # Increment recall count and persist
+        # Increment recall count and persist (always)
         self._recall_count += 1
         self._save_recall_count()
         
         # Entity-based retrieval
         if entity:
             episodes = await self.retriever.retrieve_by_entity(entity, limit=k * 4)
+            # Trigger decay every N recalls (consistent with concept-based path)
+            if self._recall_count % self.decay_config.decay_interval == 0:
+                self._trigger_decay()
             if raw:
                 return episodes
             return self.retriever.format_entity_context(entity, episodes)
@@ -232,7 +235,7 @@ class MemoryInterface:
             context=context,
         )
         
-        # Rejuvenation: reset decay for recalled concepts
+        # Rejuvenation: reset decay for recalled concepts (only for concept-based)
         if activated:
             self._rejuvenate_concepts(activated)
         
