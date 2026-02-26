@@ -1453,19 +1453,33 @@ class SQLiteMemoryStore(MemoryStore):
                 """
             ).fetchone()[0]
             
-            # Decay statistics
-            concepts = self.get_all_concepts()
-            concepts_with_decay = 0
-            decay_factors = []
+            # Decay statistics - use SQL queries for performance (O(1) vs O(n))
+            # Count concepts with decay_factor < 1.0
+            concepts_with_decay_row = conn.execute(
+                """
+                SELECT COUNT(*) FROM concepts 
+                WHERE json_extract(data, '$.decay_factor') < 1.0
+                """
+            ).fetchone()
+            concepts_with_decay = concepts_with_decay_row[0]
             
-            for concept in concepts:
-                decay_factor = concept.decay_factor
-                decay_factors.append(decay_factor)
-                if decay_factor < 1.0:
-                    concepts_with_decay += 1
+            # Get average decay_factor (COALESCE handles NULL/missing values)
+            avg_decay_row = conn.execute(
+                """
+                SELECT COALESCE(AVG(json_extract(data, '$.decay_factor')), 1.0) 
+                FROM concepts
+                """
+            ).fetchone()
+            avg_decay_factor = round(avg_decay_row[0], 3)
             
-            avg_decay_factor = round(np.mean(decay_factors), 3) if decay_factors else 1.0
-            min_decay_factor = round(min(decay_factors), 3) if decay_factors else 1.0
+            # Get minimum decay_factor (COALESCE handles NULL/missing values)
+            min_decay_row = conn.execute(
+                """
+                SELECT COALESCE(MIN(json_extract(data, '$.decay_factor')), 1.0) 
+                FROM concepts
+                """
+            ).fetchone()
+            min_decay_factor = round(min_decay_row[0], 3)
             
             return {
                 "concepts": concept_count,

@@ -6,7 +6,7 @@
 - [x] task-004-fix-create-memory-config
 - [x] task-005-remove-related-decay
 - [x] task-006-implement-sql-decay
-- [ ] task-007-fix-stats-performance
+- [x] task-007-fix-stats-performance
 - [ ] task-008-fix-entity-recall-decay
 - [ ] task-009-fix-proportional-rejuvenation
 - [ ] task-010-consolidate-imports
