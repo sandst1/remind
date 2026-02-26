@@ -429,6 +429,7 @@ class MemoryInterface:
             ((self._recall_count // self.decay_config.decay_interval) + 1) * 
             self.decay_config.decay_interval
         )
+        stats["recalls_since_last_decay"] = self._recall_count % self.decay_config.decay_interval
         
         return stats
     

@@ -1439,6 +1439,20 @@ class SQLiteMemoryStore(MemoryStore):
                 """
             ).fetchone()[0]
             
+            # Decay statistics
+            concepts = self.get_all_concepts()
+            concepts_with_decay = 0
+            decay_factors = []
+            
+            for concept in concepts:
+                decay_factor = concept.decay_factor
+                decay_factors.append(decay_factor)
+                if decay_factor < 1.0:
+                    concepts_with_decay += 1
+            
+            avg_decay_factor = round(np.mean(decay_factors), 3) if decay_factors else 1.0
+            min_decay_factor = round(min(decay_factors), 3) if decay_factors else 1.0
+            
             return {
                 "concepts": concept_count,
                 "episodes": episode_count,
@@ -1455,6 +1469,9 @@ class SQLiteMemoryStore(MemoryStore):
                     (row["type"] or "observation"): row["count"]
                     for row in episode_types
                 },
+                "concepts_with_decay": concepts_with_decay,
+                "avg_decay_factor": avg_decay_factor,
+                "min_decay_factor": min_decay_factor,
             }
         finally:
             conn.close()

@@ -7,5 +7,5 @@
 - [x] task-005-implement-decay-algorithm
 - [x] task-006-add-rejuvenation
 - [x] task-007-hook-periodic-decay
-- [ ] task-008-add-decay-stats
+- [x] task-008-add-decay-stats
 - [ ] task-009-test-decay-behavior
