@@ -252,6 +252,17 @@ class MemoryStore(ABC):
         """
         ...
 
+    # Metadata operations
+    @abstractmethod
+    def get_metadata(self, key: str) -> Optional[str]:
+        """Get a metadata value by key. Returns None if not found."""
+        ...
+    
+    @abstractmethod
+    def set_metadata(self, key: str, value: str) -> None:
+        """Set a metadata value. Updates if key exists."""
+        ...
+    
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -373,6 +384,14 @@ class SQLiteMemoryStore(MemoryStore):
                     FOREIGN KEY (source_id) REFERENCES entities(id) ON DELETE CASCADE,
                     FOREIGN KEY (target_id) REFERENCES entities(id) ON DELETE CASCADE,
                     FOREIGN KEY (source_episode_id) REFERENCES episodes(id) ON DELETE SET NULL
+                )
+            """)
+
+            # Metadata table - persistent key-value pairs
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 )
             """)
 
@@ -1384,6 +1403,32 @@ class SQLiteMemoryStore(MemoryStore):
             logger.info(f"Decay complete: {decayed_count} concepts decayed")
             return decayed_count
             
+        finally:
+            conn.close()
+
+    # Metadata operations
+
+    def get_metadata(self, key: str) -> Optional[str]:
+        """Get a metadata value by key. Returns None if not found."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key = ?",
+                (key,)
+            ).fetchone()
+            return row["value"] if row else None
+        finally:
+            conn.close()
+
+    def set_metadata(self, key: str, value: str) -> None:
+        """Set a metadata value. Updates if key exists."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (key, value)
+            )
+            conn.commit()
         finally:
             conn.close()
 
