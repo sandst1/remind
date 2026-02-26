@@ -95,7 +95,7 @@ class TestDecayAlgorithm:
         store.add_concept(concept)
         
         # Apply decay with rate 0.1
-        store.decay_concepts(decay_interval=20, decay_rate=0.1, related_decay_factor=0.5)
+        store.decay_concepts(decay_rate=0.1)
         
         updated = store.get_concept("decay-test")
         assert abs(updated.decay_factor - 0.7) < 0.001  # 0.8 - 0.1 = 0.7 (with float tolerance)
@@ -111,7 +111,7 @@ class TestDecayAlgorithm:
         store.add_concept(concept)
         
         # Apply large decay
-        store.decay_concepts(decay_interval=20, decay_rate=0.5, related_decay_factor=0.5)
+        store.decay_concepts(decay_rate=0.5)
         
         updated = store.get_concept("low-decay")
         assert updated.decay_factor == 0.0  # max(0, 0.05 - 0.5) = 0.0
@@ -128,7 +128,7 @@ class TestDecayAlgorithm:
                 )
             )
         
-        store.decay_concepts(decay_interval=20, decay_rate=0.1, related_decay_factor=0.5)
+        store.decay_concepts(decay_rate=0.1)
         
         for i in range(3):
             updated = store.get_concept(f"concept-{i}")
@@ -163,7 +163,7 @@ class TestDecayAlgorithm:
         # Apply decay with related_decay_factor=0.5
         # Parent decays by 0.1, child decays by 0.1 as main concept
         # When parent is processed, child should ALSO decay by 0.05 as related concept
-        store.decay_concepts(decay_interval=20, decay_rate=0.1, related_decay_factor=0.5)
+        store.decay_concepts(decay_rate=0.1)
         
         parent = store.get_concept("parent")
         child = store.get_concept("child")
@@ -187,8 +187,8 @@ class TestDecayAlgorithm:
         store.add_concept(concept)
         
         # Apply decay twice
-        store.decay_concepts(decay_interval=20, decay_rate=0.1, related_decay_factor=0.5)
-        store.decay_concepts(decay_interval=20, decay_rate=0.1, related_decay_factor=0.5)
+        store.decay_concepts(decay_rate=0.1)
+        store.decay_concepts(decay_rate=0.1)
         
         updated = store.get_concept("multi-decay")
         assert updated.decay_factor == 0.8  # 1.0 - 0.1 - 0.1
@@ -269,7 +269,7 @@ class TestPeriodicDecay:
 
     def test_decay_triggers_at_interval(self, store):
         """Test that decay triggers every N recalls."""
-        decay_config = DecayConfig(decay_interval=5, decay_rate=0.1, related_decay_factor=0.5)
+        decay_rate = 0.1
         
         # Add concept with high decay_factor
         concept = Concept(
@@ -286,24 +286,16 @@ class TestPeriodicDecay:
         # First 4 recalls - no decay
         for i in range(4):
             recall_count += 1
-            if recall_count % decay_config.decay_interval == 0:
-                store.decay_concepts(
-                    decay_interval=decay_config.decay_interval,
-                    decay_rate=decay_config.decay_rate,
-                    related_decay_factor=decay_config.related_decay_factor,
-                )
+            if recall_count % 5 == 0:
+                store.decay_concepts(decay_rate=decay_rate)
         
         concept = store.get_concept("interval-test")
         assert concept.decay_factor == 1.0  # No decay yet
         
         # 5th recall - decay triggers
         recall_count += 1
-        if recall_count % decay_config.decay_interval == 0:
-            store.decay_concepts(
-                decay_interval=decay_config.decay_interval,
-                decay_rate=decay_config.decay_rate,
-                related_decay_factor=decay_config.related_decay_factor,
-            )
+        if recall_count % 5 == 0:
+            store.decay_concepts(decay_rate=decay_rate)
         
         concept = store.get_concept("interval-test")
         assert concept.decay_factor == 0.9  # 1.0 - 0.1

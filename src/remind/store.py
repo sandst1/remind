@@ -236,16 +236,12 @@ class MemoryStore(ABC):
     @abstractmethod
     def decay_concepts(
         self, 
-        decay_interval: int, 
-        decay_rate: float, 
-        related_decay_factor: float
+        decay_rate: float,
     ) -> int:
         """Apply linear decay to all concepts.
         
         Args:
-            decay_interval: Number of recalls between decay runs (not used in calculation, but for tracking)
             decay_rate: How much decay_factor decreases per interval
-            related_decay_factor: How much related concepts decay when parent decays
             
         Returns:
             Count of concepts that were decayed
@@ -1339,52 +1335,42 @@ class SQLiteMemoryStore(MemoryStore):
 
     def decay_concepts(
         self, 
-        decay_interval: int, 
-        decay_rate: float, 
-        related_decay_factor: float
+        decay_rate: float,
     ) -> int:
-        """Apply linear decay to all concepts.
+        """Apply linear decay to all concepts using SQL-level update.
         
         Applies linear decay formula: new_decay_factor = max(0.0, old_decay_factor - decay_rate)
         Each concept decays independently based on its own decay_factor.
+        Uses a single SQL UPDATE statement for O(1) performance regardless of concept count.
         
         Args:
-            decay_interval: Number of recalls between decay runs (for tracking)
             decay_rate: How much decay_factor decreases per interval
-            related_decay_factor: Deprecated parameter, no longer used
             
         Returns:
             Count of concepts that were decayed
         """
         conn = self._get_conn()
         try:
-            # Get all concepts
-            concepts = self.get_all_concepts()
+            # Single SQL UPDATE statement - no Python-level looping
+            cursor = conn.execute(
+                """
+                UPDATE concepts 
+                SET data = json_set(
+                    data, 
+                    '$.decay_factor', 
+                    max(0, json_extract(data, '$.decay_factor') - ?)
+                ),
+                updated_at = CURRENT_TIMESTAMP
+                WHERE json_extract(data, '$.decay_factor') > 0
+                """,
+                (decay_rate,)
+            )
             
-            if not concepts:
-                logger.debug("No concepts to decay")
-                return 0
+            affected_count = cursor.rowcount
+            conn.commit()
             
-            decayed_count = 0
-            
-            for concept in concepts:
-                # Get current decay_factor, default to 1.0 for backwards compatibility
-                old_decay = max(0.0, min(1.0, concept.decay_factor))
-                new_decay = max(0.0, old_decay - decay_rate)
-                
-                # Only update if decay actually changed
-                if new_decay < old_decay:
-                    concept.decay_factor = new_decay
-                    concept.updated_at = datetime.now()
-                    self.update_concept(concept)
-                    decayed_count += 1
-                    
-                    logger.debug(
-                        f"Concept {concept.id} decayed: {old_decay:.3f} -> {new_decay:.3f}"
-                    )
-            
-            logger.info(f"Decay complete: {decayed_count} concepts decayed")
-            return decayed_count
+            logger.info(f"Decay complete: {affected_count} concepts decayed")
+            return affected_count
             
         finally:
             conn.close()

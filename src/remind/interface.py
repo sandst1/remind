@@ -355,14 +355,11 @@ class MemoryInterface:
         """
         logger.info(
             f"Triggering decay (recall #{self._recall_count}): "
-            f"decay_rate={self.decay_config.decay_rate}, "
-            f"related_decay_factor={self.decay_config.related_decay_factor}"
+            f"decay_rate={self.decay_config.decay_rate}"
         )
         
         decayed_count = self.store.decay_concepts(
-            decay_interval=self.decay_config.decay_interval,
             decay_rate=self.decay_config.decay_rate,
-            related_decay_factor=self.decay_config.related_decay_factor,
         )
         
         logger.info(f"Decay complete: {decayed_count} concepts affected")
