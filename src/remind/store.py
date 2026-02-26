@@ -232,6 +232,26 @@ class MemoryStore(ABC):
         """
         ...
 
+    # Decay operations
+    @abstractmethod
+    def decay_concepts(
+        self, 
+        decay_interval: int, 
+        decay_rate: float, 
+        related_decay_factor: float
+    ) -> int:
+        """Apply linear decay to all concepts.
+        
+        Args:
+            decay_interval: Number of recalls between decay runs (not used in calculation, but for tracking)
+            decay_rate: How much decay_factor decreases per interval
+            related_decay_factor: How much related concepts decay when parent decays
+            
+        Returns:
+            Count of concepts that were decayed
+        """
+        ...
+
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -1293,6 +1313,77 @@ class SQLiteMemoryStore(MemoryStore):
 
             conn.commit()
             return count
+        finally:
+            conn.close()
+
+    # Decay operations
+
+    def decay_concepts(
+        self, 
+        decay_interval: int, 
+        decay_rate: float, 
+        related_decay_factor: float
+    ) -> int:
+        """Apply linear decay to all concepts.
+        
+        Applies linear decay formula: new_decay_factor = max(0.0, old_decay_factor - decay_rate)
+        Also decays related concepts by decay_rate * related_decay_factor.
+        
+        Args:
+            decay_interval: Number of recalls between decay runs (for tracking)
+            decay_rate: How much decay_factor decreases per interval
+            related_decay_factor: How much related concepts decay when parent decays
+            
+        Returns:
+            Count of concepts that were decayed
+        """
+        conn = self._get_conn()
+        try:
+            # Get all concepts
+            concepts = self.get_all_concepts()
+            
+            if not concepts:
+                logger.debug("No concepts to decay")
+                return 0
+            
+            decayed_count = 0
+            
+            for concept in concepts:
+                # Get current decay_factor, default to 1.0 for backwards compatibility
+                old_decay = max(0.0, min(1.0, concept.decay_factor))
+                new_decay = max(0.0, old_decay - decay_rate)
+                
+                # Only update if decay actually changed
+                if new_decay < old_decay:
+                    concept.decay_factor = new_decay
+                    concept.updated_at = datetime.now()
+                    self.update_concept(concept)
+                    decayed_count += 1
+                    
+                    # Decay related concepts
+                    related = self.get_related(concept.id)
+                    related_decay_amount = decay_rate * related_decay_factor
+                    
+                    for related_concept, relation in related:
+                        related_old_decay = max(0.0, min(1.0, related_concept.decay_factor))
+                        related_new_decay = max(0.0, related_old_decay - related_decay_amount)
+                        
+                        if related_new_decay < related_old_decay:
+                            related_concept.decay_factor = related_new_decay
+                            related_concept.updated_at = datetime.now()
+                            self.update_concept(related_concept)
+                            logger.debug(
+                                f"Related concept {related_concept.id} decayed by {related_decay_amount:.3f}: "
+                                f"{related_old_decay:.3f} -> {related_new_decay:.3f}"
+                            )
+                    
+                    logger.debug(
+                        f"Concept {concept.id} decayed: {old_decay:.3f} -> {new_decay:.3f}"
+                    )
+            
+            logger.info(f"Decay complete: {decayed_count} concepts decayed")
+            return decayed_count
+            
         finally:
             conn.close()
 
