@@ -298,7 +298,8 @@ def consolidate(ctx, force: bool, background: bool):
     console.print(f"[cyan]Consolidating {unconsolidated} episodes...[/cyan]")
 
     async def _consolidate():
-        return await memory.consolidate(force=force)
+        # Always force when user explicitly runs consolidate command
+        return await memory.consolidate(force=True)
 
     with console.status("[bold cyan]Running consolidation..."):
         result = run_async(_consolidate())
