@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.5.0] - 2026-03-02
+
+### Added
+- Support for updating and deleting concepts and episodes
+- Built-in memories about Remind itself for self-aware assistance
+
+### Changed
+- Consolidation is now non-blocking, improving CLI responsiveness
+
+### Fixed
+- Explicit consolidation command now works correctly
+- Build issues resolved
+- Changelog skill now works in Claude Code
+
 ## [0.4.0] - 2026-02-26
 
 ### Added
