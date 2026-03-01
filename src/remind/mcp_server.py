@@ -430,6 +430,171 @@ async def tool_inspect_entity(
     return "\n".join(lines)
 
 
+async def tool_update_episode(
+    episode_id: str,
+    content: Optional[str] = None,
+    episode_type: Optional[str] = None,
+    entities: Optional[str] = None,
+) -> str:
+    """Update an existing episode."""
+    from remind.models import EpisodeType
+
+    memory = await get_memory()
+
+    # Parse episode type
+    ep_type = None
+    if episode_type:
+        try:
+            ep_type = EpisodeType(episode_type)
+        except ValueError:
+            return f"Invalid episode_type: {episode_type}. Valid types: observation, decision, question, meta, preference"
+
+    # Parse entities
+    entity_list = None
+    if entities:
+        entity_list = [e.strip() for e in entities.split(",") if e.strip()]
+
+    updated = memory.update_episode(
+        episode_id,
+        content=content,
+        episode_type=ep_type,
+        entities=entity_list,
+    )
+
+    if updated:
+        lines = [f"Updated episode {episode_id}"]
+        if content:
+            preview = content[:50] + "..." if len(content) > 50 else content
+            lines.append(f"  Content: {preview}")
+        if ep_type:
+            lines.append(f"  Type: {ep_type.value}")
+        if entity_list:
+            lines.append(f"  Entities: {', '.join(entity_list)}")
+        if content:
+            lines.append("  Note: Episode will be re-consolidated")
+        return "\n".join(lines)
+    else:
+        return f"Episode {episode_id} not found."
+
+
+async def tool_delete_episode(episode_id: str) -> str:
+    """Soft delete an episode from memory."""
+    memory = await get_memory()
+
+    if memory.delete_episode(episode_id):
+        return f"Deleted episode {episode_id}. Use restore_episode to undelete, or purge_episode to permanently remove."
+    else:
+        return f"Episode {episode_id} not found."
+
+
+async def tool_restore_episode(episode_id: str) -> str:
+    """Restore a soft-deleted episode."""
+    memory = await get_memory()
+
+    if memory.restore_episode(episode_id):
+        return f"Restored episode {episode_id}."
+    else:
+        return f"Episode {episode_id} not found or not deleted."
+
+
+async def tool_update_concept(
+    concept_id: str,
+    title: Optional[str] = None,
+    summary: Optional[str] = None,
+    confidence: Optional[float] = None,
+    tags: Optional[str] = None,
+) -> str:
+    """Update an existing concept."""
+    memory = await get_memory()
+
+    tag_list = None
+    if tags:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+    updated = memory.update_concept(
+        concept_id,
+        title=title,
+        summary=summary,
+        confidence=confidence,
+        tags=tag_list,
+    )
+
+    if updated:
+        lines = [f"Updated concept {concept_id}"]
+        if title:
+            lines.append(f"  Title: {title}")
+        if summary:
+            preview = summary[:50] + "..." if len(summary) > 50 else summary
+            lines.append(f"  Summary: {preview}")
+        if confidence is not None:
+            lines.append(f"  Confidence: {confidence:.2f}")
+        if tag_list:
+            lines.append(f"  Tags: {', '.join(tag_list)}")
+        if summary:
+            lines.append("  Note: Embedding cleared, will regenerate on next recall")
+        return "\n".join(lines)
+    else:
+        return f"Concept {concept_id} not found."
+
+
+async def tool_delete_concept(concept_id: str) -> str:
+    """Soft delete a concept from memory."""
+    memory = await get_memory()
+
+    if memory.delete_concept(concept_id):
+        return f"Deleted concept {concept_id}. Use restore_concept to undelete, or purge_concept to permanently remove."
+    else:
+        return f"Concept {concept_id} not found."
+
+
+async def tool_restore_concept(concept_id: str) -> str:
+    """Restore a soft-deleted concept."""
+    memory = await get_memory()
+
+    if memory.restore_concept(concept_id):
+        return f"Restored concept {concept_id}."
+    else:
+        return f"Concept {concept_id} not found or not deleted."
+
+
+async def tool_list_deleted(
+    item_type: Optional[str] = None,
+    limit: int = 20,
+) -> str:
+    """List soft-deleted episodes and/or concepts."""
+    memory = await get_memory()
+
+    lines = []
+    show_episodes = item_type in (None, "episodes", "all")
+    show_concepts = item_type in (None, "concepts", "all")
+
+    if show_episodes:
+        deleted_episodes = memory.get_deleted_episodes(limit=limit)
+        if deleted_episodes:
+            lines.append(f"Deleted Episodes ({len(deleted_episodes)}):")
+            for ep in deleted_episodes:
+                deleted_at = ep.deleted_at.strftime('%Y-%m-%d %H:%M') if ep.deleted_at else "?"
+                preview = ep.content[:40] + "..." if len(ep.content) > 40 else ep.content
+                lines.append(f"  [{ep.id}] {preview} (deleted: {deleted_at})")
+        else:
+            lines.append("No deleted episodes.")
+
+    if show_concepts:
+        if lines:
+            lines.append("")
+        deleted_concepts = memory.get_deleted_concepts()
+        if deleted_concepts:
+            lines.append(f"Deleted Concepts ({len(deleted_concepts)}):")
+            for c in deleted_concepts[:limit]:
+                deleted_at = c.deleted_at.strftime('%Y-%m-%d %H:%M') if c.deleted_at else "?"
+                title = c.title or c.summary[:40] + "..." if len(c.summary) > 40 else c.summary
+                lines.append(f"  [{c.id}] {title} (deleted: {deleted_at})")
+        else:
+            lines.append("No deleted concepts.")
+
+    return "\n".join(lines)
+
+
 # ============================================================================
 # FastMCP Server Setup
 # ============================================================================
@@ -621,6 +786,139 @@ def create_mcp_server():
             Entity details with relationships
         """
         return await tool_inspect_entity(entity_id, show_relations)
+
+    @mcp.tool()
+    async def update_episode(
+        episode_id: str,
+        content: Optional[str] = None,
+        episode_type: Optional[str] = None,
+        entities: Optional[str] = None,
+    ) -> str:
+        """Update an existing episode in memory.
+
+        Use this to correct mistakes, add information, or reclassify episodes.
+        Only provided fields are updated; omitted fields keep their current values.
+
+        Note: Updating content resets the episode for re-consolidation.
+
+        Args:
+            episode_id: ID of the episode to update (required)
+            content: New content text
+            episode_type: New type: observation, decision, question, meta, preference
+            entities: New comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
+
+        Returns:
+            Confirmation or error message
+        """
+        return await tool_update_episode(episode_id, content, episode_type, entities)
+
+    @mcp.tool()
+    async def delete_episode(episode_id: str) -> str:
+        """Soft delete an episode from memory.
+
+        Use this to remove incorrect, outdated, or duplicate episodes.
+        The episode is marked as deleted but not permanently removed.
+
+        Use restore_episode to undelete, or list_deleted to see deleted items.
+
+        Args:
+            episode_id: ID of the episode to delete (required)
+
+        Returns:
+            Confirmation or error message
+        """
+        return await tool_delete_episode(episode_id)
+
+    @mcp.tool()
+    async def restore_episode(episode_id: str) -> str:
+        """Restore a previously deleted episode.
+
+        Undeletes an episode that was soft-deleted with delete_episode.
+
+        Args:
+            episode_id: ID of the episode to restore (required)
+
+        Returns:
+            Confirmation or error message
+        """
+        return await tool_restore_episode(episode_id)
+
+    @mcp.tool()
+    async def update_concept(
+        concept_id: str,
+        title: Optional[str] = None,
+        summary: Optional[str] = None,
+        confidence: Optional[float] = None,
+        tags: Optional[str] = None,
+    ) -> str:
+        """Update an existing concept.
+
+        Use this to refine or correct generalized knowledge.
+        Only provided fields are updated; omitted fields keep their current values.
+
+        Note: Updating summary clears the embedding; it will regenerate on next recall.
+
+        Args:
+            concept_id: ID of the concept to update (required)
+            title: New short title
+            summary: New summary text
+            confidence: New confidence score (0.0-1.0)
+            tags: New comma-separated tags
+
+        Returns:
+            Confirmation or error message
+        """
+        return await tool_update_concept(concept_id, title, summary, confidence, tags)
+
+    @mcp.tool()
+    async def delete_concept(concept_id: str) -> str:
+        """Soft delete a concept from memory.
+
+        Use this to remove incorrect or outdated concepts.
+        The concept is marked as deleted but not permanently removed.
+
+        Use restore_concept to undelete, or list_deleted to see deleted items.
+
+        Args:
+            concept_id: ID of the concept to delete (required)
+
+        Returns:
+            Confirmation or error message
+        """
+        return await tool_delete_concept(concept_id)
+
+    @mcp.tool()
+    async def restore_concept(concept_id: str) -> str:
+        """Restore a previously deleted concept.
+
+        Undeletes a concept that was soft-deleted with delete_concept.
+
+        Args:
+            concept_id: ID of the concept to restore (required)
+
+        Returns:
+            Confirmation or error message
+        """
+        return await tool_restore_concept(concept_id)
+
+    @mcp.tool()
+    async def list_deleted(
+        item_type: Optional[str] = None,
+        limit: int = 20,
+    ) -> str:
+        """List soft-deleted episodes and concepts.
+
+        Shows items that were deleted but not permanently purged.
+        Use restore_episode or restore_concept to undelete them.
+
+        Args:
+            item_type: Filter by type: "episodes", "concepts", or None/all for both
+            limit: Maximum number of items to show per type (default: 20)
+
+        Returns:
+            List of deleted items with their IDs and deletion timestamps
+        """
+        return await tool_list_deleted(item_type, limit)
 
     return mcp
 

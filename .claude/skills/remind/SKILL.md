@@ -12,6 +12,13 @@ External memory layer that persists across sessions and generalizes experiences 
 | `remind recall "<query>"` | Retrieve relevant memories |
 | `remind end-session` | Consolidate pending episodes |
 | `remind stats` | Memory statistics |
+| `remind update-episode <id> -c "<content>"` | Correct episode content |
+| `remind update-concept <id> -s "<summary>"` | Refine concept |
+| `remind delete-episode <id>` | Soft delete episode |
+| `remind delete-concept <id>` | Soft delete concept |
+| `remind restore-episode <id>` | Restore deleted episode |
+| `remind restore-concept <id>` | Restore deleted concept |
+| `remind deleted` | List soft-deleted items |
 
 ## remember
 
@@ -51,6 +58,28 @@ remind decisions                # Show decision episodes
 remind questions                # Show open questions
 ```
 
+## Managing Memory
+
+### Correcting Content
+```bash
+remind update-episode <id> -c "Corrected information"
+remind update-concept <id> -s "Refined summary" --confidence 0.9
+```
+
+**Note**: Updating episode content resets it for re-consolidation.
+
+### Deleting Outdated Data
+```bash
+remind delete-episode <id>        # Soft delete (recoverable)
+remind delete-concept <id>        # Soft delete (recoverable)
+remind deleted                    # View deleted items
+remind restore-episode <id>       # Restore if needed
+remind restore-concept <id>       # Restore if needed
+```
+
+**When to delete**: Outdated info, incorrect memories, superseded decisions
+**Tip**: Delete rather than adding corrections — cleaner than contradictions
+
 ## Best Practices
 
 1. Be selective — skip trivial info
@@ -59,3 +88,4 @@ remind questions                # Show open questions
 4. Track uncertainties with `-t question`
 5. Use entity recall for specific files/people
 6. Run `remind end-session` at natural boundaries
+7. Delete outdated info rather than adding corrections

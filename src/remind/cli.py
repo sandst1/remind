@@ -1004,6 +1004,299 @@ def skill_install():
     console.print("Invoke with: [cyan]/remind[/cyan]")
 
 
+# ============================================================================
+# Update/Delete/Restore Commands
+# ============================================================================
+
+@main.command("update-episode")
+@click.argument("episode_id")
+@click.option("--content", "-c", help="New content text")
+@click.option("--type", "-t", "episode_type",
+              type=click.Choice(["observation", "decision", "question", "meta", "preference"]),
+              help="New episode type")
+@click.option("--entity", "-e", "entities", multiple=True, help="New entity IDs (replaces existing)")
+@click.pass_context
+def update_episode(ctx, episode_id: str, content: Optional[str],
+                   episode_type: Optional[str], entities: tuple):
+    """Update an existing episode."""
+    from remind.models import EpisodeType
+
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    ep_type = EpisodeType(episode_type) if episode_type else None
+    entity_list = list(entities) if entities else None
+
+    updated = memory.update_episode(
+        episode_id,
+        content=content,
+        episode_type=ep_type,
+        entities=entity_list,
+    )
+
+    if updated:
+        console.print(f"[green]✓[/green] Updated episode [cyan]{episode_id}[/cyan]")
+        if content:
+            console.print(f"  [dim]Content updated - will be re-consolidated[/dim]")
+        if ep_type:
+            console.print(f"  Type: [yellow]{ep_type.value}[/yellow]")
+        if entity_list:
+            console.print(f"  Entities: {', '.join(entity_list)}")
+    else:
+        console.print(f"[red]Episode {episode_id} not found[/red]")
+
+
+@main.command("delete-episode")
+@click.argument("episode_id")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def delete_episode(ctx, episode_id: str, yes: bool):
+    """Soft delete an episode from memory."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    # Show episode content before deletion
+    episode = memory.store.get_episode(episode_id)
+    if not episode:
+        console.print(f"[red]Episode {episode_id} not found[/red]")
+        return
+
+    if not yes:
+        console.print(f"Episode to delete:")
+        console.print(f"  ID: [cyan]{episode.id}[/cyan]")
+        console.print(f"  Content: {episode.content[:60]}...")
+        if not click.confirm("Delete this episode?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    if memory.delete_episode(episode_id):
+        console.print(f"[green]✓[/green] Deleted episode [cyan]{episode_id}[/cyan]")
+        console.print(f"  [dim]Use 'remind restore-episode {episode_id}' to undelete[/dim]")
+    else:
+        console.print(f"[red]Failed to delete episode {episode_id}[/red]")
+
+
+@main.command("restore-episode")
+@click.argument("episode_id")
+@click.pass_context
+def restore_episode(ctx, episode_id: str):
+    """Restore a deleted episode."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    if memory.restore_episode(episode_id):
+        console.print(f"[green]✓[/green] Restored episode [cyan]{episode_id}[/cyan]")
+    else:
+        console.print(f"[red]Episode {episode_id} not found or not deleted[/red]")
+
+
+@main.command("purge-episode")
+@click.argument("episode_id")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def purge_episode(ctx, episode_id: str, yes: bool):
+    """Permanently delete an episode. This cannot be undone."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    if not yes:
+        console.print(f"[red]WARNING: This will PERMANENTLY delete episode {episode_id}[/red]")
+        if not click.confirm("Are you sure?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    if memory.purge_episode(episode_id):
+        console.print(f"[green]✓[/green] Permanently deleted episode [cyan]{episode_id}[/cyan]")
+    else:
+        console.print(f"[red]Episode {episode_id} not found[/red]")
+
+
+@main.command("update-concept")
+@click.argument("concept_id")
+@click.option("--title", "-t", help="New title")
+@click.option("--summary", "-s", help="New summary")
+@click.option("--confidence", "-c", type=float, help="New confidence score (0.0-1.0)")
+@click.option("--tag", "tags", multiple=True, help="New tags (replaces existing)")
+@click.pass_context
+def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional[str],
+                   confidence: Optional[float], tags: tuple):
+    """Update an existing concept."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    tag_list = list(tags) if tags else None
+
+    updated = memory.update_concept(
+        concept_id,
+        title=title,
+        summary=summary,
+        confidence=confidence,
+        tags=tag_list,
+    )
+
+    if updated:
+        console.print(f"[green]✓[/green] Updated concept [cyan]{concept_id}[/cyan]")
+        if title:
+            console.print(f"  Title: {title}")
+        if summary:
+            console.print(f"  [dim]Summary updated - embedding will regenerate on next recall[/dim]")
+        if confidence is not None:
+            console.print(f"  Confidence: {confidence:.2f}")
+        if tag_list:
+            console.print(f"  Tags: {', '.join(tag_list)}")
+    else:
+        console.print(f"[red]Concept {concept_id} not found[/red]")
+
+
+@main.command("delete-concept")
+@click.argument("concept_id")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def delete_concept(ctx, concept_id: str, yes: bool):
+    """Soft delete a concept from memory."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    # Show concept content before deletion
+    concept = memory.store.get_concept(concept_id)
+    if not concept:
+        console.print(f"[red]Concept {concept_id} not found[/red]")
+        return
+
+    if not yes:
+        console.print(f"Concept to delete:")
+        console.print(f"  ID: [cyan]{concept.id}[/cyan]")
+        console.print(f"  Title: {concept.title or 'N/A'}")
+        console.print(f"  Summary: {concept.summary[:60]}...")
+        if not click.confirm("Delete this concept?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    if memory.delete_concept(concept_id):
+        console.print(f"[green]✓[/green] Deleted concept [cyan]{concept_id}[/cyan]")
+        console.print(f"  [dim]Use 'remind restore-concept {concept_id}' to undelete[/dim]")
+    else:
+        console.print(f"[red]Failed to delete concept {concept_id}[/red]")
+
+
+@main.command("restore-concept")
+@click.argument("concept_id")
+@click.pass_context
+def restore_concept(ctx, concept_id: str):
+    """Restore a deleted concept."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    if memory.restore_concept(concept_id):
+        console.print(f"[green]✓[/green] Restored concept [cyan]{concept_id}[/cyan]")
+    else:
+        console.print(f"[red]Concept {concept_id} not found or not deleted[/red]")
+
+
+@main.command("purge-concept")
+@click.argument("concept_id")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def purge_concept(ctx, concept_id: str, yes: bool):
+    """Permanently delete a concept. This cannot be undone."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    if not yes:
+        console.print(f"[red]WARNING: This will PERMANENTLY delete concept {concept_id}[/red]")
+        if not click.confirm("Are you sure?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    if memory.purge_concept(concept_id):
+        console.print(f"[green]✓[/green] Permanently deleted concept [cyan]{concept_id}[/cyan]")
+    else:
+        console.print(f"[red]Concept {concept_id} not found[/red]")
+
+
+@main.command("deleted")
+@click.option("--type", "-t", "item_type", type=click.Choice(["episodes", "concepts"]),
+              help="Filter by type")
+@click.option("--limit", "-n", default=20, help="Number of items to show")
+@click.pass_context
+def deleted(ctx, item_type: Optional[str], limit: int):
+    """Show soft-deleted episodes and concepts."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    show_episodes = item_type in (None, "episodes")
+    show_concepts = item_type in (None, "concepts")
+
+    if show_episodes:
+        deleted_episodes = memory.get_deleted_episodes(limit=limit)
+        if deleted_episodes:
+            table = Table(title=f"Deleted Episodes ({len(deleted_episodes)})")
+            table.add_column("ID", style="cyan")
+            table.add_column("Content")
+            table.add_column("Deleted At", style="dim")
+
+            for ep in deleted_episodes:
+                content = ep.content[:50] + "..." if len(ep.content) > 50 else ep.content
+                deleted_at = ep.deleted_at.strftime('%Y-%m-%d %H:%M') if ep.deleted_at else "?"
+                table.add_row(ep.id, content, deleted_at)
+
+            console.print(table)
+        else:
+            console.print("[dim]No deleted episodes[/dim]")
+
+    if show_concepts:
+        if show_episodes:
+            console.print()  # Space between tables
+        deleted_concepts = memory.get_deleted_concepts()
+        if deleted_concepts:
+            table = Table(title=f"Deleted Concepts ({len(deleted_concepts)})")
+            table.add_column("ID", style="cyan")
+            table.add_column("Title")
+            table.add_column("Summary")
+            table.add_column("Deleted At", style="dim")
+
+            for c in deleted_concepts[:limit]:
+                title = c.title or "-"
+                summary = c.summary[:40] + "..." if len(c.summary) > 40 else c.summary
+                deleted_at = c.deleted_at.strftime('%Y-%m-%d %H:%M') if c.deleted_at else "?"
+                table.add_row(c.id, title, summary, deleted_at)
+
+            console.print(table)
+        else:
+            console.print("[dim]No deleted concepts[/dim]")
+
+
+@main.command("purge-all")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def purge_all(ctx, yes: bool):
+    """Permanently delete all soft-deleted items. This cannot be undone."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    # Count deleted items
+    deleted_episodes = memory.get_deleted_episodes(limit=1000)
+    deleted_concepts = memory.get_deleted_concepts()
+
+    if not deleted_episodes and not deleted_concepts:
+        console.print("[yellow]No deleted items to purge[/yellow]")
+        return
+
+    console.print(f"Items to purge:")
+    console.print(f"  Episodes: {len(deleted_episodes)}")
+    console.print(f"  Concepts: {len(deleted_concepts)}")
+
+    if not yes:
+        console.print(f"\n[red]WARNING: This will PERMANENTLY delete all {len(deleted_episodes) + len(deleted_concepts)} items[/red]")
+        if not click.confirm("Are you sure?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    # Purge all
+    ep_count = 0
+    c_count = 0
+
+    for ep in deleted_episodes:
+        if memory.purge_episode(ep.id):
+            ep_count += 1
+
+    for c in deleted_concepts:
+        if memory.purge_concept(c.id):
+            c_count += 1
+
+    console.print(f"[green]✓[/green] Purged {ep_count} episodes and {c_count} concepts")
+
+
 if __name__ == "__main__":
     main()
 

@@ -260,6 +260,13 @@ The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`
 - `entities` - List entities in memory
 - `inspect_entity` - View entity details and relationships
 - `stats` - Memory statistics
+- `update_episode` - Correct or modify an episode
+- `delete_episode` - Soft delete an episode
+- `restore_episode` - Restore a deleted episode
+- `update_concept` - Refine a concept
+- `delete_concept` - Soft delete a concept
+- `restore_concept` - Restore a deleted concept
+- `list_deleted` - List soft-deleted items
 
 **Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
 
@@ -366,6 +373,18 @@ remind entity-relations file:src/auth.ts # Show relationships for an entity
 remind extract-relations         # Extract relationships from unprocessed episodes
 remind extract-relations --force # Re-extract for all episodes
 
+# Memory management
+remind update-episode <id> -c "Corrected content"
+remind update-concept <id> -s "Refined summary" --confidence 0.9
+remind delete-episode <id>       # Soft delete (recoverable)
+remind delete-concept <id>       # Soft delete (recoverable)
+remind deleted                   # Show soft-deleted items
+remind restore-episode <id>      # Restore deleted episode
+remind restore-concept <id>      # Restore deleted concept
+remind purge-episode <id>        # Permanently delete
+remind purge-concept <id>        # Permanently delete
+remind purge-all                 # Permanently delete all soft-deleted items
+
 # Episode filtering
 remind decisions                 # Show decision-type episodes
 remind questions                 # Show open questions/uncertainties
@@ -462,6 +481,23 @@ The "sleep" process where episodes are processed into concepts. Runs in two phas
 
 ### Entity Relationships
 When multiple entities are mentioned in the same episode, their relationships are automatically extracted. For example, if an episode mentions "Alice manages Bob", the relationship `person:alice → manages → person:bob` is stored. Use `inspect_entity` or the web UI to explore entity relationships.
+
+### Memory Management
+
+Remind supports updating, deleting, and restoring both episodes and concepts:
+
+**Updating**: Correct mistakes or add information to existing memories.
+- Updating episode content resets it for re-consolidation
+- Updating concept summary clears its embedding (regenerated on next recall)
+
+**Soft Delete**: Items are marked as deleted but not permanently removed.
+- Soft-deleted items are excluded from queries and consolidation
+- Use `deleted` command or `list_deleted` MCP tool to view deleted items
+- Restore with `restore-episode` / `restore-concept`
+
+**Purge**: Permanently delete items when you're sure they're not needed.
+- Cannot be undone
+- Removes associated mentions and relations
 
 ### Spreading Activation
 Retrieval that goes beyond keyword matching:

@@ -411,7 +411,201 @@ class MemoryInterface:
     def get_episodes_by_type(self, episode_type: EpisodeType, limit: int = 50) -> list[Episode]:
         """Get episodes of a specific type (decision, question, meta, etc.)."""
         return self.store.get_episodes_by_type(episode_type, limit=limit)
-    
+
+    # Episode update/delete operations
+
+    def update_episode(
+        self,
+        episode_id: str,
+        content: Optional[str] = None,
+        episode_type: Optional[EpisodeType] = None,
+        entities: Optional[list[str]] = None,
+    ) -> Optional[Episode]:
+        """
+        Update an existing episode.
+
+        Only provided fields are updated; None values preserve existing data.
+        If content is updated, resets consolidation flags so episode will be re-processed.
+
+        Args:
+            episode_id: ID of the episode to update
+            content: New content (if None, preserves existing)
+            episode_type: New type (if None, preserves existing)
+            entities: New entity list (if None, preserves existing)
+
+        Returns:
+            Updated Episode object, or None if not found
+        """
+        episode = self.store.get_episode(episode_id)
+        if not episode:
+            return None
+
+        if content is not None:
+            episode.content = content
+            # Reset extraction/consolidation flags since content changed
+            episode.entities_extracted = False if entities is None else True
+            episode.relations_extracted = False
+            episode.consolidated = False
+
+        if episode_type is not None:
+            episode.episode_type = episode_type
+
+        if entities is not None:
+            episode.entity_ids = entities
+            episode.entities_extracted = True
+
+        self.store.update_episode(episode)
+        return episode
+
+    def delete_episode(self, episode_id: str) -> bool:
+        """
+        Soft delete an episode from memory.
+
+        The episode is marked as deleted but not permanently removed.
+        Use purge_episode() to permanently remove, or restore_episode() to undelete.
+
+        Args:
+            episode_id: ID of the episode to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return self.store.delete_episode(episode_id)
+
+    def restore_episode(self, episode_id: str) -> bool:
+        """
+        Restore a soft-deleted episode.
+
+        Args:
+            episode_id: ID of the episode to restore
+
+        Returns:
+            True if restored, False if not found or not deleted
+        """
+        return self.store.restore_episode(episode_id)
+
+    def purge_episode(self, episode_id: str) -> bool:
+        """
+        Permanently delete an episode.
+
+        This cannot be undone. Also removes entity mentions and relations
+        derived from this episode.
+
+        Args:
+            episode_id: ID of the episode to purge
+
+        Returns:
+            True if purged, False if not found
+        """
+        return self.store.purge_episode(episode_id)
+
+    def get_deleted_episodes(self, limit: int = 50) -> list[Episode]:
+        """Get soft-deleted episodes."""
+        return self.store.get_deleted_episodes(limit=limit)
+
+    # Concept update/delete operations
+
+    def update_concept(
+        self,
+        concept_id: str,
+        title: Optional[str] = None,
+        summary: Optional[str] = None,
+        confidence: Optional[float] = None,
+        conditions: Optional[str] = None,
+        exceptions: Optional[list[str]] = None,
+        tags: Optional[list[str]] = None,
+    ) -> Optional[Concept]:
+        """
+        Update an existing concept.
+
+        Only provided fields are updated; None values preserve existing data.
+        If summary is updated, clears the embedding (will be regenerated on next recall).
+
+        Args:
+            concept_id: ID of the concept to update
+            title: New title
+            summary: New summary (triggers embedding clear)
+            confidence: New confidence score (0.0-1.0)
+            conditions: New applicability conditions
+            exceptions: New exceptions list
+            tags: New tags list
+
+        Returns:
+            Updated Concept object, or None if not found
+        """
+        concept = self.store.get_concept(concept_id)
+        if not concept:
+            return None
+
+        if title is not None:
+            concept.title = title
+
+        if summary is not None and summary != concept.summary:
+            concept.summary = summary
+            # Clear embedding so it will be regenerated
+            concept.embedding = None
+
+        if confidence is not None:
+            concept.confidence = max(0.0, min(1.0, confidence))
+
+        if conditions is not None:
+            concept.conditions = conditions
+
+        if exceptions is not None:
+            concept.exceptions = exceptions
+
+        if tags is not None:
+            concept.tags = tags
+
+        concept.updated_at = datetime.now()
+        self.store.update_concept(concept)
+        return concept
+
+    def delete_concept(self, concept_id: str) -> bool:
+        """
+        Soft delete a concept from memory.
+
+        The concept is marked as deleted but not permanently removed.
+        Use purge_concept() to permanently remove, or restore_concept() to undelete.
+
+        Args:
+            concept_id: ID of the concept to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return self.store.delete_concept(concept_id)
+
+    def restore_concept(self, concept_id: str) -> bool:
+        """
+        Restore a soft-deleted concept.
+
+        Args:
+            concept_id: ID of the concept to restore
+
+        Returns:
+            True if restored, False if not found or not deleted
+        """
+        return self.store.restore_concept(concept_id)
+
+    def purge_concept(self, concept_id: str) -> bool:
+        """
+        Permanently delete a concept.
+
+        This cannot be undone. Also removes all relations pointing to this concept.
+
+        Args:
+            concept_id: ID of the concept to purge
+
+        Returns:
+            True if purged, False if not found
+        """
+        return self.store.purge_concept(concept_id)
+
+    def get_deleted_concepts(self) -> list[Concept]:
+        """Get soft-deleted concepts."""
+        return self.store.get_deleted_concepts()
+
     # Entity operations
     
     def get_entity(self, entity_id: str) -> Optional[Entity]:

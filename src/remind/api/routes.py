@@ -145,6 +145,141 @@ async def get_concept_detail(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def update_concept(request: Request) -> JSONResponse:
+    """Update an existing concept."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    concept_id = request.path_params.get("id")
+
+    try:
+        body = await request.json()
+        title = body.get("title")
+        summary = body.get("summary")
+        confidence = body.get("confidence")
+        conditions = body.get("conditions")
+        exceptions = body.get("exceptions")
+        tags = body.get("tags")
+
+        updated = memory.update_concept(
+            concept_id,
+            title=title,
+            summary=summary,
+            confidence=confidence,
+            conditions=conditions,
+            exceptions=exceptions,
+            tags=tags,
+        )
+
+        if not updated:
+            return JSONResponse({"error": "Concept not found"}, status_code=404)
+
+        return JSONResponse({"success": True, "concept": updated.to_dict()})
+    except Exception as e:
+        logger.exception("Failed to update concept")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def delete_concept(request: Request) -> JSONResponse:
+    """Soft delete a concept."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    concept_id = request.path_params.get("id")
+
+    try:
+        if memory.delete_concept(concept_id):
+            return JSONResponse({"success": True})
+        return JSONResponse({"error": "Concept not found"}, status_code=404)
+    except Exception as e:
+        logger.exception("Failed to delete concept")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def restore_concept(request: Request) -> JSONResponse:
+    """Restore a soft-deleted concept."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    concept_id = request.path_params.get("id")
+
+    try:
+        if memory.restore_concept(concept_id):
+            return JSONResponse({"success": True})
+        return JSONResponse({"error": "Concept not found or not deleted"}, status_code=404)
+    except Exception as e:
+        logger.exception("Failed to restore concept")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def purge_concept(request: Request) -> JSONResponse:
+    """Permanently delete a concept."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    concept_id = request.path_params.get("id")
+
+    try:
+        if memory.purge_concept(concept_id):
+            return JSONResponse({"success": True})
+        return JSONResponse({"error": "Concept not found"}, status_code=404)
+    except Exception as e:
+        logger.exception("Failed to purge concept")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def get_deleted_concepts(request: Request) -> JSONResponse:
+    """Get soft-deleted concepts."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        deleted = memory.get_deleted_concepts()
+        return JSONResponse({
+            "concepts": [c.to_dict() for c in deleted],
+            "total": len(deleted),
+        })
+    except Exception as e:
+        logger.exception("Failed to get deleted concepts")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def purge_all_deleted(request: Request) -> JSONResponse:
+    """Permanently delete all soft-deleted items."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        deleted_episodes = memory.get_deleted_episodes(limit=10000)
+        deleted_concepts = memory.get_deleted_concepts()
+
+        ep_count = 0
+        c_count = 0
+
+        for ep in deleted_episodes:
+            if memory.purge_episode(ep.id):
+                ep_count += 1
+
+        for c in deleted_concepts:
+            if memory.purge_concept(c.id):
+                c_count += 1
+
+        return JSONResponse({
+            "success": True,
+            "episodes_purged": ep_count,
+            "concepts_purged": c_count,
+        })
+    except Exception as e:
+        logger.exception("Failed to purge all deleted")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # =============================================================================
 # Episodes
 # =============================================================================
@@ -225,6 +360,116 @@ async def get_episode_detail(request: Request) -> JSONResponse:
         return JSONResponse(episode.to_dict())
     except Exception as e:
         logger.exception("Failed to get episode")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def update_episode(request: Request) -> JSONResponse:
+    """Update an existing episode."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    episode_id = request.path_params.get("id")
+
+    try:
+        body = await request.json()
+        content = body.get("content")
+        episode_type = body.get("episode_type")
+        entities = body.get("entities")
+
+        # Parse episode type
+        ep_type = None
+        if episode_type:
+            try:
+                ep_type = EpisodeType(episode_type)
+            except ValueError:
+                return JSONResponse(
+                    {"error": f"Invalid episode_type: {episode_type}"},
+                    status_code=400,
+                )
+
+        updated = memory.update_episode(
+            episode_id,
+            content=content,
+            episode_type=ep_type,
+            entities=entities,
+        )
+
+        if not updated:
+            return JSONResponse({"error": "Episode not found"}, status_code=404)
+
+        return JSONResponse({"success": True, "episode": updated.to_dict()})
+    except Exception as e:
+        logger.exception("Failed to update episode")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def delete_episode(request: Request) -> JSONResponse:
+    """Soft delete an episode."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    episode_id = request.path_params.get("id")
+
+    try:
+        if memory.delete_episode(episode_id):
+            return JSONResponse({"success": True})
+        return JSONResponse({"error": "Episode not found"}, status_code=404)
+    except Exception as e:
+        logger.exception("Failed to delete episode")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def restore_episode(request: Request) -> JSONResponse:
+    """Restore a soft-deleted episode."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    episode_id = request.path_params.get("id")
+
+    try:
+        if memory.restore_episode(episode_id):
+            return JSONResponse({"success": True})
+        return JSONResponse({"error": "Episode not found or not deleted"}, status_code=404)
+    except Exception as e:
+        logger.exception("Failed to restore episode")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def purge_episode(request: Request) -> JSONResponse:
+    """Permanently delete an episode."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    episode_id = request.path_params.get("id")
+
+    try:
+        if memory.purge_episode(episode_id):
+            return JSONResponse({"success": True})
+        return JSONResponse({"error": "Episode not found"}, status_code=404)
+    except Exception as e:
+        logger.exception("Failed to purge episode")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def get_deleted_episodes(request: Request) -> JSONResponse:
+    """Get soft-deleted episodes."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        limit = int(request.query_params.get("limit", 50))
+        deleted = memory.get_deleted_episodes(limit=limit)
+        return JSONResponse({
+            "episodes": [e.to_dict() for e in deleted],
+            "total": len(deleted),
+        })
+    except Exception as e:
+        logger.exception("Failed to get deleted episodes")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -638,17 +883,35 @@ async def list_databases(request: Request) -> JSONResponse:
 
 api_routes = [
     Route("/api/v1/stats", get_stats, methods=["GET"]),
+    # Concepts
     Route("/api/v1/concepts", get_concepts, methods=["GET"]),
+    Route("/api/v1/concepts/deleted", get_deleted_concepts, methods=["GET"]),
     Route("/api/v1/concepts/{id}", get_concept_detail, methods=["GET"]),
+    Route("/api/v1/concepts/{id}", update_concept, methods=["PUT", "PATCH"]),
+    Route("/api/v1/concepts/{id}", delete_concept, methods=["DELETE"]),
+    Route("/api/v1/concepts/{id}/restore", restore_concept, methods=["POST"]),
+    Route("/api/v1/concepts/{id}/purge", purge_concept, methods=["DELETE"]),
+    # Episodes
     Route("/api/v1/episodes", get_episodes, methods=["GET"]),
+    Route("/api/v1/episodes/deleted", get_deleted_episodes, methods=["GET"]),
     Route("/api/v1/episodes/{id}", get_episode_detail, methods=["GET"]),
+    Route("/api/v1/episodes/{id}", update_episode, methods=["PUT", "PATCH"]),
+    Route("/api/v1/episodes/{id}", delete_episode, methods=["DELETE"]),
+    Route("/api/v1/episodes/{id}/restore", restore_episode, methods=["POST"]),
+    Route("/api/v1/episodes/{id}/purge", purge_episode, methods=["DELETE"]),
+    # Entities
     Route("/api/v1/entities", get_entities, methods=["GET"]),
     Route("/api/v1/entities/{id:path}/episodes", get_entity_episodes, methods=["GET"]),
     Route("/api/v1/entities/{id:path}/concepts", get_entity_concepts, methods=["GET"]),
     Route("/api/v1/entities/{id:path}", get_entity_detail, methods=["GET"]),
+    # Graph
     Route("/api/v1/graph", get_graph, methods=["GET"]),
     Route("/api/v1/entity-graph", get_entity_graph, methods=["GET"]),
+    # Query/Chat
     Route("/api/v1/query", execute_query, methods=["POST"]),
     Route("/api/v1/chat", stream_chat, methods=["POST"]),
+    # Databases
     Route("/api/v1/databases", list_databases, methods=["GET"]),
+    # Bulk operations
+    Route("/api/v1/deleted/purge-all", purge_all_deleted, methods=["DELETE"]),
 ]

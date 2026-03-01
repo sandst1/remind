@@ -235,7 +235,10 @@ class Concept:
     last_accessed: Optional[datetime] = None
     access_count: int = 0
     decay_factor: float = 1.0
-    
+
+    # Soft delete support
+    deleted_at: Optional[datetime] = None
+
     def to_dict(self) -> dict:
         """Serialize to dictionary for storage."""
         return {
@@ -255,6 +258,7 @@ class Concept:
             "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
             "access_count": self.access_count,
             "decay_factor": self.decay_factor,
+            "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
         }
     
     @classmethod
@@ -277,6 +281,7 @@ class Concept:
             last_accessed=datetime.fromisoformat(data["last_accessed"]) if data.get("last_accessed") else None,
             access_count=data.get("access_count", 0),
             decay_factor=data.get("decay_factor", 1.0),
+            deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None,
         )
     
     def add_relation(self, relation: Relation) -> None:
@@ -337,7 +342,10 @@ class Episode:
 
     # Optional metadata
     metadata: dict = field(default_factory=dict)
-    
+
+    # Soft delete support
+    deleted_at: Optional[datetime] = None
+
     def to_dict(self) -> dict:
         """Serialize to dictionary for storage."""
         return {
@@ -354,6 +362,7 @@ class Episode:
             "relations_extracted": self.relations_extracted,
             "confidence": self.confidence,
             "metadata": self.metadata,
+            "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
         }
     
     @classmethod
@@ -381,6 +390,7 @@ class Episode:
             relations_extracted=data.get("relations_extracted", False),
             confidence=data.get("confidence", 1.0),
             metadata=data.get("metadata", {}),
+            deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None,
         )
 
 

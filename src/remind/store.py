@@ -43,9 +43,33 @@ class MemoryStore(ABC):
     
     @abstractmethod
     def delete_concept(self, id: str) -> bool:
-        """Delete a concept. Returns True if deleted."""
+        """Soft delete a concept (set deleted_at timestamp).
+
+        Returns True if concept was found and deleted.
+        """
         ...
-    
+
+    @abstractmethod
+    def restore_concept(self, id: str) -> bool:
+        """Restore a soft-deleted concept (clear deleted_at timestamp).
+
+        Returns True if concept was found and restored.
+        """
+        ...
+
+    @abstractmethod
+    def purge_concept(self, id: str) -> bool:
+        """Permanently delete a concept.
+
+        Returns True if concept was found and purged.
+        """
+        ...
+
+    @abstractmethod
+    def get_deleted_concepts(self) -> list[Concept]:
+        """Get soft-deleted concepts."""
+        ...
+
     @abstractmethod
     def get_all_concepts(self) -> list[Concept]:
         """Get all concepts."""
@@ -88,7 +112,44 @@ class MemoryStore(ABC):
     def update_episode(self, episode: Episode) -> None:
         """Update an existing episode."""
         ...
-    
+
+    @abstractmethod
+    def delete_episode(self, id: str) -> bool:
+        """Soft delete an episode (set deleted_at timestamp).
+
+        Also cleans up:
+        - Mention records (episode <-> entity links)
+        - Entity relations derived from this episode
+
+        Returns True if episode was found and deleted.
+        """
+        ...
+
+    @abstractmethod
+    def restore_episode(self, id: str) -> bool:
+        """Restore a soft-deleted episode (clear deleted_at timestamp).
+
+        Returns True if episode was found and restored.
+        """
+        ...
+
+    @abstractmethod
+    def purge_episode(self, id: str) -> bool:
+        """Permanently delete an episode.
+
+        Also cleans up:
+        - Mention records (episode <-> entity links)
+        - Entity relations derived from this episode
+
+        Returns True if episode was found and purged.
+        """
+        ...
+
+    @abstractmethod
+    def get_deleted_episodes(self, limit: int = 50) -> list[Episode]:
+        """Get soft-deleted episodes."""
+        ...
+
     @abstractmethod
     def get_unconsolidated_episodes(self, limit: int = 10) -> list[Episode]:
         """Get episodes that haven't been consolidated yet."""
@@ -510,23 +571,26 @@ class SQLiteMemoryStore(MemoryStore):
             )
     
     def get_concept(self, id: str) -> Optional[Concept]:
-        """Get a concept by ID."""
+        """Get a concept by ID (excluding soft-deleted)."""
         conn = self._get_conn()
         try:
             row = conn.execute(
-                "SELECT data, embedding FROM concepts WHERE id = ?",
+                """
+                SELECT data, embedding FROM concepts
+                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL
+                """,
                 (id,)
             ).fetchone()
-            
+
             if not row:
                 return None
-            
+
             data = json.loads(row["data"])
-            
+
             # Restore embedding from blob
             if row["embedding"]:
                 data["embedding"] = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
-            
+
             return Concept.from_dict(data)
         finally:
             conn.close()
@@ -564,7 +628,42 @@ class SQLiteMemoryStore(MemoryStore):
             conn.close()
     
     def delete_concept(self, id: str) -> bool:
-        """Delete a concept. Returns True if deleted."""
+        """Soft delete a concept. Returns True if deleted."""
+        conn = self._get_conn()
+        try:
+            now = datetime.now().isoformat()
+            cursor = conn.execute(
+                """
+                UPDATE concepts
+                SET data = json_set(data, '$.deleted_at', ?)
+                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL
+                """,
+                (now, id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def restore_concept(self, id: str) -> bool:
+        """Restore a soft-deleted concept. Returns True if restored."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                """
+                UPDATE concepts
+                SET data = json_remove(data, '$.deleted_at')
+                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NOT NULL
+                """,
+                (id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def purge_concept(self, id: str) -> bool:
+        """Permanently delete a concept. Returns True if deleted."""
         conn = self._get_conn()
         try:
             cursor = conn.execute("DELETE FROM concepts WHERE id = ?", (id,))
@@ -572,12 +671,38 @@ class SQLiteMemoryStore(MemoryStore):
             return cursor.rowcount > 0
         finally:
             conn.close()
-    
-    def get_all_concepts(self) -> list[Concept]:
-        """Get all concepts."""
+
+    def get_deleted_concepts(self) -> list[Concept]:
+        """Get soft-deleted concepts."""
         conn = self._get_conn()
         try:
-            rows = conn.execute("SELECT data, embedding FROM concepts").fetchall()
+            rows = conn.execute(
+                """
+                SELECT data, embedding FROM concepts
+                WHERE json_extract(data, '$.deleted_at') IS NOT NULL
+                ORDER BY json_extract(data, '$.deleted_at') DESC
+                """
+            ).fetchall()
+            concepts = []
+            for row in rows:
+                data = json.loads(row["data"])
+                if row["embedding"]:
+                    data["embedding"] = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
+                concepts.append(Concept.from_dict(data))
+            return concepts
+        finally:
+            conn.close()
+
+    def get_all_concepts(self) -> list[Concept]:
+        """Get all concepts (excluding soft-deleted)."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT data, embedding FROM concepts
+                WHERE json_extract(data, '$.deleted_at') IS NULL
+                """
+            ).fetchall()
             concepts = []
             for row in rows:
                 data = json.loads(row["data"])
@@ -589,7 +714,7 @@ class SQLiteMemoryStore(MemoryStore):
             conn.close()
     
     def get_concepts_summary(self) -> list[dict]:
-        """Get a lightweight summary of all concepts."""
+        """Get a lightweight summary of all concepts (excluding soft-deleted)."""
         conn = self._get_conn()
         try:
             rows = conn.execute(
@@ -599,6 +724,7 @@ class SQLiteMemoryStore(MemoryStore):
                        json_extract(data, '$.instance_count') as instance_count,
                        json_extract(data, '$.tags') as tags
                 FROM concepts
+                WHERE json_extract(data, '$.deleted_at') IS NULL
                 """
             ).fetchall()
 
@@ -619,10 +745,16 @@ class SQLiteMemoryStore(MemoryStore):
     # Embedding-based retrieval
     
     def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
-        """Find concepts by embedding similarity."""
+        """Find concepts by embedding similarity (excluding soft-deleted)."""
         conn = self._get_conn()
         try:
-            rows = conn.execute("SELECT data, embedding FROM concepts WHERE embedding IS NOT NULL").fetchall()
+            rows = conn.execute(
+                """
+                SELECT data, embedding FROM concepts
+                WHERE embedding IS NOT NULL
+                AND json_extract(data, '$.deleted_at') IS NULL
+                """
+            ).fetchall()
             
             results = []
             for row in rows:
@@ -754,10 +886,16 @@ class SQLiteMemoryStore(MemoryStore):
             conn.close()
     
     def get_episode(self, id: str) -> Optional[Episode]:
-        """Get an episode by ID."""
+        """Get an episode by ID (excluding soft-deleted)."""
         conn = self._get_conn()
         try:
-            row = conn.execute("SELECT data FROM episodes WHERE id = ?", (id,)).fetchone()
+            row = conn.execute(
+                """
+                SELECT data FROM episodes
+                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL
+                """,
+                (id,)
+            ).fetchone()
             if not row:
                 return None
             return Episode.from_dict(json.loads(row["data"]))
@@ -788,16 +926,90 @@ class SQLiteMemoryStore(MemoryStore):
             conn.commit()
         finally:
             conn.close()
-    
+
+    def delete_episode(self, id: str) -> bool:
+        """Soft delete an episode. Returns True if deleted."""
+        conn = self._get_conn()
+        try:
+            now = datetime.now().isoformat()
+            cursor = conn.execute(
+                """
+                UPDATE episodes
+                SET data = json_set(data, '$.deleted_at', ?)
+                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL
+                """,
+                (now, id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def restore_episode(self, id: str) -> bool:
+        """Restore a soft-deleted episode. Returns True if restored."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                """
+                UPDATE episodes
+                SET data = json_remove(data, '$.deleted_at')
+                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NOT NULL
+                """,
+                (id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def purge_episode(self, id: str) -> bool:
+        """Permanently delete an episode. Returns True if deleted."""
+        conn = self._get_conn()
+        try:
+            # Delete entity relations derived from this episode
+            conn.execute(
+                "DELETE FROM entity_relations WHERE source_episode_id = ?",
+                (id,)
+            )
+            # Delete mentions
+            conn.execute(
+                "DELETE FROM mentions WHERE episode_id = ?",
+                (id,)
+            )
+            # Delete the episode
+            cursor = conn.execute("DELETE FROM episodes WHERE id = ?", (id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def get_deleted_episodes(self, limit: int = 50) -> list[Episode]:
+        """Get soft-deleted episodes."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT data FROM episodes
+                WHERE json_extract(data, '$.deleted_at') IS NOT NULL
+                ORDER BY json_extract(data, '$.deleted_at') DESC
+                LIMIT ?
+                """,
+                (limit,)
+            ).fetchall()
+            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
+        finally:
+            conn.close()
+
     def get_unconsolidated_episodes(self, limit: int = 10) -> list[Episode]:
         """Get episodes that haven't been consolidated yet."""
         conn = self._get_conn()
         try:
             rows = conn.execute(
                 """
-                SELECT data FROM episodes 
-                WHERE consolidated = FALSE 
-                ORDER BY timestamp ASC 
+                SELECT data FROM episodes
+                WHERE consolidated = FALSE
+                AND json_extract(data, '$.deleted_at') IS NULL
+                ORDER BY timestamp ASC
                 LIMIT ?
                 """,
                 (limit,)
@@ -808,29 +1020,34 @@ class SQLiteMemoryStore(MemoryStore):
             conn.close()
 
     def count_unconsolidated_episodes(self) -> int:
-        """Count episodes that haven't been consolidated yet."""
+        """Count episodes that haven't been consolidated yet (excluding soft-deleted)."""
         conn = self._get_conn()
         try:
             row = conn.execute(
-                "SELECT COUNT(*) as count FROM episodes WHERE consolidated = FALSE"
+                """
+                SELECT COUNT(*) as count FROM episodes
+                WHERE consolidated = FALSE
+                AND json_extract(data, '$.deleted_at') IS NULL
+                """
             ).fetchone()
             return row["count"]
         finally:
             conn.close()
 
     def get_recent_episodes(self, limit: int = 10) -> list[Episode]:
-        """Get most recent episodes."""
+        """Get most recent episodes (excluding soft-deleted)."""
         conn = self._get_conn()
         try:
             rows = conn.execute(
                 """
-                SELECT data FROM episodes 
-                ORDER BY timestamp DESC 
+                SELECT data FROM episodes
+                WHERE json_extract(data, '$.deleted_at') IS NULL
+                ORDER BY timestamp DESC
                 LIMIT ?
                 """,
                 (limit,)
             ).fetchall()
-            
+
             return [Episode.from_dict(json.loads(row["data"])) for row in rows]
         finally:
             conn.close()
@@ -853,61 +1070,63 @@ class SQLiteMemoryStore(MemoryStore):
         """
         conn = self._get_conn()
         try:
-            query = "SELECT data FROM episodes WHERE 1=1"
+            query = "SELECT data FROM episodes WHERE json_extract(data, '$.deleted_at') IS NULL"
             params = []
-            
+
             if start_date:
                 query += " AND timestamp >= ?"
                 params.append(start_date)
-            
+
             if end_date:
                 query += " AND timestamp <= ?"
                 params.append(end_date)
-            
+
             query += " ORDER BY timestamp DESC LIMIT ?"
             params.append(limit)
-            
+
             rows = conn.execute(query, params).fetchall()
-            
+
             return [Episode.from_dict(json.loads(row["data"])) for row in rows]
         finally:
             conn.close()
 
     def get_unextracted_episodes(self, limit: int = 100) -> list[Episode]:
-        """Get episodes that haven't had entity extraction performed."""
+        """Get episodes that haven't had entity extraction performed (excluding soft-deleted)."""
         conn = self._get_conn()
         try:
             # Check entities_extracted flag in JSON data
             rows = conn.execute(
                 """
-                SELECT data FROM episodes 
-                WHERE json_extract(data, '$.entities_extracted') IS NULL 
+                SELECT data FROM episodes
+                WHERE (json_extract(data, '$.entities_extracted') IS NULL
                    OR json_extract(data, '$.entities_extracted') = 0
-                   OR json_extract(data, '$.entities_extracted') = 'false'
-                ORDER BY timestamp ASC 
+                   OR json_extract(data, '$.entities_extracted') = 'false')
+                AND json_extract(data, '$.deleted_at') IS NULL
+                ORDER BY timestamp ASC
                 LIMIT ?
                 """,
                 (limit,)
             ).fetchall()
-            
+
             return [Episode.from_dict(json.loads(row["data"])) for row in rows]
         finally:
             conn.close()
     
     def get_episodes_by_type(self, episode_type: EpisodeType, limit: int = 50) -> list[Episode]:
-        """Get episodes of a specific type."""
+        """Get episodes of a specific type (excluding soft-deleted)."""
         conn = self._get_conn()
         try:
             rows = conn.execute(
                 """
-                SELECT data FROM episodes 
+                SELECT data FROM episodes
                 WHERE json_extract(data, '$.episode_type') = ?
-                ORDER BY timestamp DESC 
+                AND json_extract(data, '$.deleted_at') IS NULL
+                ORDER BY timestamp DESC
                 LIMIT ?
                 """,
                 (episode_type.value, limit)
             ).fetchall()
-            
+
             return [Episode.from_dict(json.loads(row["data"])) for row in rows]
         finally:
             conn.close()
@@ -1033,7 +1252,7 @@ class SQLiteMemoryStore(MemoryStore):
             conn.close()
     
     def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
-        """Get all episodes that mention an entity."""
+        """Get all episodes that mention an entity (excluding soft-deleted)."""
         conn = self._get_conn()
         try:
             rows = conn.execute(
@@ -1041,12 +1260,13 @@ class SQLiteMemoryStore(MemoryStore):
                 SELECT e.data FROM episodes e
                 JOIN mentions m ON e.id = m.episode_id
                 WHERE m.entity_id = ?
+                AND json_extract(e.data, '$.deleted_at') IS NULL
                 ORDER BY e.timestamp DESC
                 LIMIT ?
                 """,
                 (entity_id, limit)
             ).fetchall()
-            
+
             return [Episode.from_dict(json.loads(row["data"])) for row in rows]
         finally:
             conn.close()
@@ -1248,7 +1468,7 @@ class SQLiteMemoryStore(MemoryStore):
             conn.close()
 
     def get_unextracted_relation_episodes(self, limit: int = 100) -> list[Episode]:
-        """Get episodes that have entities but haven't had relation extraction performed.
+        """Get episodes that have entities but haven't had relation extraction performed (excluding soft-deleted).
 
         Only returns episodes with 2+ entities (need at least 2 for a relationship).
         """
@@ -1258,6 +1478,7 @@ class SQLiteMemoryStore(MemoryStore):
             # - entities_extracted = true (has entities)
             # - relations_extracted is false or null
             # - has at least 2 entity_ids
+            # - not soft-deleted
             rows = conn.execute(
                 """
                 SELECT data FROM episodes
@@ -1267,6 +1488,7 @@ class SQLiteMemoryStore(MemoryStore):
                        OR json_extract(data, '$.relations_extracted') = 0
                        OR json_extract(data, '$.relations_extracted') = 'false')
                   AND json_array_length(json_extract(data, '$.entity_ids')) >= 2
+                  AND json_extract(data, '$.deleted_at') IS NULL
                 ORDER BY timestamp DESC
                 LIMIT ?
                 """,

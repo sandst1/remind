@@ -15,6 +15,13 @@ External memory layer that persists across sessions and generalizes experiences 
 | `entities([entity_type], [limit])` | List entities with mention counts |
 | `inspect_entity(entity_id, [show_relations])` | View entity details/relationships |
 | `stats()` | Memory statistics |
+| `update_episode(episode_id, [content], [episode_type], [entities])` | Correct/modify episode |
+| `delete_episode(episode_id)` | Soft delete episode |
+| `restore_episode(episode_id)` | Restore deleted episode |
+| `update_concept(concept_id, [title], [summary], [confidence], [tags])` | Refine concept |
+| `delete_concept(concept_id)` | Soft delete concept |
+| `restore_concept(concept_id)` | Restore deleted concept |
+| `list_deleted([item_type])` | List soft-deleted items |
 
 ## remember
 
@@ -76,6 +83,42 @@ consolidate(force=True)
 - **Relations**: `implies`, `contradicts`, `specializes`, `generalizes`, `causes`, `part_of`
 - **Confidence**: 0.0-1.0 based on supporting episodes
 
+## Managing Memory
+
+### Correcting Episodes
+```
+update_episode(episode_id="abc123", content="Corrected information")
+update_episode(episode_id="abc123", episode_type="decision")
+```
+
+Note: Updating content resets the episode for re-consolidation.
+
+### Refining Concepts
+```
+update_concept(concept_id="def456", summary="Refined understanding")
+update_concept(concept_id="def456", confidence=0.9, tags="auth,security")
+```
+
+Note: Updating summary clears the embedding (regenerated on next recall).
+
+### Removing Outdated Data
+```
+delete_episode(episode_id="abc123")
+delete_concept(concept_id="def456")
+```
+
+Items are soft-deleted and can be restored:
+```
+list_deleted()                    # See all deleted items
+restore_episode(episode_id="abc123")
+restore_concept(concept_id="def456")
+```
+
+**Important:**
+- Deleting episodes does NOT delete derived concepts
+- Use `inspect(show_episodes=True)` to find episode IDs
+- Use `inspect()` to find concept IDs
+
 ## Best Practices
 
 1. Be selective — skip trivial info
@@ -85,3 +128,4 @@ consolidate(force=True)
 5. Use entity recall for specific files/people
 6. Consolidate at natural boundaries
 7. Remember updates to flag contradictions
+8. Delete outdated/incorrect information rather than adding corrections
