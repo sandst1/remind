@@ -139,7 +139,7 @@ class Consolidator:
         llm: LLMProvider,
         embedding: EmbeddingProvider,
         store: MemoryStore,
-        batch_size: int = 10,
+        batch_size: int = 25,
         min_confidence: float = 0.3,
     ):
         self.llm = llm

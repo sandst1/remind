@@ -269,31 +269,45 @@ Exceptions: {', '.join(c.exceptions) if c.exceptions else 'none'}"""
 
 @main.command()
 @click.option("--force", "-f", is_flag=True, help="Force consolidation even with few episodes")
+@click.option("--background", "-b", is_flag=True, help="Run consolidation in background")
 @click.pass_context
-def consolidate(ctx, force: bool):
+def consolidate(ctx, force: bool, background: bool):
     """Run memory consolidation manually."""
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-    
+
     stats_before = memory.get_stats()
     unconsolidated = stats_before.get("unconsolidated_episodes", 0)
-    
+
     if unconsolidated == 0:
         console.print("[yellow]No episodes to consolidate[/yellow]")
         return
-    
+
+    if background:
+        from remind.background import spawn_background_consolidation
+
+        db_path = ctx.obj["db"]
+        llm = ctx.obj["llm"]
+        embedding = ctx.obj["embedding"]
+
+        if spawn_background_consolidation(db_path, llm, embedding):
+            console.print(f"[green]✓ Background consolidation started ({unconsolidated} episodes)[/green]")
+        else:
+            console.print("[yellow]Consolidation already running[/yellow]")
+        return
+
     console.print(f"[cyan]Consolidating {unconsolidated} episodes...[/cyan]")
-    
+
     async def _consolidate():
         return await memory.consolidate(force=force)
-    
+
     with console.status("[bold cyan]Running consolidation..."):
         result = run_async(_consolidate())
-    
+
     console.print(f"\n[green]✓ Consolidation complete[/green]")
     console.print(f"  Episodes processed: {result.episodes_processed}")
     console.print(f"  Concepts created: {result.concepts_created}")
     console.print(f"  Concepts updated: {result.concepts_updated}")
-    
+
     if result.contradictions_found:
         console.print(f"  [yellow]Contradictions found: {result.contradictions_found}[/yellow]")
         for contradiction in result.contradiction_details:
@@ -376,33 +390,31 @@ def reconsolidate(ctx):
 @main.command("end-session")
 @click.pass_context
 def end_session(ctx):
-    """End session and consolidate all pending episodes.
-    
+    """End session and consolidate all pending episodes in the background.
+
     Use this as a hook point in your agent workflow:
     - At end of conversation
     - After task completion
     - Before shutdown
     """
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-    
+
     pending = memory.pending_episodes_count
-    
+
     if pending == 0:
         console.print("[yellow]No pending episodes to consolidate[/yellow]")
         return
-    
-    console.print(f"[cyan]Ending session: consolidating {pending} pending episodes...[/cyan]")
-    
-    async def _end_session():
-        return await memory.end_session()
-    
-    with console.status("[bold cyan]Running end-of-session consolidation..."):
-        result = run_async(_end_session())
-    
-    console.print(f"\n[green]✓ Session ended[/green]")
-    console.print(f"  Episodes processed: {result.episodes_processed}")
-    console.print(f"  Concepts created: {result.concepts_created}")
-    console.print(f"  Concepts updated: {result.concepts_updated}")
+
+    from remind.background import spawn_background_consolidation
+
+    db_path = ctx.obj["db"]
+    llm = ctx.obj["llm"]
+    embedding = ctx.obj["embedding"]
+
+    if spawn_background_consolidation(db_path, llm, embedding):
+        console.print(f"[green]✓ Session ended — consolidating {pending} episodes in background[/green]")
+    else:
+        console.print(f"[yellow]Consolidation already running ({pending} episodes pending)[/yellow]")
 
 
 @main.command()
