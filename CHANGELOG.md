@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.5.1] - 2026-03-02
+
+### Fixed
+- Include built web UI assets in package (was missing from 0.5.0 release)
+
 ## [0.5.0] - 2026-03-02
 
 ### Added
