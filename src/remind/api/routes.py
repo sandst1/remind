@@ -161,6 +161,7 @@ async def update_concept(request: Request) -> JSONResponse:
         conditions = body.get("conditions")
         exceptions = body.get("exceptions")
         tags = body.get("tags")
+        relations = body.get("relations")
 
         updated = memory.update_concept(
             concept_id,
@@ -170,6 +171,7 @@ async def update_concept(request: Request) -> JSONResponse:
             conditions=conditions,
             exceptions=exceptions,
             tags=tags,
+            relations=relations,
         )
 
         if not updated:

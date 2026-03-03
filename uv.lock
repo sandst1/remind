@@ -1609,7 +1609,7 @@ wheels = [
 
 [[package]]
 name = "remind-mcp"
-version = "0.4.0"
+version = "0.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

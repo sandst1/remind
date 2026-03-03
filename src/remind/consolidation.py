@@ -76,6 +76,9 @@ Respond with this exact JSON structure:
       "source_episodes": ["episode_id1", "episode_id2"],
       "add_exceptions": ["new exception if any"],
       "add_tags": ["new tag if any"],
+      "add_relations": [
+        {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
+      ],
       "reasoning": "why this update"
     }}
   ],
@@ -214,18 +217,27 @@ class Consolidator:
         if operations.get("analysis"):
             logger.info(f"Consolidation analysis: {operations['analysis']}")
         
-        # Apply updates to existing concepts
+        # Collect all deferred relations to process after id_mapping is built
+        deferred_relations = []
+
+        # Apply updates to existing concepts (without relations)
         for update in operations.get("updates", []):
             try:
+                # Extract relations for deferred processing
+                update_relations = update.pop("add_relations", [])
+                concept_id = update["concept_id"]
+                deferred_relations.extend([
+                    {**rel, "_source_id": concept_id} for rel in update_relations
+                ])
+
                 await self._apply_update(update)
                 result.concepts_updated += 1
-                result.updated_concept_ids.append(update["concept_id"])
+                result.updated_concept_ids.append(concept_id)
             except Exception as e:
                 logger.warning(f"Failed to apply update to {update.get('concept_id')}: {e}")
         
         # Create new concepts - first pass without relations
         id_mapping = {}  # temp_id -> real_id
-        deferred_relations = []
 
         for i, new_concept_data in enumerate(operations.get("new_concepts", [])):
             try:
@@ -249,10 +261,14 @@ class Consolidator:
                 return id_mapping.get(id_str, id_str)
             return id_str
 
-        # Process deferred relations from new concepts
+        # Process all deferred relations (from updates and new concepts)
         for rel in deferred_relations:
             try:
-                source_id = id_mapping.get(rel.pop("_source_temp_id"))
+                # Determine source: either from _source_id (update) or _source_temp_id (new concept)
+                if "_source_id" in rel:
+                    source_id = rel.pop("_source_id")
+                else:
+                    source_id = id_mapping.get(rel.pop("_source_temp_id"))
                 if not source_id:
                     continue
                 rel["source_id"] = source_id
@@ -261,7 +277,7 @@ class Consolidator:
             except Exception as e:
                 logger.warning(f"Failed to add deferred relation: {e}")
 
-        # Add new relations between concepts (with temp ID resolution)
+        # Add new_relations between concepts (with temp ID resolution)
         for relation_data in operations.get("new_relations", []):
             try:
                 relation_data["source_id"] = resolve_id(relation_data.get("source_id", ""))

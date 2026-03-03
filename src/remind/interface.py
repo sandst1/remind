@@ -15,7 +15,7 @@ import json
 
 from remind.models import (
     Episode, Concept, ConsolidationResult, 
-    Entity, EpisodeType,
+    Entity, EpisodeType, Relation, RelationType,
 )
 from remind.store import MemoryStore, SQLiteMemoryStore
 from remind.providers.base import LLMProvider, EmbeddingProvider
@@ -442,10 +442,14 @@ class MemoryInterface:
 
         if content is not None:
             episode.content = content
+            # Clear stale entity relations and mentions derived from old content
+            self.store.delete_entity_relations_from_episode(episode_id)
+            self.store.delete_mentions_for_episode(episode_id)
             # Reset extraction/consolidation flags since content changed
             episode.entities_extracted = False if entities is None else True
             episode.relations_extracted = False
             episode.consolidated = False
+            episode.entity_ids = [] if entities is None else entities
 
         if episode_type is not None:
             episode.episode_type = episode_type
@@ -453,6 +457,19 @@ class MemoryInterface:
         if entities is not None:
             episode.entity_ids = entities
             episode.entities_extracted = True
+            # Sync mentions table to match the new entity list
+            self.store.delete_mentions_for_episode(episode_id)
+            for entity_id in entities:
+                if not self.store.get_entity(entity_id):
+                    type_str, name = Entity.parse_id(entity_id)
+                    from remind.models import EntityType
+                    try:
+                        etype = EntityType(type_str)
+                    except ValueError:
+                        etype = EntityType.OTHER
+                    entity = Entity(id=entity_id, type=etype, display_name=name)
+                    self.store.add_entity(entity)
+                self.store.add_mention(episode_id, entity_id)
 
         self.store.update_episode(episode)
         return episode
@@ -514,6 +531,7 @@ class MemoryInterface:
         conditions: Optional[str] = None,
         exceptions: Optional[list[str]] = None,
         tags: Optional[list[str]] = None,
+        relations: Optional[list[dict]] = None,
     ) -> Optional[Concept]:
         """
         Update an existing concept.
@@ -529,6 +547,8 @@ class MemoryInterface:
             conditions: New applicability conditions
             exceptions: New exceptions list
             tags: New tags list
+            relations: New relations list (replaces existing). Each dict has
+                type, target_id, strength, context.
 
         Returns:
             Updated Concept object, or None if not found
@@ -542,7 +562,6 @@ class MemoryInterface:
 
         if summary is not None and summary != concept.summary:
             concept.summary = summary
-            # Clear embedding so it will be regenerated
             concept.embedding = None
 
         if confidence is not None:
@@ -556,6 +575,17 @@ class MemoryInterface:
 
         if tags is not None:
             concept.tags = tags
+
+        if relations is not None:
+            concept.relations = [
+                Relation(
+                    type=RelationType(r["type"]),
+                    target_id=r["target_id"],
+                    strength=r.get("strength", 0.5),
+                    context=r.get("context"),
+                )
+                for r in relations
+            ]
 
         concept.updated_at = datetime.now()
         self.store.update_concept(concept)

@@ -229,6 +229,11 @@ class MemoryStore(ABC):
         ...
     
     @abstractmethod
+    def delete_mentions_for_episode(self, episode_id: str) -> int:
+        """Delete all mention records for an episode. Returns count deleted."""
+        ...
+
+    @abstractmethod
     def get_unextracted_episodes(self, limit: int = 100) -> list[Episode]:
         """Get episodes that haven't had entity extraction performed."""
         ...
@@ -510,6 +515,19 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute("ALTER TABLE episodes ADD COLUMN title TEXT")
             conn.commit()
             logger.info("Migration: Added title column to episodes table")
+
+        # Migration: Add aggregation columns to entity_relations if missing
+        existing_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(entity_relations)").fetchall()
+        }
+        if "episode_count" not in existing_cols:
+            conn.execute("ALTER TABLE entity_relations ADD COLUMN episode_count INTEGER DEFAULT 1")
+            conn.commit()
+            logger.info("Migration: Added episode_count column to entity_relations table")
+        if "source_episode_ids" not in existing_cols:
+            conn.execute("ALTER TABLE entity_relations ADD COLUMN source_episode_ids TEXT DEFAULT '[]'")
+            conn.commit()
+            logger.info("Migration: Added source_episode_ids column to entity_relations table")
 
         # Log migration status
         try:
@@ -928,7 +946,7 @@ class SQLiteMemoryStore(MemoryStore):
             conn.close()
 
     def delete_episode(self, id: str) -> bool:
-        """Soft delete an episode. Returns True if deleted."""
+        """Soft delete an episode. Also cleans up mentions and entity relations."""
         conn = self._get_conn()
         try:
             now = datetime.now().isoformat()
@@ -940,6 +958,9 @@ class SQLiteMemoryStore(MemoryStore):
                 """,
                 (now, id)
             )
+            if cursor.rowcount > 0:
+                conn.execute("DELETE FROM entity_relations WHERE source_episode_id = ?", (id,))
+                conn.execute("DELETE FROM mentions WHERE episode_id = ?", (id,))
             conn.commit()
             return cursor.rowcount > 0
         finally:
@@ -1289,6 +1310,19 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
     
+    def delete_mentions_for_episode(self, episode_id: str) -> int:
+        """Delete all mention records for an episode. Returns count deleted."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM mentions WHERE episode_id = ?",
+                (episode_id,)
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
     def get_entity_mention_counts(self) -> list[tuple[Entity, int]]:
         """Get all entities with their mention counts, sorted by count desc."""
         conn = self._get_conn()
@@ -1354,28 +1388,104 @@ class SQLiteMemoryStore(MemoryStore):
     # Entity relation operations
 
     def add_entity_relation(self, relation: EntityRelation) -> None:
-        """Add an entity relation. Updates if same source/target/type exists."""
+        """Add an entity relation with aggregation.
+
+        If a relation with the same (source_id, target_id, relation_type) already exists,
+        strengthens it and tracks all contributing episodes instead of overwriting.
+        """
         conn = self._get_conn()
         try:
-            conn.execute(
+            existing = conn.execute(
                 """
-                INSERT OR REPLACE INTO entity_relations
-                (source_id, target_id, relation_type, strength, context, source_episode_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                SELECT strength, source_episode_id, episode_count, source_episode_ids
+                FROM entity_relations
+                WHERE source_id = ? AND target_id = ? AND relation_type = ?
                 """,
-                (
-                    relation.source_id,
-                    relation.target_id,
-                    relation.relation_type,
-                    relation.strength,
-                    relation.context,
-                    relation.source_episode_id,
-                    relation.created_at.isoformat(),
+                (relation.source_id, relation.target_id, relation.relation_type)
+            ).fetchone()
+
+            if existing:
+                old_count = existing["episode_count"] or 1
+                old_ids_json = existing["source_episode_ids"] or "[]"
+                try:
+                    old_ids = json.loads(old_ids_json)
+                except (json.JSONDecodeError, TypeError):
+                    old_ids = []
+                    if existing["source_episode_id"]:
+                        old_ids = [existing["source_episode_id"]]
+
+                new_ep_id = relation.source_episode_id
+                if new_ep_id and new_ep_id not in old_ids:
+                    old_ids.append(new_ep_id)
+                    new_count = old_count + 1
+                    boost = min(0.1, (1.0 - existing["strength"]) * 0.2)
+                    new_strength = min(1.0, existing["strength"] + boost)
+                else:
+                    new_count = old_count
+                    new_strength = max(existing["strength"], relation.strength)
+
+                conn.execute(
+                    """
+                    UPDATE entity_relations
+                    SET strength = ?, context = ?, source_episode_id = ?,
+                        episode_count = ?, source_episode_ids = ?
+                    WHERE source_id = ? AND target_id = ? AND relation_type = ?
+                    """,
+                    (
+                        new_strength,
+                        relation.context or existing["context"],
+                        new_ep_id or existing["source_episode_id"],
+                        new_count,
+                        json.dumps(old_ids),
+                        relation.source_id,
+                        relation.target_id,
+                        relation.relation_type,
+                    )
                 )
-            )
+            else:
+                ep_ids = [relation.source_episode_id] if relation.source_episode_id else []
+                conn.execute(
+                    """
+                    INSERT INTO entity_relations
+                    (source_id, target_id, relation_type, strength, context,
+                     source_episode_id, created_at, episode_count, source_episode_ids)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        relation.source_id,
+                        relation.target_id,
+                        relation.relation_type,
+                        relation.strength,
+                        relation.context,
+                        relation.source_episode_id,
+                        relation.created_at.isoformat(),
+                        1,
+                        json.dumps(ep_ids),
+                    )
+                )
             conn.commit()
         finally:
             conn.close()
+
+    def _entity_relation_from_row(self, row) -> EntityRelation:
+        """Build an EntityRelation from a database row."""
+        ep_ids_json = row["source_episode_ids"] if "source_episode_ids" in row.keys() else "[]"
+        try:
+            ep_ids = json.loads(ep_ids_json) if ep_ids_json else []
+        except (json.JSONDecodeError, TypeError):
+            ep_ids = []
+        ep_count = row["episode_count"] if "episode_count" in row.keys() else 1
+        return EntityRelation(
+            source_id=row["source_id"],
+            target_id=row["target_id"],
+            relation_type=row["relation_type"],
+            strength=row["strength"],
+            context=row["context"],
+            source_episode_id=row["source_episode_id"],
+            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),
+            episode_count=ep_count or 1,
+            source_episode_ids=ep_ids,
+        )
 
     def get_entity_relations(self, entity_id: str) -> list[EntityRelation]:
         """Get all relations involving an entity (as source or target)."""
@@ -1383,25 +1493,15 @@ class SQLiteMemoryStore(MemoryStore):
         try:
             rows = conn.execute(
                 """
-                SELECT source_id, target_id, relation_type, strength, context, source_episode_id, created_at
+                SELECT source_id, target_id, relation_type, strength, context,
+                       source_episode_id, created_at, episode_count, source_episode_ids
                 FROM entity_relations
                 WHERE source_id = ? OR target_id = ?
                 ORDER BY strength DESC, created_at DESC
                 """,
                 (entity_id, entity_id)
             ).fetchall()
-            return [
-                EntityRelation(
-                    source_id=row["source_id"],
-                    target_id=row["target_id"],
-                    relation_type=row["relation_type"],
-                    strength=row["strength"],
-                    context=row["context"],
-                    source_episode_id=row["source_episode_id"],
-                    created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),
-                )
-                for row in rows
-            ]
+            return [self._entity_relation_from_row(row) for row in rows]
         finally:
             conn.close()
 
@@ -1411,25 +1511,15 @@ class SQLiteMemoryStore(MemoryStore):
         try:
             rows = conn.execute(
                 """
-                SELECT source_id, target_id, relation_type, strength, context, source_episode_id, created_at
+                SELECT source_id, target_id, relation_type, strength, context,
+                       source_episode_id, created_at, episode_count, source_episode_ids
                 FROM entity_relations
                 WHERE source_id = ?
                 ORDER BY strength DESC, created_at DESC
                 """,
                 (entity_id,)
             ).fetchall()
-            return [
-                EntityRelation(
-                    source_id=row["source_id"],
-                    target_id=row["target_id"],
-                    relation_type=row["relation_type"],
-                    strength=row["strength"],
-                    context=row["context"],
-                    source_episode_id=row["source_episode_id"],
-                    created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),
-                )
-                for row in rows
-            ]
+            return [self._entity_relation_from_row(row) for row in rows]
         finally:
             conn.close()
 
@@ -1761,7 +1851,9 @@ class SQLiteMemoryStore(MemoryStore):
 
             # Export entity relations
             entity_relations = conn.execute(
-                "SELECT source_id, target_id, relation_type, strength, context, source_episode_id, created_at FROM entity_relations"
+                """SELECT source_id, target_id, relation_type, strength, context,
+                          source_episode_id, created_at, episode_count, source_episode_ids
+                   FROM entity_relations"""
             ).fetchall()
 
             return {
@@ -1782,6 +1874,8 @@ class SQLiteMemoryStore(MemoryStore):
                         "context": row["context"],
                         "source_episode_id": row["source_episode_id"],
                         "created_at": row["created_at"],
+                        "episode_count": row["episode_count"] or 1,
+                        "source_episode_ids": json.loads(row["source_episode_ids"] or "[]"),
                     }
                     for row in entity_relations
                 ],

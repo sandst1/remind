@@ -1126,13 +1126,23 @@ def purge_episode(ctx, episode_id: str, yes: bool):
 @click.option("--summary", "-s", help="New summary")
 @click.option("--confidence", "-c", type=float, help="New confidence score (0.0-1.0)")
 @click.option("--tag", "tags", multiple=True, help="New tags (replaces existing)")
+@click.option("--relations", help='JSON array of relations, e.g. \'[{"type":"implies","target_id":"abc","strength":0.7}]\'')
 @click.pass_context
 def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional[str],
-                   confidence: Optional[float], tags: tuple):
+                   confidence: Optional[float], tags: tuple, relations: Optional[str]):
     """Update an existing concept."""
+    import json as _json
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
 
     tag_list = list(tags) if tags else None
+
+    relations_list = None
+    if relations:
+        try:
+            relations_list = _json.loads(relations)
+        except _json.JSONDecodeError as e:
+            console.print(f"[red]Invalid relations JSON: {e}[/red]")
+            return
 
     updated = memory.update_concept(
         concept_id,
@@ -1140,6 +1150,7 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
         summary=summary,
         confidence=confidence,
         tags=tag_list,
+        relations=relations_list,
     )
 
     if updated:
@@ -1152,6 +1163,8 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
             console.print(f"  Confidence: {confidence:.2f}")
         if tag_list:
             console.print(f"  Tags: {', '.join(tag_list)}")
+        if relations_list is not None:
+            console.print(f"  Relations: {len(relations_list)} set")
     else:
         console.print(f"[red]Concept {concept_id} not found[/red]")
 

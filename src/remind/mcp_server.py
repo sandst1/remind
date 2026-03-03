@@ -503,6 +503,7 @@ async def tool_update_concept(
     summary: Optional[str] = None,
     confidence: Optional[float] = None,
     tags: Optional[str] = None,
+    relations: Optional[str] = None,
 ) -> str:
     """Update an existing concept."""
     memory = await get_memory()
@@ -511,12 +512,22 @@ async def tool_update_concept(
     if tags:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
 
+    # Parse relations JSON string
+    relations_list = None
+    if relations:
+        import json as _json
+        try:
+            relations_list = _json.loads(relations)
+        except _json.JSONDecodeError:
+            return f"Invalid relations JSON: {relations}"
+
     updated = memory.update_concept(
         concept_id,
         title=title,
         summary=summary,
         confidence=confidence,
         tags=tag_list,
+        relations=relations_list,
     )
 
     if updated:
@@ -530,6 +541,8 @@ async def tool_update_concept(
             lines.append(f"  Confidence: {confidence:.2f}")
         if tag_list:
             lines.append(f"  Tags: {', '.join(tag_list)}")
+        if relations_list is not None:
+            lines.append(f"  Relations: {len(relations_list)} set")
         if summary:
             lines.append("  Note: Embedding cleared, will regenerate on next recall")
         return "\n".join(lines)
@@ -850,6 +863,7 @@ def create_mcp_server():
         summary: Optional[str] = None,
         confidence: Optional[float] = None,
         tags: Optional[str] = None,
+        relations: Optional[str] = None,
     ) -> str:
         """Update an existing concept.
 
@@ -864,11 +878,12 @@ def create_mcp_server():
             summary: New summary text
             confidence: New confidence score (0.0-1.0)
             tags: New comma-separated tags
+            relations: JSON array of relations, e.g. [{"type":"implies","target_id":"abc","strength":0.7}]
 
         Returns:
             Confirmation or error message
         """
-        return await tool_update_concept(concept_id, title, summary, confidence, tags)
+        return await tool_update_concept(concept_id, title, summary, confidence, tags, relations)
 
     @mcp.tool()
     async def delete_concept(concept_id: str) -> str:

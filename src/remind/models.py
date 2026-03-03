@@ -134,8 +134,10 @@ class EntityRelation:
     relation_type: str  # Free-form string (e.g., "manages", "imports", "authored")
     strength: float = 0.5  # 0.0-1.0 confidence
     context: Optional[str] = None  # When/where this relation holds
-    source_episode_id: Optional[str] = None  # Provenance - which episode established this
+    source_episode_id: Optional[str] = None  # Most recent contributing episode
     created_at: datetime = field(default_factory=datetime.now)
+    episode_count: int = 1  # How many episodes support this relation
+    source_episode_ids: list[str] = field(default_factory=list)  # All contributing episode IDs
 
     def to_dict(self) -> dict:
         """Serialize to dictionary."""
@@ -147,6 +149,8 @@ class EntityRelation:
             "context": self.context,
             "source_episode_id": self.source_episode_id,
             "created_at": self.created_at.isoformat(),
+            "episode_count": self.episode_count,
+            "source_episode_ids": self.source_episode_ids,
         }
 
     @classmethod
@@ -160,6 +164,8 @@ class EntityRelation:
             context=data.get("context"),
             source_episode_id=data.get("source_episode_id"),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+            episode_count=data.get("episode_count", 1),
+            source_episode_ids=data.get("source_episode_ids", []),
         )
 
 
