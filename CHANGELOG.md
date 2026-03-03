@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-03-03
+
+### Fixed
+- When updating episodes, reset entity associations so they are rebuilt on next consolidation
+
 ## [0.5.2] - 2026-03-02
 
 ### Fixed
