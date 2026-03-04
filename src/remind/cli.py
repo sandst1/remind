@@ -109,7 +109,7 @@ def get_memory(db_path: str, llm: str, embedding: str):
 
 def run_async(coro):
     """Run an async function synchronously."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 @click.group()
