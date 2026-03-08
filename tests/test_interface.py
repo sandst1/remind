@@ -72,6 +72,9 @@ class TestMemoryInterface:
             EpisodeType.QUESTION,
             EpisodeType.META,
             EpisodeType.PREFERENCE,
+            EpisodeType.SPEC,
+            EpisodeType.PLAN,
+            EpisodeType.TASK,
         ]
 
         for ep_type in types:

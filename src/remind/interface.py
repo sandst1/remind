@@ -15,7 +15,7 @@ import json
 
 from remind.models import (
     Episode, Concept, ConsolidationResult, 
-    Entity, EpisodeType, Relation, RelationType,
+    Entity, EpisodeType, TaskStatus, Relation, RelationType,
 )
 from remind.store import MemoryStore, SQLiteMemoryStore
 from remind.providers.base import LLMProvider, EmbeddingProvider
@@ -654,6 +654,89 @@ class MemoryInterface:
         """Get all entities with their mention counts, sorted by most mentioned."""
         return self.store.get_entity_mention_counts()
     
+    # Task operations
+
+    def get_tasks(
+        self,
+        status: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        plan_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[Episode]:
+        """Get task episodes with optional filters.
+
+        Args:
+            status: Filter by task status (todo, in_progress, done, blocked)
+            entity_id: Filter by entity association
+            plan_id: Filter by originating plan episode ID
+            limit: Maximum number of tasks to return
+        """
+        all_tasks = self.store.get_episodes_by_type(EpisodeType.TASK, limit=1000)
+
+        filtered = []
+        for task in all_tasks:
+            meta = task.metadata or {}
+            if status and meta.get("status") != status:
+                continue
+            if entity_id and entity_id not in task.entity_ids:
+                continue
+            if plan_id and meta.get("plan_id") != plan_id:
+                continue
+            filtered.append(task)
+            if len(filtered) >= limit:
+                break
+
+        return filtered
+
+    def update_task_status(
+        self,
+        task_id: str,
+        status: str,
+        reason: Optional[str] = None,
+    ) -> Optional[Episode]:
+        """Transition a task's status with timestamp tracking.
+
+        Valid transitions:
+            todo -> in_progress, blocked
+            in_progress -> done, blocked, todo
+            blocked -> todo, in_progress
+            done -> todo (reopen)
+
+        Args:
+            task_id: Episode ID of the task
+            status: New status value
+            reason: Optional reason (used for blocked status)
+
+        Returns:
+            Updated Episode, or None if not found or invalid
+        """
+        episode = self.store.get_episode(task_id)
+        if not episode or episode.episode_type != EpisodeType.TASK:
+            return None
+
+        try:
+            new_status = TaskStatus(status)
+        except ValueError:
+            return None
+
+        meta = episode.metadata or {}
+        old_status = meta.get("status", "todo")
+
+        meta["status"] = new_status.value
+
+        if new_status == TaskStatus.IN_PROGRESS and old_status != "in_progress":
+            meta["started_at"] = datetime.now().isoformat()
+        elif new_status == TaskStatus.DONE:
+            meta["completed_at"] = datetime.now().isoformat()
+        elif new_status == TaskStatus.BLOCKED and reason:
+            meta["blocked_reason"] = reason
+        elif new_status in (TaskStatus.TODO, TaskStatus.IN_PROGRESS):
+            meta.pop("blocked_reason", None)
+
+        episode.metadata = meta
+        self.store.update_episode(episode)
+        return episode
+
     def get_stats(self) -> dict:
         """Get memory statistics including consolidation state."""
         stats = self.store.get_stats()

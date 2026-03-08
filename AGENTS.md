@@ -47,8 +47,13 @@ src/remind/
 | `Concept` | Generalized knowledge with confidence, relations, conditions. |
 | `Entity` | External referent (file, person, concept, tool). Format: `type:name` |
 | `Relation` | Typed edge between concepts (implies, contradicts, specializes, etc.) |
+| `TaskStatus` | Enum for task status: `todo`, `in_progress`, `done`, `blocked` |
+
+**Episode types**: `observation`, `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`
 
 **Episode lifecycle**: Created via `remember()` → Entity extraction → Consolidation → Marked consolidated
+
+**Task lifecycle**: `todo` → `in_progress` → `done` (or `blocked` → `todo`). Active tasks are excluded from consolidation; only completed tasks consolidate.
 
 **Entity ID format**: `type:name` (e.g., `file:src/auth.ts`, `person:alice`, `concept:caching`)
 

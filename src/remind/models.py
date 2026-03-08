@@ -29,6 +29,18 @@ class EpisodeType(Enum):
     QUESTION = "question"         # An open question or uncertainty
     META = "meta"                 # Meta-cognition about patterns/processes
     PREFERENCE = "preference"     # A preference, value, or opinion
+    SPEC = "spec"                 # A prescriptive requirement ("X shall be")
+    PLAN = "plan"                 # A sequenced intention ("we will do X then Y")
+    TASK = "task"                 # A discrete unit of work with status tracking
+
+
+class TaskStatus(Enum):
+    """Status values for task episodes."""
+
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+    BLOCKED = "blocked"
 
 
 class EntityType(Enum):

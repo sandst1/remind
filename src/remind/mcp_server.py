@@ -113,7 +113,7 @@ async def tool_remember(
         try:
             ep_type = EpisodeType(episode_type)
         except ValueError:
-            return f"Invalid episode_type: {episode_type}. Valid: observation, decision, question, meta, preference"
+            return f"Invalid episode_type: {episode_type}. Valid: observation, decision, question, meta, preference, spec, plan, task"
     
     # Parse entities if provided (comma-separated)
     entity_list = None
@@ -447,7 +447,7 @@ async def tool_update_episode(
         try:
             ep_type = EpisodeType(episode_type)
         except ValueError:
-            return f"Invalid episode_type: {episode_type}. Valid types: observation, decision, question, meta, preference"
+            return f"Invalid episode_type: {episode_type}. Valid types: observation, decision, question, meta, preference, spec, plan, task"
 
     # Parse entities
     entity_list = None
@@ -570,6 +570,168 @@ async def tool_restore_concept(concept_id: str) -> str:
         return f"Concept {concept_id} not found or not deleted."
 
 
+async def tool_task_add(
+    content: str,
+    entities: Optional[str] = None,
+    priority: str = "p1",
+    plan_id: Optional[str] = None,
+    spec_ids: Optional[str] = None,
+    depends_on: Optional[str] = None,
+) -> str:
+    """Create a new task."""
+    from remind.models import EpisodeType
+
+    memory = await get_memory()
+
+    meta = {"status": "todo", "priority": priority}
+    if plan_id:
+        meta["plan_id"] = plan_id
+    if spec_ids:
+        meta["spec_ids"] = [s.strip() for s in spec_ids.split(",") if s.strip()]
+    if depends_on:
+        meta["depends_on"] = [d.strip() for d in depends_on.split(",") if d.strip()]
+
+    entity_list = None
+    if entities:
+        entity_list = [e.strip() for e in entities.split(",") if e.strip()]
+
+    episode_id = memory.remember(
+        content,
+        metadata=meta,
+        episode_type=EpisodeType.TASK,
+        entities=entity_list,
+    )
+
+    lines = [f"Created task {episode_id}"]
+    lines.append(f"  Priority: {priority}")
+    if entity_list:
+        lines.append(f"  Entities: {', '.join(entity_list)}")
+    if plan_id:
+        lines.append(f"  Plan: {plan_id}")
+    return "\n".join(lines)
+
+
+async def tool_task_update_status(
+    task_id: str,
+    status: str,
+    reason: Optional[str] = None,
+) -> str:
+    """Update a task's status."""
+    memory = await get_memory()
+
+    updated = memory.update_task_status(task_id, status, reason=reason)
+    if updated:
+        msg = f"Task {task_id} -> {status}"
+        if reason:
+            msg += f" ({reason})"
+        return msg
+    return f"Task {task_id} not found or invalid status '{status}'."
+
+
+async def tool_list_tasks(
+    status: Optional[str] = None,
+    entity: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    include_done: bool = False,
+) -> str:
+    """List tasks with optional filters."""
+    memory = await get_memory()
+
+    tasks = memory.get_tasks(status=status, entity_id=entity, plan_id=plan_id)
+    if not include_done and not status:
+        tasks = [t for t in tasks if (t.metadata or {}).get("status") != "done"]
+
+    if not tasks:
+        return "No tasks found."
+
+    groups: dict[str, list] = {}
+    for t in tasks:
+        s = (t.metadata or {}).get("status", "todo")
+        groups.setdefault(s, []).append(t)
+
+    lines = []
+    for group_status in ["in_progress", "blocked", "todo", "done"]:
+        group_tasks = groups.get(group_status, [])
+        if not group_tasks:
+            continue
+        lines.append(f"\n{group_status.upper()} ({len(group_tasks)}):")
+        for t in group_tasks:
+            meta = t.metadata or {}
+            priority = meta.get("priority", "-")
+            line = f"  [{t.id}] ({priority}) {t.content}"
+            if group_status == "blocked" and meta.get("blocked_reason"):
+                line += f" — blocked: {meta['blocked_reason']}"
+            if t.entity_ids:
+                line += f"\n      entities: {', '.join(t.entity_ids[:3])}"
+            lines.append(line)
+
+    return "\n".join(lines)
+
+
+async def tool_list_specs(
+    entity: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 20,
+) -> str:
+    """List spec episodes."""
+    from remind.models import EpisodeType
+
+    memory = await get_memory()
+    episodes = memory.get_episodes_by_type(EpisodeType.SPEC, limit=1000)
+
+    if entity:
+        episodes = [ep for ep in episodes if entity in ep.entity_ids]
+    if status:
+        episodes = [ep for ep in episodes if (ep.metadata or {}).get("status") == status]
+
+    episodes = episodes[:limit]
+
+    if not episodes:
+        return "No specs found."
+
+    lines = [f"Specs ({len(episodes)}):"]
+    for ep in episodes:
+        meta_status = (ep.metadata or {}).get("status", "-")
+        entities_str = ", ".join(ep.entity_ids[:3]) if ep.entity_ids else ""
+        lines.append(f"  [{ep.id}] ({meta_status}) {ep.content}")
+        if entities_str:
+            lines.append(f"      entities: {entities_str}")
+
+    return "\n".join(lines)
+
+
+async def tool_list_plans(
+    entity: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 20,
+) -> str:
+    """List plan episodes."""
+    from remind.models import EpisodeType
+
+    memory = await get_memory()
+    episodes = memory.get_episodes_by_type(EpisodeType.PLAN, limit=1000)
+
+    if entity:
+        episodes = [ep for ep in episodes if entity in ep.entity_ids]
+    if status:
+        episodes = [ep for ep in episodes if (ep.metadata or {}).get("status") == status]
+
+    episodes = episodes[:limit]
+
+    if not episodes:
+        return "No plans found."
+
+    lines = [f"Plans ({len(episodes)}):"]
+    for ep in episodes:
+        meta_status = (ep.metadata or {}).get("status", "-")
+        entities_str = ", ".join(ep.entity_ids[:3]) if ep.entity_ids else ""
+        lines.append(f"  [{ep.id}] ({meta_status}) {ep.content}")
+        if entities_str:
+            lines.append(f"      entities: {entities_str}")
+
+    return "\n".join(lines)
+
+
 async def tool_list_deleted(
     item_type: Optional[str] = None,
     limit: int = 20,
@@ -646,7 +808,7 @@ def create_mcp_server():
         Args:
             content: The experience/observation to remember (clear, standalone statement)
             metadata: Optional JSON string with additional metadata
-            episode_type: Optional explicit type: observation, decision, question, meta, preference
+            episode_type: Optional explicit type: observation, decision, question, meta, preference, spec, plan, task
                           (auto-detected during consolidation if not provided)
             entities: Optional comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
                       (auto-detected during consolidation if not provided)
@@ -934,6 +1096,118 @@ def create_mcp_server():
             List of deleted items with their IDs and deletion timestamps
         """
         return await tool_list_deleted(item_type, limit)
+
+    @mcp.tool()
+    async def task_add(
+        content: str,
+        entities: Optional[str] = None,
+        priority: str = "p1",
+        plan_id: Optional[str] = None,
+        spec_ids: Optional[str] = None,
+        depends_on: Optional[str] = None,
+    ) -> str:
+        """Create a new task episode.
+
+        Tasks are discrete units of work with status tracking (todo -> in_progress -> done).
+        They can link to plans and specs via IDs.
+
+        Args:
+            content: Task description
+            entities: Optional comma-separated entity IDs (e.g., "module:auth,file:src/auth.ts")
+            priority: Priority level: p0, p1, p2 (default: p1)
+            plan_id: Optional plan episode ID this task implements
+            spec_ids: Optional comma-separated spec episode IDs this task implements
+            depends_on: Optional comma-separated task IDs this depends on
+
+        Returns:
+            Confirmation with task ID
+        """
+        return await tool_task_add(content, entities, priority, plan_id, spec_ids, depends_on)
+
+    @mcp.tool()
+    async def task_update_status(
+        task_id: str,
+        status: str,
+        reason: Optional[str] = None,
+    ) -> str:
+        """Update a task's status.
+
+        Valid statuses: todo, in_progress, done, blocked.
+        Timestamps are automatically tracked (started_at, completed_at).
+
+        Args:
+            task_id: Episode ID of the task
+            status: New status: todo, in_progress, done, blocked
+            reason: Optional reason (used when blocking a task)
+
+        Returns:
+            Confirmation or error message
+        """
+        return await tool_task_update_status(task_id, status, reason)
+
+    @mcp.tool()
+    async def list_tasks(
+        status: Optional[str] = None,
+        entity: Optional[str] = None,
+        plan_id: Optional[str] = None,
+        include_done: bool = False,
+    ) -> str:
+        """List tasks grouped by status.
+
+        By default excludes completed tasks. Use include_done=True to show all.
+
+        Args:
+            status: Filter by status: todo, in_progress, done, blocked
+            entity: Filter by entity ID (e.g., "module:auth")
+            plan_id: Filter by originating plan episode ID
+            include_done: Include completed tasks (default: False)
+
+        Returns:
+            Tasks grouped by status
+        """
+        return await tool_list_tasks(status, entity, plan_id, include_done)
+
+    @mcp.tool()
+    async def list_specs(
+        entity: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> str:
+        """List spec episodes (requirements, acceptance criteria).
+
+        Specs are prescriptive requirements ("X shall/must be the case").
+        They have a lifecycle: draft -> approved -> implemented -> deprecated.
+
+        Args:
+            entity: Filter by entity ID (e.g., "module:auth")
+            status: Filter by spec status: draft, approved, implemented, deprecated
+            limit: Maximum number of specs to show (default: 20)
+
+        Returns:
+            List of spec episodes
+        """
+        return await tool_list_specs(entity, status, limit)
+
+    @mcp.tool()
+    async def list_plans(
+        entity: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> str:
+        """List plan episodes (implementation plans, roadmaps).
+
+        Plans are sequenced intentions ("we will do X, then Y, then Z").
+        They have a lifecycle: draft -> active -> completed -> superseded.
+
+        Args:
+            entity: Filter by entity ID (e.g., "module:auth")
+            status: Filter by plan status: draft, active, completed, superseded
+            limit: Maximum number of plans to show (default: 20)
+
+        Returns:
+            List of plan episodes
+        """
+        return await tool_list_plans(entity, status, limit)
 
     return mcp
 

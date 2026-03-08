@@ -55,10 +55,10 @@ remind remember "User prefers TypeScript over JavaScript"
 remind remember "Use Redis for caching" -t decision -e tool:redis -e concept:caching
 ```
 
-**Episode types** (`-t`): observation (default), decision, question, meta, preference
+**Episode types** (`-t`): observation (default), decision, question, meta, preference, spec, plan, task
 **Entities** (`-e`): Format `type:name` (file, function, class, person, concept, tool, project)
 
-**When to use**: User preferences, project context, decisions+rationale, open questions, corrections
+**When to use**: User preferences, project context, decisions+rationale, open questions, corrections, specs, plans
 **Skip**: Trivial info, already-captured knowledge, raw conversation logs
 
 ## recall
@@ -147,7 +147,7 @@ def main(ctx, db: str, llm: str, embedding: str):
 @click.argument("content")
 @click.option("--metadata", "-m", help="JSON metadata to attach")
 @click.option("--type", "-t", "episode_type", 
-              type=click.Choice(["observation", "decision", "question", "meta", "preference"]),
+              type=click.Choice(["observation", "decision", "question", "meta", "preference", "spec", "plan", "task"]),
               help="Episode type (detected during consolidation if not provided)")
 @click.option("--entity", "-e", "entities", multiple=True, 
               help="Entity IDs (e.g., file:src/auth.ts, person:alice)")
@@ -840,6 +840,268 @@ def questions(ctx, limit: int):
     console.print(table)
 
 
+# ============================================================================
+# Spec, Plan, and Task Commands
+# ============================================================================
+
+@main.command("specs")
+@click.option("--limit", "-n", default=20, help="Number of specs to show")
+@click.option("--entity", "-e", help="Filter by entity ID")
+@click.option("--status", "-s", help="Filter by status (draft, approved, implemented, deprecated)")
+@click.pass_context
+def specs(ctx, limit: int, entity: Optional[str], status: Optional[str]):
+    """Show spec-type episodes (requirements, acceptance criteria)."""
+    from remind.store import SQLiteMemoryStore
+    from remind.models import EpisodeType
+    store = SQLiteMemoryStore(ctx.obj["db"])
+
+    episodes = store.get_episodes_by_type(EpisodeType.SPEC, limit=1000)
+
+    if entity:
+        episodes = [ep for ep in episodes if entity in ep.entity_ids]
+    if status:
+        episodes = [ep for ep in episodes if (ep.metadata or {}).get("status") == status]
+
+    episodes = episodes[:limit]
+
+    if not episodes:
+        console.print("[yellow]No specs recorded yet[/yellow]")
+        return
+
+    table = Table(title="Specs")
+    table.add_column("ID", style="cyan")
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Content")
+    table.add_column("Status", style="yellow")
+    table.add_column("Entities", style="dim")
+
+    for ep in episodes:
+        content = ep.content[:60] + "..." if len(ep.content) > 60 else ep.content
+        meta_status = (ep.metadata or {}).get("status", "-")
+        entities_str = ", ".join(ep.entity_ids[:2]) if ep.entity_ids else ""
+        if len(ep.entity_ids) > 2:
+            entities_str += f" +{len(ep.entity_ids)-2}"
+        table.add_row(ep.id, ep.timestamp.strftime("%Y-%m-%d %H:%M"), content,
+                       meta_status, entities_str)
+
+    console.print(table)
+
+
+@main.command("plans")
+@click.option("--limit", "-n", default=20, help="Number of plans to show")
+@click.option("--entity", "-e", help="Filter by entity ID")
+@click.option("--status", "-s", help="Filter by status (draft, active, completed, superseded)")
+@click.pass_context
+def plans(ctx, limit: int, entity: Optional[str], status: Optional[str]):
+    """Show plan-type episodes (implementation plans, roadmaps)."""
+    from remind.store import SQLiteMemoryStore
+    from remind.models import EpisodeType
+    store = SQLiteMemoryStore(ctx.obj["db"])
+
+    episodes = store.get_episodes_by_type(EpisodeType.PLAN, limit=1000)
+
+    if entity:
+        episodes = [ep for ep in episodes if entity in ep.entity_ids]
+    if status:
+        episodes = [ep for ep in episodes if (ep.metadata or {}).get("status") == status]
+
+    episodes = episodes[:limit]
+
+    if not episodes:
+        console.print("[yellow]No plans recorded yet[/yellow]")
+        return
+
+    table = Table(title="Plans")
+    table.add_column("ID", style="cyan")
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Content")
+    table.add_column("Status", style="yellow")
+    table.add_column("Entities", style="dim")
+
+    for ep in episodes:
+        content = ep.content[:60] + "..." if len(ep.content) > 60 else ep.content
+        meta_status = (ep.metadata or {}).get("status", "-")
+        entities_str = ", ".join(ep.entity_ids[:2]) if ep.entity_ids else ""
+        if len(ep.entity_ids) > 2:
+            entities_str += f" +{len(ep.entity_ids)-2}"
+        table.add_row(ep.id, ep.timestamp.strftime("%Y-%m-%d %H:%M"), content,
+                       meta_status, entities_str)
+
+    console.print(table)
+
+
+@main.command("tasks")
+@click.option("--status", "-s", help="Filter by status (todo, in_progress, done, blocked)")
+@click.option("--entity", "-e", help="Filter by entity ID")
+@click.option("--plan", "-p", help="Filter by plan episode ID")
+@click.option("--all", "show_all", is_flag=True, help="Include completed tasks")
+@click.pass_context
+def tasks(ctx, status: Optional[str], entity: Optional[str], plan: Optional[str],
+          show_all: bool):
+    """Show task episodes grouped by status."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    task_list = memory.get_tasks(
+        status=status,
+        entity_id=entity,
+        plan_id=plan,
+    )
+
+    if not show_all and not status:
+        task_list = [t for t in task_list if (t.metadata or {}).get("status") != "done"]
+
+    if not task_list:
+        console.print("[yellow]No tasks found[/yellow]")
+        return
+
+    groups: dict[str, list] = {"todo": [], "in_progress": [], "blocked": [], "done": []}
+    for t in task_list:
+        s = (t.metadata or {}).get("status", "todo")
+        groups.setdefault(s, []).append(t)
+
+    status_styles = {
+        "todo": "white",
+        "in_progress": "cyan",
+        "blocked": "red",
+        "done": "green",
+    }
+
+    for group_status in ["in_progress", "blocked", "todo", "done"]:
+        group_tasks = groups.get(group_status, [])
+        if not group_tasks:
+            continue
+
+        style = status_styles.get(group_status, "white")
+        table = Table(title=f"[{style}]{group_status.upper()}[/{style}] ({len(group_tasks)})")
+        table.add_column("ID", style="cyan")
+        table.add_column("Content")
+        table.add_column("Priority", style="yellow", justify="center")
+        table.add_column("Entities", style="dim")
+
+        for t in group_tasks:
+            meta = t.metadata or {}
+            content = t.content[:55] + "..." if len(t.content) > 55 else t.content
+            priority = meta.get("priority", "-")
+            entities_str = ", ".join(t.entity_ids[:2]) if t.entity_ids else ""
+            if len(t.entity_ids) > 2:
+                entities_str += f" +{len(t.entity_ids)-2}"
+
+            if group_status == "blocked":
+                reason = meta.get("blocked_reason", "")
+                if reason:
+                    content += f" [red]({reason})[/red]"
+
+            table.add_row(t.id, content, priority, entities_str)
+
+        console.print(table)
+        console.print()
+
+
+@main.group("task")
+def task_group():
+    """Manage tasks (add, start, done, block, unblock)."""
+    pass
+
+
+main.add_command(task_group)
+
+
+@task_group.command("add")
+@click.argument("content")
+@click.option("--entity", "-e", "entities", multiple=True, help="Entity IDs")
+@click.option("--priority", "-p", default="p1", type=click.Choice(["p0", "p1", "p2"]),
+              help="Priority (default: p1)")
+@click.option("--plan", help="Plan episode ID this task implements")
+@click.option("--spec", "spec_ids", multiple=True, help="Spec episode IDs this task implements")
+@click.option("--depends-on", "depends_on", multiple=True, help="Task IDs this depends on")
+@click.pass_context
+def task_add(ctx, content: str, entities: tuple, priority: str, plan: Optional[str],
+             spec_ids: tuple, depends_on: tuple):
+    """Add a new task."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    meta = {"status": "todo", "priority": priority}
+    if plan:
+        meta["plan_id"] = plan
+    if spec_ids:
+        meta["spec_ids"] = list(spec_ids)
+    if depends_on:
+        meta["depends_on"] = list(depends_on)
+
+    from remind.models import EpisodeType
+    episode_id = memory.remember(
+        content,
+        metadata=meta,
+        episode_type=EpisodeType.TASK,
+        entities=list(entities) if entities else None,
+    )
+
+    console.print(f"[green]✓[/green] Created task [cyan]{episode_id}[/cyan]")
+    console.print(f"  Priority: [yellow]{priority}[/yellow]")
+    if entities:
+        console.print(f"  Entities: {', '.join(entities)}")
+    if plan:
+        console.print(f"  Plan: {plan}")
+    if depends_on:
+        console.print(f"  Depends on: {', '.join(depends_on)}")
+
+
+@task_group.command("start")
+@click.argument("task_id")
+@click.pass_context
+def task_start(ctx, task_id: str):
+    """Start a task (todo -> in_progress)."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    updated = memory.update_task_status(task_id, "in_progress")
+    if updated:
+        console.print(f"[green]✓[/green] Started task [cyan]{task_id}[/cyan]")
+    else:
+        console.print(f"[red]Task {task_id} not found[/red]")
+
+
+@task_group.command("done")
+@click.argument("task_id")
+@click.pass_context
+def task_done(ctx, task_id: str):
+    """Complete a task (-> done)."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    updated = memory.update_task_status(task_id, "done")
+    if updated:
+        console.print(f"[green]✓[/green] Completed task [cyan]{task_id}[/cyan]")
+    else:
+        console.print(f"[red]Task {task_id} not found[/red]")
+
+
+@task_group.command("block")
+@click.argument("task_id")
+@click.argument("reason", required=False, default="")
+@click.pass_context
+def task_block(ctx, task_id: str, reason: str):
+    """Block a task with an optional reason."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    updated = memory.update_task_status(task_id, "blocked", reason=reason or None)
+    if updated:
+        msg = f"[green]✓[/green] Blocked task [cyan]{task_id}[/cyan]"
+        if reason:
+            msg += f" ([red]{reason}[/red])"
+        console.print(msg)
+    else:
+        console.print(f"[red]Task {task_id} not found[/red]")
+
+
+@task_group.command("unblock")
+@click.argument("task_id")
+@click.pass_context
+def task_unblock(ctx, task_id: str):
+    """Unblock a task (blocked -> todo)."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    updated = memory.update_task_status(task_id, "todo")
+    if updated:
+        console.print(f"[green]✓[/green] Unblocked task [cyan]{task_id}[/cyan]")
+    else:
+        console.print(f"[red]Task {task_id} not found[/red]")
+
+
 @main.command("extract-relations")
 @click.option("--batch-size", "-b", default=50, help="Number of episodes to process per batch")
 @click.option("--force", "-f", is_flag=True, help="Re-extract relations for all episodes (including already extracted)")
@@ -1025,7 +1287,7 @@ def skill_install():
 @click.argument("episode_id")
 @click.option("--content", "-c", help="New content text")
 @click.option("--type", "-t", "episode_type",
-              type=click.Choice(["observation", "decision", "question", "meta", "preference"]),
+              type=click.Choice(["observation", "decision", "question", "meta", "preference", "spec", "plan", "task"]),
               help="New episode type")
 @click.option("--entity", "-e", "entities", multiple=True, help="New entity IDs (replaces existing)")
 @click.pass_context

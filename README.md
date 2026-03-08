@@ -12,6 +12,8 @@ Generalization-capable memory layer for LLMs. Unlike simple RAG systems that sto
 - **LLM-Powered Consolidation**: Episodes are processed into generalized concepts (like "sleeping" consolidates memory)
 - **Semantic Concept Graph**: Concepts have typed relations (implies, contradicts, specializes, etc.)
 - **Spreading Activation Retrieval**: Queries activate not just matching concepts but related ones through the graph
+- **Structured Episode Types**: First-class support for specs, plans, and tasks alongside observations and decisions
+- **Task Management**: Track work items with status lifecycle (todo → in_progress → done/blocked)
 - **Multi-Provider Support**: Works with Anthropic, OpenAI, Azure OpenAI, and Ollama (local)
 
 ![Architecture Diagram](docs/architecture.png)
@@ -253,7 +255,7 @@ Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
 The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`. Each project can have its own database.
 
 **Available MCP Tools:**
-- `remember` - Store experiences/observations
+- `remember` - Store experiences/observations (supports types: observation, decision, question, preference, meta, spec, plan, task)
 - `recall` - Retrieve relevant memories
 - `consolidate` - Process episodes into concepts (includes entity relationship extraction)
 - `inspect` - View concepts or episodes
@@ -267,6 +269,11 @@ The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`
 - `delete_concept` - Soft delete a concept
 - `restore_concept` - Restore a deleted concept
 - `list_deleted` - List soft-deleted items
+- `task_add` - Create a new task with optional priority, plan, and dependency links
+- `task_update_status` - Transition a task's status (todo/in_progress/done/blocked)
+- `list_tasks` - List tasks filtered by status, entity, or plan
+- `list_specs` - List spec episodes
+- `list_plans` - List plan episodes
 
 **Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
 
@@ -282,8 +289,9 @@ remind skill-install
 This creates `.claude/skills/remind/SKILL.md` in your project directory. Claude Code will automatically load the skill and can use it via `/remind`.
 
 The skill provides instructions for:
-- `remind remember` - Store experiences
+- `remind remember` - Store experiences (observations, decisions, specs, plans, tasks, etc.)
 - `remind recall` - Retrieve memories
+- `remind task add/start/done/block/unblock` - Manage tasks
 - `remind end-session` - Consolidate at session end
 
 The CLI automatically uses the project-local database (`<cwd>/.remind/remind.db`), so each project has isolated memory.
@@ -346,6 +354,11 @@ Full CLI examples:
 remind remember "User likes Python and Rust"
 remind remember "User works on backend systems"
 
+# Typed episodes
+remind remember -t spec "POST /auth/login must return a JWT token"
+remind remember -t plan "Auth: 1) bcrypt hashing 2) login route 3) JWT middleware"
+remind remember -t decision "Using PostgreSQL for the user store"
+
 # Manual consolidation
 remind consolidate
 
@@ -388,7 +401,19 @@ remind purge-all                 # Permanently delete all soft-deleted items
 # Episode filtering
 remind decisions                 # Show decision-type episodes
 remind questions                 # Show open questions/uncertainties
+remind specs                     # Show spec episodes (requirements)
+remind plans                     # Show plan episodes (roadmaps)
 remind search "keyword"          # Search concepts by keyword
+
+# Task management
+remind tasks                     # Show tasks grouped by status
+remind tasks --status todo       # Filter by status
+remind tasks --entity module:auth # Filter by entity
+remind task add "Implement auth" -e module:auth --priority p0
+remind task start <task-id>      # Mark as in_progress
+remind task done <task-id>       # Mark as done
+remind task block <task-id> "Waiting on API key"
+remind task unblock <task-id>    # Back to todo
 
 # Session management
 remind end-session               # End session and consolidate pending episodes
@@ -413,7 +438,7 @@ remind --llm ollama --embedding ollama remember "..."
 ```python
 import asyncio
 from dotenv import load_dotenv
-from remind import create_memory
+from remind import create_memory, EpisodeType
 
 load_dotenv()  # Load .env file
 
@@ -428,6 +453,20 @@ async def main():
     memory.remember("User is building a distributed system")
     memory.remember("User values type safety")
 
+    # Typed episodes
+    memory.remember("API must return JSON", episode_type=EpisodeType.SPEC)
+    memory.remember("Build auth first, then billing", episode_type=EpisodeType.PLAN)
+
+    # Task management
+    task_id = memory.remember(
+        "Implement JWT auth",
+        episode_type=EpisodeType.TASK,
+        metadata={"status": "todo", "priority": "p0"},
+        entities=["module:auth"],
+    )
+    memory.update_task_status(task_id, "in_progress")
+    memory.update_task_status(task_id, "done")
+
     # Run consolidation - this is where LLM work happens
     result = await memory.consolidate(force=True)
     print(f"Created {result.concepts_created} concepts")
@@ -436,13 +475,30 @@ async def main():
     context = await memory.recall("What programming preferences?")
     print(context)
 
+    # Query tasks, specs, plans
+    active_tasks = memory.get_tasks(status="in_progress")
+    specs = memory.get_episodes_by_type(EpisodeType.SPEC)
+
 asyncio.run(main())
 ```
 
 ## Core Concepts
 
 ### Episodes
-Raw experiences - specific interactions or observations. These are temporary and get consolidated.
+Raw experiences - specific interactions or observations. Each episode has a type:
+
+| Type | Purpose |
+|------|---------|
+| `observation` | Something noticed or learned (default) |
+| `decision` | A choice that was made |
+| `question` | An open question or uncertainty |
+| `preference` | An opinion or value |
+| `meta` | Reflection about thinking process |
+| `spec` | A prescriptive requirement ("X must/shall...") |
+| `plan` | A sequenced intention ("we will do X then Y") |
+| `task` | A discrete unit of work with status tracking |
+
+Most episodes are temporary and get consolidated into concepts. Task episodes are special: only completed tasks are consolidated, keeping active work items operational.
 
 ### Concepts
 Generalized knowledge extracted from episodes. Each concept has:
@@ -464,11 +520,24 @@ Typed connections between concepts:
 - `part_of` - A is a component of B
 - `context_of` - A provides context for B
 
+### Tasks
+Task episodes track discrete work items with a status lifecycle:
+
+```
+todo → in_progress → done
+  ↓         ↓
+  └──► blocked ──► todo (unblock)
+```
+
+Tasks can link to plans (`plan_id`), specs (`spec_ids`), and other tasks (`depends_on`) via metadata. Timestamps are recorded automatically for status transitions (`started_at`, `completed_at`).
+
+Active tasks (todo, in_progress, blocked) are excluded from consolidation — they remain as live operational data. Only completed tasks contribute to the generalized knowledge graph.
+
 ### Consolidation
 The "sleep" process where episodes are processed into concepts. Runs in two phases:
 
 **Phase 1 - Extraction:**
-- Classifies episode types (observation, decision, question, etc.)
+- Classifies episode types (observation, decision, question, spec, plan, task, etc.)
 - Extracts entity mentions (files, people, tools, concepts)
 - Identifies relationships between entities mentioned in the same episode
 

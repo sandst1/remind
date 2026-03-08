@@ -486,6 +486,9 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(target_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_episode ON entity_relations(source_episode_id)")
 
+            # Episode type index for task/spec/plan queries
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_type ON episodes(json_extract(data, '$.episode_type'))")
+
             conn.commit()
             
             # Run migrations for existing databases

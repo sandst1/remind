@@ -16,7 +16,7 @@ from typing import Optional
 import json
 import logging
 
-from remind.models import Concept, Episode, Relation, RelationType, ConsolidationResult, ExtractionResult
+from remind.models import Concept, Episode, EpisodeType, Relation, RelationType, ConsolidationResult, ExtractionResult
 from remind.store import MemoryStore
 from remind.providers.base import LLMProvider, EmbeddingProvider
 from remind.extraction import EntityExtractor
@@ -180,6 +180,22 @@ class Consolidator:
         # Phase 2: Generalize unconsolidated episodes into concepts
         # Get unconsolidated episodes
         episodes = self.store.get_unconsolidated_episodes(limit=self.batch_size)
+
+        # Filter out active task episodes — only completed tasks should consolidate
+        active_tasks = []
+        consolidatable = []
+        for ep in episodes:
+            if ep.episode_type == EpisodeType.TASK:
+                task_status = (ep.metadata or {}).get("status", "todo")
+                if task_status != "done":
+                    active_tasks.append(ep)
+                    continue
+            consolidatable.append(ep)
+
+        if active_tasks:
+            logger.info(f"Skipping {len(active_tasks)} active task episodes")
+
+        episodes = consolidatable
         
         if not episodes:
             logger.info("No episodes to consolidate")
