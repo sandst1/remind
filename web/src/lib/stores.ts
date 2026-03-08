@@ -40,7 +40,7 @@ export const entitiesLoading = writable(false);
 export const entitiesError = writable<string | null>(null);
 
 // Navigation
-export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'memory-health' | 'entity-graph';
+export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'memory-health' | 'entity-graph' | 'tasks';
 export const currentView = writable<View>('dashboard');
 
 // Entity Graph (network) visualization state

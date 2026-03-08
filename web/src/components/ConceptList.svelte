@@ -23,7 +23,12 @@
     ArrowRight,
     ArrowUp,
     ArrowDown,
+    FileText,
+    MapPin,
+    ListChecks,
+    Trash2,
   } from 'lucide-svelte';
+  import { deleteConcept } from '../lib/api';
 
   type SortKey = 'alpha' | 'recalls';
 
@@ -209,6 +214,9 @@
     question: CircleHelp,
     meta: Brain,
     preference: Heart,
+    spec: FileText,
+    plan: MapPin,
+    task: ListChecks,
   };
 
   const episodeTypeLabels: Record<EpisodeType, string> = {
@@ -217,6 +225,9 @@
     question: 'Question',
     meta: 'Meta',
     preference: 'Preference',
+    spec: 'Spec',
+    plan: 'Plan',
+    task: 'Task',
   };
 
   function formatDate(isoDate: string): string {
@@ -228,6 +239,18 @@
       hour: '2-digit',
       minute: '2-digit',
     });
+  }
+
+  async function handleDeleteConcept(conceptId: string) {
+    if (!confirm('Delete this concept? It can be restored later.')) return;
+    try {
+      await deleteConcept(conceptId);
+      conceptPath.set([]);
+      await loadAll();
+    } catch (e) {
+      relationError = e instanceof Error ? e.message : 'Failed to delete concept';
+      setTimeout(() => relationError = null, 3000);
+    }
   }
 
   async function toggleEpisodeExpand(episodeId: string) {
@@ -340,9 +363,14 @@
                   {/if}
                   {concept.title || 'Concept Details'}
                 </h3>
-                <button class="close-btn" onclick={() => closePath(index)}>
-                  <X size={20} />
-                </button>
+                <div class="panel-actions">
+                  <button class="delete-btn" onclick={() => handleDeleteConcept(concept.id)} title="Delete concept">
+                    <Trash2 size={16} />
+                  </button>
+                  <button class="close-btn" onclick={() => closePath(index)}>
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
 
               <div class="detail-section">
@@ -765,7 +793,13 @@
     color: var(--color-text-secondary);
   }
 
-  .close-btn {
+  .panel-actions {
+    display: flex;
+    gap: var(--space-xs);
+    align-items: center;
+  }
+
+  .close-btn, .delete-btn {
     padding: var(--space-xs);
     background: var(--color-bg);
     border: 1px solid var(--color-border);
@@ -780,6 +814,12 @@
   .close-btn:hover, .back-btn:hover {
     background: var(--color-surface-hover);
     color: var(--color-text);
+  }
+
+  .delete-btn:hover {
+    background: var(--color-error-bg, #fee2e2);
+    color: var(--color-error, #dc2626);
+    border-color: var(--color-error, #dc2626);
   }
 
   .detail-section {
@@ -1000,6 +1040,9 @@
   .type-question { background: var(--color-purple-bg); color: var(--color-purple); }
   .type-meta { background: var(--color-green-bg); color: var(--color-green); }
   .type-preference { background: var(--color-pink-bg); color: var(--color-pink); }
+  .type-spec { background: var(--color-amber-bg, #fef3c7); color: var(--color-amber, #d97706); }
+  .type-plan { background: var(--color-cyan-bg, #e0f2fe); color: var(--color-cyan, #0891b2); }
+  .type-task { background: var(--color-indigo-bg, #e0e7ff); color: var(--color-indigo, #4f46e5); }
 
   .episode-date {
     font-size: var(--font-size-xs);

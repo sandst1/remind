@@ -38,6 +38,9 @@
     question: 'Questions',
     meta: 'Meta',
     preference: 'Preferences',
+    spec: 'Specs',
+    plan: 'Plans',
+    task: 'Tasks',
   };
 
   const relationTypeLabels: Record<string, string> = {

@@ -9,7 +9,8 @@
   } from '../lib/stores';
   import { fetchEpisodes } from '../lib/api';
   import type { Episode, EpisodeType } from '../lib/types';
-  import { Eye, Zap, CircleHelp, Brain, Heart, Search, Filter } from 'lucide-svelte';
+  import { Eye, Zap, CircleHelp, Brain, Heart, Search, Filter, FileText, MapPin, ListChecks, Circle, Play, CheckCircle2, Ban, Trash2 } from 'lucide-svelte';
+  import { deleteEpisode } from '../lib/api';
 
   let filterType: EpisodeType | '' = '';
   let filterConsolidated: boolean | null = null;
@@ -85,6 +86,9 @@
     question: 'Question',
     meta: 'Meta',
     preference: 'Preference',
+    spec: 'Spec',
+    plan: 'Plan',
+    task: 'Task',
   };
 
   const episodeTypeIcons: Record<EpisodeType, any> = {
@@ -93,7 +97,34 @@
     question: CircleHelp,
     meta: Brain,
     preference: Heart,
+    spec: FileText,
+    plan: MapPin,
+    task: ListChecks,
   };
+
+  const taskStatusIcons: Record<string, any> = {
+    todo: Circle,
+    in_progress: Play,
+    done: CheckCircle2,
+    blocked: Ban,
+  };
+
+  const taskStatusLabels: Record<string, string> = {
+    todo: 'To Do',
+    in_progress: 'In Progress',
+    done: 'Done',
+    blocked: 'Blocked',
+  };
+
+  async function handleDelete(episodeId: string) {
+    if (!confirm('Delete this episode? It can be restored later.')) return;
+    try {
+      await deleteEpisode(episodeId);
+      await loadEpisodes();
+    } catch (e) {
+      episodesError.set(e instanceof Error ? e.message : 'Failed to delete episode');
+    }
+  }
 </script>
 
 <div class="episode-timeline">
@@ -121,6 +152,9 @@
           <option value="question">Questions</option>
           <option value="meta">Meta</option>
           <option value="preference">Preferences</option>
+          <option value="spec">Specs</option>
+          <option value="plan">Plans</option>
+          <option value="task">Tasks</option>
         </select>
       </div>
 
@@ -162,10 +196,25 @@
                 <span class="pending-badge">Pending</span>
               {/if}
             </div>
+            {#if episode.episode_type === 'task' && episode.metadata?.status}
+              <div class="task-status status-{episode.metadata.status}">
+                <svelte:component this={taskStatusIcons[episode.metadata.status] || Circle} size={14} />
+                {taskStatusLabels[episode.metadata.status] || episode.metadata.status}
+                {#if episode.metadata.priority}
+                  <span class="task-priority priority-{episode.metadata.priority}">{episode.metadata.priority}</span>
+                {/if}
+              </div>
+            {/if}
             {#if episode.title}
               <div class="episode-title">{episode.title}</div>
             {/if}
             <div class="episode-content">{episode.content}</div>
+            {#if episode.metadata?.spec_status}
+              <div class="spec-status">Status: {episode.metadata.spec_status}</div>
+            {/if}
+            {#if episode.metadata?.plan_status}
+              <div class="plan-status">Status: {episode.metadata.plan_status}</div>
+            {/if}
             {#if episode.entity_ids.length > 0}
               <div class="episode-entities">
                 {#each episode.entity_ids as entityId}
@@ -180,6 +229,9 @@
                   Confidence: {Math.round(episode.confidence * 100)}%
                 </span>
               {/if}
+              <button class="delete-btn" onclick={() => handleDelete(episode.id)} title="Delete episode">
+                <Trash2 size={14} />
+              </button>
             </div>
           </div>
         </div>
@@ -370,6 +422,48 @@
   .type-question { background: var(--color-purple-bg); color: var(--color-purple); }
   .type-meta { background: var(--color-green-bg); color: var(--color-green); }
   .type-preference { background: var(--color-pink-bg); color: var(--color-pink); }
+  .type-spec { background: var(--color-amber-bg, #fef3c7); color: var(--color-amber, #d97706); }
+  .type-plan { background: var(--color-cyan-bg, #e0f2fe); color: var(--color-cyan, #0891b2); }
+  .type-task { background: var(--color-indigo-bg, #e0e7ff); color: var(--color-indigo, #4f46e5); }
+
+  .task-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    margin-bottom: var(--space-sm);
+    width: fit-content;
+  }
+
+  .status-todo { background: var(--color-zinc-100, #f4f4f5); color: var(--color-zinc-600, #52525b); }
+  .status-in_progress { background: var(--color-blue-bg); color: var(--color-blue); }
+  .status-done { background: var(--color-success-bg); color: var(--color-success); }
+  .status-blocked { background: var(--color-error-bg, #fee2e2); color: var(--color-error, #dc2626); }
+
+  :global([data-theme="dark"]) .status-todo { background: var(--color-zinc-800, #27272a); color: var(--color-zinc-400, #a1a1aa); }
+
+  .task-priority {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    text-transform: uppercase;
+    margin-left: 4px;
+  }
+
+  .priority-p0 { background: var(--color-error-bg, #fee2e2); color: var(--color-error, #dc2626); }
+  .priority-p1 { background: var(--color-warning-bg); color: var(--color-warning); }
+  .priority-p2 { background: var(--color-zinc-100, #f4f4f5); color: var(--color-zinc-500, #71717a); }
+
+  .spec-status, .plan-status {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    margin-top: var(--space-sm);
+    font-style: italic;
+  }
 
   .episode-date {
     font-size: var(--font-size-xs);
@@ -428,6 +522,30 @@
   
   .episode-id {
     font-family: var(--font-mono);
+  }
+
+  .delete-btn {
+    margin-left: auto;
+    padding: 4px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--color-text-muted);
+    display: flex;
+    align-items: center;
+    transition: all 0.15s ease;
+    opacity: 0;
+  }
+
+  .timeline-content:hover .delete-btn {
+    opacity: 1;
+  }
+
+  .delete-btn:hover {
+    background: var(--color-error-bg, #fee2e2);
+    color: var(--color-error, #dc2626);
+    border-color: var(--color-error, #dc2626);
   }
 
   .pagination {

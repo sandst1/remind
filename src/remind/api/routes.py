@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from remind.models import EpisodeType
+from remind.models import EpisodeType, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -879,6 +879,176 @@ async def list_databases(request: Request) -> JSONResponse:
 
 
 # =============================================================================
+# Tasks
+# =============================================================================
+
+
+async def get_tasks(request: Request) -> JSONResponse:
+    """Get tasks with optional status/entity/plan filters."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        status = request.query_params.get("status")
+        entity_id = request.query_params.get("entity")
+        plan_id = request.query_params.get("plan_id")
+        include_done = request.query_params.get("include_done", "false").lower() == "true"
+        limit = int(request.query_params.get("limit", 50))
+
+        tasks = memory.get_tasks(
+            status=status,
+            entity_id=entity_id,
+            plan_id=plan_id,
+            limit=1000,
+        )
+
+        if not include_done:
+            tasks = [t for t in tasks if (t.metadata or {}).get("status") != "done"]
+
+        total = len(tasks)
+        tasks = tasks[:limit]
+
+        return JSONResponse({
+            "tasks": [t.to_dict() for t in tasks],
+            "total": total,
+        })
+    except Exception as e:
+        logger.exception("Failed to get tasks")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def update_task_status(request: Request) -> JSONResponse:
+    """Update a task's status."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    task_id = request.path_params.get("id")
+
+    try:
+        body = await request.json()
+        status = body.get("status")
+        reason = body.get("reason")
+
+        if not status:
+            return JSONResponse({"error": "Missing 'status' in request body"}, status_code=400)
+
+        updated = memory.update_task_status(task_id, status, reason=reason)
+        if not updated:
+            return JSONResponse({"error": "Task not found or invalid status"}, status_code=404)
+
+        return JSONResponse({"success": True, "task": updated.to_dict()})
+    except Exception as e:
+        logger.exception("Failed to update task status")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def add_task(request: Request) -> JSONResponse:
+    """Create a new task episode."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        body = await request.json()
+        content = body.get("content")
+        if not content:
+            return JSONResponse({"error": "Missing 'content' in request body"}, status_code=400)
+
+        entities = body.get("entities", [])
+        priority = body.get("priority", "p1")
+        plan_id = body.get("plan_id")
+        spec_ids = body.get("spec_ids", [])
+        depends_on = body.get("depends_on", [])
+
+        metadata = {"status": "todo", "priority": priority}
+        if plan_id:
+            metadata["plan_id"] = plan_id
+        if spec_ids:
+            metadata["spec_ids"] = spec_ids
+        if depends_on:
+            metadata["depends_on"] = depends_on
+
+        episode = memory.remember(
+            content=content,
+            episode_type=EpisodeType.TASK,
+            entities=entities or None,
+            metadata=metadata,
+        )
+
+        return JSONResponse({"success": True, "task": episode.to_dict()}, status_code=201)
+    except Exception as e:
+        logger.exception("Failed to add task")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# =============================================================================
+# Specs & Plans
+# =============================================================================
+
+
+async def get_specs(request: Request) -> JSONResponse:
+    """Get spec episodes."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        limit = int(request.query_params.get("limit", 50))
+        entity_id = request.query_params.get("entity")
+        status = request.query_params.get("status")
+
+        specs = memory.store.get_episodes_by_type(EpisodeType.SPEC, limit=1000)
+
+        if entity_id:
+            specs = [s for s in specs if entity_id in s.entity_ids]
+        if status:
+            specs = [s for s in specs if (s.metadata or {}).get("spec_status") == status]
+
+        total = len(specs)
+        specs = specs[:limit]
+
+        return JSONResponse({
+            "specs": [s.to_dict() for s in specs],
+            "total": total,
+        })
+    except Exception as e:
+        logger.exception("Failed to get specs")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def get_plans(request: Request) -> JSONResponse:
+    """Get plan episodes."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        limit = int(request.query_params.get("limit", 50))
+        entity_id = request.query_params.get("entity")
+        status = request.query_params.get("status")
+
+        plans = memory.store.get_episodes_by_type(EpisodeType.PLAN, limit=1000)
+
+        if entity_id:
+            plans = [p for p in plans if entity_id in p.entity_ids]
+        if status:
+            plans = [p for p in plans if (p.metadata or {}).get("plan_status") == status]
+
+        total = len(plans)
+        plans = plans[:limit]
+
+        return JSONResponse({
+            "plans": [p.to_dict() for p in plans],
+            "total": total,
+        })
+    except Exception as e:
+        logger.exception("Failed to get plans")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# =============================================================================
 # Route definitions
 # =============================================================================
 
@@ -914,6 +1084,13 @@ api_routes = [
     Route("/api/v1/chat", stream_chat, methods=["POST"]),
     # Databases
     Route("/api/v1/databases", list_databases, methods=["GET"]),
+    # Tasks
+    Route("/api/v1/tasks", get_tasks, methods=["GET"]),
+    Route("/api/v1/tasks", add_task, methods=["POST"]),
+    Route("/api/v1/tasks/{id}/status", update_task_status, methods=["PUT", "PATCH"]),
+    # Specs & Plans
+    Route("/api/v1/specs", get_specs, methods=["GET"]),
+    Route("/api/v1/plans", get_plans, methods=["GET"]),
     # Bulk operations
     Route("/api/v1/deleted/purge-all", purge_all_deleted, methods=["DELETE"]),
 ]

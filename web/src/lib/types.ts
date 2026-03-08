@@ -15,7 +15,12 @@ export type EpisodeType =
   | 'decision'
   | 'question'
   | 'meta'
-  | 'preference';
+  | 'preference'
+  | 'spec'
+  | 'plan'
+  | 'task';
+
+export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked';
 
 export type EntityType =
   | 'file'
@@ -75,7 +80,10 @@ export interface Episode {
   entity_ids: string[];
   consolidated: boolean;
   entities_extracted: boolean;
+  relations_extracted: boolean;
   confidence: number;
+  metadata: Record<string, any>;
+  deleted_at: string | null;
 }
 
 export interface Entity {
@@ -90,12 +98,13 @@ export interface Entity {
 export interface EntityRelation {
   source_id: string;
   target_id: string;
-  relation_type: string;  // Free-form string (e.g., "manages", "imports", "authored")
+  relation_type: string;
   strength: number;
   context: string | null;
   source_episode_id: string | null;
   created_at: string;
-  // Enriched by API
+  episode_count: number;
+  source_episode_ids: string[];
   direction?: 'incoming' | 'outgoing';
   related_entity?: Entity;
 }

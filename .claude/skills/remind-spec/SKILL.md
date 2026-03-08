@@ -7,6 +7,8 @@ description: Spec-driven software development using Remind as the source of trut
 
 > **Important**: The `remind` CLI tool is already available in this environment. Use it directly — no MCP server setup required.
 
+> **DO NOT WRITE CODE.** This skill covers spec capture, planning, and task creation — NOT implementation. You must not create, edit, or modify any source code files during spec/planning phases. Your job here is to understand what the user wants, decompose it into clear requirements, and store those in Remind. Implementation is a separate step that happens later, explicitly requested by the user. Do not "get started" on code, do not scaffold files, do not write prototypes. Capture the idea first. Build later.
+
 Use Remind as the **source of truth** for software specifications. Specs are stored as episodes, linked to files and concepts via entities, and consolidated into architectural knowledge.
 
 ## Entity Naming Conventions
@@ -156,7 +158,9 @@ remind task unblock <id>    # Unblock
 
 Active tasks (todo/in_progress/blocked) are **excluded from consolidation**. When a task is marked done, it becomes eligible for consolidation, allowing the system to learn from completed work.
 
-### Phase 3: Implementation
+### Phase 3: Implementation (use the implement skill, not this one)
+
+> **STOP.** If you were invoked as the spec skill, your job ends at Phase 2.5 (task creation). Do not proceed to implementation. The user will explicitly request implementation when ready, using the implement skill. The information below is reference for how specs connect to implementation — it is NOT a directive to start coding.
 
 During coding, stay connected to specs and tasks.
 
@@ -279,13 +283,14 @@ remind end-session
 
 ## Best Practices
 
-1. **One requirement per episode** -- atomic specs consolidate better
-2. **Always use entities** -- they are the backbone of navigability
-3. **Capture rationale** -- "chose X because Y" is more valuable than "use X"
-4. **Resolve questions before implementing** -- store answers as decisions
-5. **Update specs when reality diverges** -- remind is the source of truth, keep it accurate
-6. **Consolidate after spec batches** -- don't wait for auto-threshold
-7. **Use recall before coding** -- ground implementation in stored specs
-8. **Delete rather than contradict** -- cleaner than accumulating conflicting episodes
-9. **Tag implementation files** -- `file:` entities connect specs to code
-10. **Store the plan** -- implementation plans are decisions worth remembering
+1. **NO CODE during spec/plan phases** -- this skill captures requirements and creates plans. Implementation is a separate, explicitly-requested step. Do not write, edit, or scaffold any source code files.
+2. **One requirement per episode** -- atomic specs consolidate better
+3. **Always use entities** -- they are the backbone of navigability
+4. **Capture rationale** -- "chose X because Y" is more valuable than "use X"
+5. **Resolve questions before implementing** -- store answers as decisions
+6. **Update specs when reality diverges** -- remind is the source of truth, keep it accurate
+7. **Consolidate after spec batches** -- don't wait for auto-threshold
+8. **Use recall before coding** -- ground implementation in stored specs
+9. **Delete rather than contradict** -- cleaner than accumulating conflicting episodes
+10. **Tag implementation files** -- `file:` entities connect specs to code
+11. **Store the plan** -- implementation plans are decisions worth remembering

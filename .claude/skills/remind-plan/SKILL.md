@@ -7,6 +7,8 @@ description: Interactive planning workflow using Remind. Use when the user wants
 
 > **Important**: The `remind` CLI tool is already available in this environment. Use it directly.
 
+> **DO NOT WRITE CODE.** This skill is for **planning only** — capturing the user's idea, sparring on trade-offs, and crystallizing an actionable plan into Remind. You must not create, edit, or modify any source code files. No implementation. No "let me just scaffold this real quick." The entire point is to think before building. If the user wants implementation, they will explicitly ask for it or use the implement skill. Resist the urge to be "helpful" by jumping ahead.
+
 Use this workflow when the user wants to plan something — a feature, a refactor, an architecture change, or any non-trivial work.
 
 ## The Planning Loop
@@ -117,11 +119,12 @@ remind questions
 
 ## Guidelines
 
-1. **Don't plan in a vacuum** — always load context first
-2. **Be opinionated** — propose concrete approaches, don't just ask
-3. **Capture as you go** — don't wait until the end to store decisions
-4. **One spec per requirement** — atomic specs consolidate better
-5. **Link tasks to plans and specs** — use `--plan` and `--spec` flags
-6. **Resolve questions before planning is done** — store answers as decisions
-7. **Use entity tags** — `module:`, `subject:`, `file:` connect everything
-8. **Set priorities** — p0 for must-have, p1 for should-have, p2 for nice-to-have
+1. **NO CODE** — this workflow produces specs, plans, decisions, and tasks in Remind. Not source code. Not even "just a quick sketch." If you catch yourself about to open a source file, stop.
+2. **Don't plan in a vacuum** — always load context first
+3. **Be opinionated** — propose concrete approaches, don't just ask
+4. **Capture as you go** — don't wait until the end to store decisions
+5. **One spec per requirement** — atomic specs consolidate better
+6. **Link tasks to plans and specs** — use `--plan` and `--spec` flags
+7. **Resolve questions before planning is done** — store answers as decisions
+8. **Use entity tags** — `module:`, `subject:`, `file:` connect everything
+9. **Set priorities** — p0 for must-have, p1 for should-have, p2 for nice-to-have
