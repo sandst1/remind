@@ -277,22 +277,32 @@ The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`
 
 **Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
 
-### Claude Code Skill
+### Claude Code Skills
 
-For Claude Code users, Remind provides a skill that uses the CLI directly (no MCP server needed):
+For Claude Code users, Remind provides skills that use the CLI directly (no MCP server needed):
 
 ```bash
-# Install the skill in your project
+# Install the base skill in your project
 remind skill-install
 ```
 
 This creates `.claude/skills/remind/SKILL.md` in your project directory. Claude Code will automatically load the skill and can use it via `/remind`.
 
-The skill provides instructions for:
+The base skill provides instructions for:
 - `remind remember` - Store experiences (observations, decisions, specs, plans, tasks, etc.)
 - `remind recall` - Retrieve memories
 - `remind task add/start/done/block/unblock` - Manage tasks
 - `remind end-session` - Consolidate at session end
+
+**Agent workflow skills** cover the full plan-to-implementation lifecycle. Copy them from this repo's `.claude/skills/` into your project:
+
+| Skill | Purpose |
+|-------|---------|
+| `remind-plan` | Interactive planning — spar on trade-offs, then crystallize into specs and tasks |
+| `remind-spec` | Spec-driven development — capture requirements, manage spec lifecycle |
+| `remind-implement` | Systematic task execution — pick from backlog, build, verify, complete |
+
+The workflow is: **plan → spec → implement**. Each skill stores its artifacts in Remind so context carries across sessions and agents.
 
 The CLI automatically uses the project-local database (`<cwd>/.remind/remind.db`), so each project has isolated memory.
 
@@ -323,7 +333,8 @@ The `remind ui` command automatically opens your browser with the project-local 
 - **Dashboard** - Overview of memory statistics
 - **Concepts** - Browse and search generalized concepts
 - **Entities** - Explore entities and their relationships
-- **Episodes** - Timeline view of raw experiences
+- **Episodes** - Timeline view of raw experiences with inline delete
+- **Tasks** - Kanban-style board with status transitions and priority levels
 - **Graph** - Interactive visualization of concept relationships
 - **Dark mode** - Toggle via UI
 
