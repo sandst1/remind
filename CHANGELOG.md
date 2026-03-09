@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-09
+
+### Added
+- Task management system: task episodes with status tracking (todo, in_progress, done, blocked), dependency chains, plan/spec linking, and priority levels
+- Agent workflow skills for the plan-to-implementation lifecycle:
+  - `remind` – base memory operations reference
+  - `remind-plan` – interactive planning with sparring and crystallization
+  - `remind-spec` – spec-driven development with lifecycle management
+  - `remind-implement` – systematic task execution loop
+- Active tasks are excluded from consolidation; completed tasks become eligible, allowing the system to learn from finished work
+
+### Changed
+- Updated web UI
+
+### Fixed
+- `run_async` helper function
+
 ## [0.5.3] - 2026-03-03
 
 ### Fixed

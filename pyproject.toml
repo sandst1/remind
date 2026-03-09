@@ -1,6 +1,6 @@
 [project]
 name = "remind-mcp"
-version = "0.5.3"
+version = "0.6.0"
 description = "Generalization-capable memory layer for LLMs with episodic buffers, semantic graphs, and spreading activation retrieval"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,10 +35,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/remind"]
-
-# Force include static files in wheel even though gitignored
-[tool.hatch.build.targets.wheel.force-include]
-"src/remind/static" = "remind/static"
 
 # For sdist, include web source for building
 [tool.hatch.build.targets.sdist]
