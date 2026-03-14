@@ -14,22 +14,28 @@ hero:
       link: https://github.com/sandst1/remind
 
 features:
-  - icon: 🧠
+  - icon:
+      src: /icons/brain-circuit.svg
     title: Generalization, not storage
     details: Episodes are consolidated into generalized concepts with confidence, conditions, and exceptions. Not another vector store.
-  - icon: 🔧
+  - icon:
+      src: /icons/puzzle.svg
     title: Composable via Skills
     details: Build any workflow on top of Remind. The plan/spec/implement cycle is just one example — write your own skills for any use case.
-  - icon: 📂
+  - icon:
+      src: /icons/folder-tree.svg
     title: Project-scoped or centralized
     details: Skills use project-local databases (.remind/ in your repo). MCP uses a centralized server. Pick what fits.
-  - icon: 🌐
+  - icon:
+      src: /icons/network.svg
     title: Spreading activation retrieval
     details: Queries activate matching concepts, which activate related concepts through the graph. Like how human memory works.
-  - icon: 🤖
+  - icon:
+      src: /icons/cpu.svg
     title: Multi-provider
     details: Works with Anthropic, OpenAI, Azure OpenAI, and Ollama. Use cloud or run fully local.
-  - icon: 🖥️
+  - icon:
+      src: /icons/layout-dashboard.svg
     title: Web UI included
     details: Dashboard, concept graph, entity explorer, task board, and memory health — all built in.
 ---
