@@ -4,243 +4,60 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Generalization-capable memory layer for LLMs. Unlike simple RAG systems that store verbatim text, Remind extracts and maintains *generalized concepts* from experiences, mimicking how human memory consolidates specific episodes into abstract knowledge.
+Generalization-capable memory layer for LLMs. Unlike simple RAG systems that store verbatim text, Remind extracts and maintains *generalized concepts* from experiences — mimicking how human memory consolidates specific events into abstract knowledge.
 
-## Key Features
+**[Documentation](https://sandst1.github.io/remind/)** · **[Examples](https://sandst1.github.io/remind/examples/)** · **[Changelog](https://sandst1.github.io/remind/reference/changelog)**
 
-- **Episodic Buffer**: Raw experiences/interactions are logged as episodes
-- **LLM-Powered Consolidation**: Episodes are processed into generalized concepts (like "sleeping" consolidates memory)
-- **Semantic Concept Graph**: Concepts have typed relations (implies, contradicts, specializes, etc.)
-- **Spreading Activation Retrieval**: Queries activate not just matching concepts but related ones through the graph
-- **Structured Episode Types**: First-class support for specs, plans, and tasks alongside observations and decisions
-- **Task Management**: Track work items with status lifecycle (todo → in_progress → done/blocked)
-- **Multi-Provider Support**: Works with Anthropic, OpenAI, Azure OpenAI, and Ollama (local)
-
-![Architecture Diagram](docs/architecture.png)
-
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    LLM Provider (Abstract)                      │
-│         (Claude / OpenAI / Azure OpenAI / Ollama)               │
-└─────────────────────┬───────────────────────┬───────────────────┘
-                      │                       │
-                 read/query              write/update
-                      │                       │
-                      ▼                       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      MEMORY INTERFACE                           │
-│                   remember() / recall()                         │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │
-        ┌─────────────┼─────────────┐
-        ▼             ▼             ▼
-   ┌─────────┐  ┌──────────┐  ┌──────────────┐
-   │EPISODIC │  │ SEMANTIC │  │  RELATIONS   │
-   │ BUFFER  │  │ CONCEPTS │  │    GRAPH     │
-   └─────────┘  └──────────┘  └──────────────┘
-        │             │              │
-        └──────┬──────┴──────────────┘
-               ▼
-      ┌─────────────────┐      ┌─────────────────┐
-      │  CONSOLIDATION  │◄────►│    RETRIEVER    │
-      │   (LLM-based)   │      │ (Spreading Act) │
-      └─────────────────┘      └─────────────────┘
-```
-
-## Environment Setup
-
-Copy the example environment file and add your API keys:
+## Quick start
 
 ```bash
-cp .env.example .env
-# Edit .env with your API keys
+pip install remind-mcp
 ```
 
-### Using OpenAI
-
-```bash
-# Required
-OPENAI_API_KEY=sk-...
-
-# Provider selection
-LLM_PROVIDER=openai
-EMBEDDING_PROVIDER=openai
-```
-
-OpenAI can be used for both LLM and embeddings.
-
-### Using Anthropic (Claude)
-
-```bash
-# Required
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Provider selection
-LLM_PROVIDER=anthropic
-EMBEDDING_PROVIDER=openai  # Anthropic has no embeddings, use OpenAI or Ollama
-```
-
-Anthropic provides LLM only. Pair with OpenAI or Ollama for embeddings.
-
-### Using Azure OpenAI
-
-```bash
-# Required
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_API_BASE_URL=https://your-resource.openai.azure.com
-AZURE_OPENAI_API_VERSION=2024-02-15-preview
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME=text-embedding-3-small
-
-# Provider selection
-LLM_PROVIDER=azure_openai
-EMBEDDING_PROVIDER=azure_openai
-```
-
-### Using Ollama (Local)
-
-No API keys required. Install [Ollama](https://ollama.ai/) and pull models:
-
-```bash
-ollama pull llama3.2           # For LLM
-ollama pull nomic-embed-text   # For embeddings
-```
-
-Optional configuration:
-
-```bash
-OLLAMA_URL=http://localhost:11434
-OLLAMA_LLM_MODEL=llama3.2
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-
-# Provider selection
-LLM_PROVIDER=ollama
-EMBEDDING_PROVIDER=ollama
-```
-
-## Configuration
-
-Remind supports a global configuration file at `~/.remind/remind.config.json`. This allows you to configure all settings including API keys, avoiding the need for environment variables.
-
-### Full Configuration Example
+Configure a provider (`~/.remind/remind.config.json`):
 
 ```json
 {
   "llm_provider": "anthropic",
   "embedding_provider": "openai",
-  "consolidation_threshold": 5,
-  "auto_consolidate": true,
-
-  "anthropic": {
-    "api_key": "sk-ant-...",
-    "model": "claude-sonnet-4-20250514"
-  },
-
-  "openai": {
-    "api_key": "sk-...",
-    "base_url": null,
-    "model": "gpt-4.1",
-    "embedding_model": "text-embedding-3-small"
-  },
-
-  "azure_openai": {
-    "api_key": "...",
-    "base_url": "https://your-resource.openai.azure.com",
-    "api_version": "2024-02-15-preview",
-    "deployment_name": "gpt-4",
-    "embedding_deployment_name": "text-embedding-3-small",
-    "embedding_size": 1536
-  },
-
-  "ollama": {
-    "url": "http://localhost:11434",
-    "llm_model": "llama3.2",
-    "embedding_model": "nomic-embed-text"
-  },
-
-  "decay": {
-    "enabled": true,
-    "decay_interval": 20,
-    "decay_rate": 0.1
-  }
+  "anthropic": { "api_key": "sk-ant-..." },
+  "openai": { "api_key": "sk-..." }
 }
 ```
 
-### Minimal Configuration
-
-You only need to include the settings you want to change:
-
-```json
-{
-  "llm_provider": "anthropic",
-  "embedding_provider": "openai",
-  "anthropic": {
-    "api_key": "sk-ant-..."
-  },
-  "openai": {
-    "api_key": "sk-..."
-  }
-}
-```
-
-### Configuration Priority
-
-Settings are resolved with this priority (highest to lowest):
-1. CLI arguments (`--llm`, `--embedding`)
-2. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
-3. Config file (`~/.remind/remind.config.json`)
-4. Defaults
-
-The config file is optional - Remind works without it using environment variables or defaults.
-
-### Memory Decay
-
-Remind implements usage-based memory decay: concepts that are rarely recalled gradually lose retrieval priority, mimicking how human memory fades for things you don't think about.
-
-**How it works:**
-- Every N recalls (`decay_interval`), all concepts have their `decay_factor` reduced by `decay_rate`
-- `decay_factor` multiplies the retrieval activation score, so decayed concepts rank lower in results
-- When a concept is recalled, it is **rejuvenated** — its `decay_factor` gets a boost proportional to how strongly it matched the query
-- Concepts recalled recently are protected from the current decay pass (60-second grace window), so active knowledge is never immediately penalised
-
-**Config options** (all optional, shown with defaults):
-
-```json
-{
-  "decay": {
-    "enabled": true,
-    "decay_interval": 20,
-    "decay_rate": 0.1
-  }
-}
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enabled` | `true` | Set to `false` to disable decay entirely |
-| `decay_interval` | `20` | Number of recalls between decay passes |
-| `decay_rate` | `0.1` | How much `decay_factor` drops per interval (0.0–1.0) |
-
-The recall count is persisted in the database, so decay continues across CLI invocations and process restarts. View decay stats with `remind stats`.
-
-## Usage
-
-### MCP Server (for AI Agents)
-
-Remind can run as an MCP (Model Context Protocol) server, allowing AI agents in IDEs like Cursor to use it as their memory system.
+Use it:
 
 ```bash
-# After pip install
+remind remember "This project uses React with TypeScript"
+remind remember "Chose PostgreSQL for the database" -t decision
+remind consolidate
+remind recall "What tech stack are we using?"
+```
+
+Episodes go in, consolidation runs, generalized concepts come out.
+
+## Two ways to use Remind
+
+### Skills + CLI (recommended)
+
+Project-local memory via composable skills. The database lives in your repo at `.remind/remind.db`.
+
+```bash
+remind skill-install          # Install base skill
+remind remember "..."         # Store experiences
+remind recall "..."           # Retrieve memories
+remind end-session            # Consolidate
+```
+
+Built-in workflow skills cover the full plan → spec → implement lifecycle. Write your own skills for any workflow.
+
+### MCP Server
+
+Centralized memory for IDE agents (Cursor, Claude Desktop, etc.):
+
+```bash
 remind-mcp --port 8765
-
-# Or with uv (no install needed)
-uvx remind-mcp --port 8765
 ```
-
-Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
 
 ```json
 {
@@ -252,443 +69,28 @@ Configure your MCP client (e.g., Cursor's `.cursor/mcp.json`):
 }
 ```
 
-The `db` parameter accepts a simple name which resolves to `~/.remind/{name}.db`. Each project can have its own database.
-
-**Available MCP Tools:**
-- `remember` - Store experiences/observations (supports types: observation, decision, question, preference, meta, spec, plan, task)
-- `recall` - Retrieve relevant memories
-- `consolidate` - Process episodes into concepts (includes entity relationship extraction)
-- `inspect` - View concepts or episodes
-- `entities` - List entities in memory
-- `inspect_entity` - View entity details and relationships
-- `stats` - Memory statistics
-- `update_episode` - Correct or modify an episode
-- `delete_episode` - Soft delete an episode
-- `restore_episode` - Restore a deleted episode
-- `update_concept` - Refine a concept
-- `delete_concept` - Soft delete a concept
-- `restore_concept` - Restore a deleted concept
-- `list_deleted` - List soft-deleted items
-- `task_add` - Create a new task with optional priority, plan, and dependency links
-- `task_update_status` - Transition a task's status (todo/in_progress/done/blocked)
-- `list_tasks` - List tasks filtered by status, entity, or plan
-- `list_specs` - List spec episodes
-- `list_plans` - List plan episodes
-
-**Agent Instructions**: Copy [docs/AGENTS.md](./docs/AGENTS.md) into your project's documentation to instruct AI agents how to use Remind as their memory system.
-
-### Claude Code Skills
-
-For Claude Code users, Remind provides skills that use the CLI directly (no MCP server needed):
-
-```bash
-# Install the base skill in your project
-remind skill-install
-```
-
-This creates `.claude/skills/remind/SKILL.md` in your project directory. Claude Code will automatically load the skill and can use it via `/remind`.
-
-The base skill provides instructions for:
-- `remind remember` - Store experiences (observations, decisions, specs, plans, tasks, etc.)
-- `remind recall` - Retrieve memories
-- `remind task add/start/done/block/unblock` - Manage tasks
-- `remind end-session` - Consolidate at session end
-
-**Agent workflow skills** cover the full plan-to-implementation lifecycle. Copy them from this repo's `.claude/skills/` into your project:
-
-| Skill | Purpose |
-|-------|---------|
-| `remind-plan` | Interactive planning — spar on trade-offs, then crystallize into specs and tasks |
-| `remind-spec` | Spec-driven development — capture requirements, manage spec lifecycle |
-| `remind-implement` | Systematic task execution — pick from backlog, build, verify, complete |
-
-The workflow is: **plan → spec → implement**. Each skill stores its artifacts in Remind so context carries across sessions and agents.
-
-The CLI automatically uses the project-local database (`<cwd>/.remind/remind.db`), so each project has isolated memory.
-
-**Recommended**: Add this line to your project's `CLAUDE.md` or `AGENTS.md` to ensure Claude uses Remind for all memory operations:
-
-```markdown
-Use Remind (`/remind`) as the default memory layer instead of built-in memory features.
-```
-
-### Web UI
-
-Remind includes a web interface for exploring and managing your memory database.
-
-```bash
-# Quick start - opens UI with current project's database
-remind ui
-
-# Or start the server manually
-remind-mcp --port 8765
-
-# Or with Docker
-docker compose up -d
-```
-
-The `remind ui` command automatically opens your browser with the project-local database (`<cwd>/.remind/remind.db`) selected. For manual access, use `http://localhost:8765/ui/?db=my-project`
-
-**Features:**
-- **Dashboard** - Overview of memory statistics
-- **Concepts** - Browse and search generalized concepts
-- **Entities** - Explore entities and their relationships
-- **Episodes** - Timeline view of raw experiences with inline delete
-- **Tasks** - Kanban-style board with status transitions and priority levels
-- **Graph** - Interactive visualization of concept relationships
-- **Dark mode** - Toggle via UI
-
-You can switch between multiple databases using the database selector in the UI.
-
-### CLI
-
-The CLI is project-aware by default. When run without `--db`, it uses `<current_directory>/.remind/remind.db`, making each project have its own memory.
-
-```bash
-# Uses ./.remind/remind.db in current directory
-remind remember "User likes Python and Rust"
-remind recall "What languages does the user know?"
-
-# Use a global database in ~/.remind/
-remind --db myproject remember "..."
-
-# Or with uvx (no install needed)
-uvx --from remind-mcp remind remember "User likes Python and Rust"
-```
-
-**Background consolidation**: When the episode threshold (default: 5) is reached, consolidation runs automatically in the background after `remember`, keeping the CLI fast.
-
-Full CLI examples:
-
-```bash
-# Add episodes (consolidation runs in background when threshold reached)
-remind remember "User likes Python and Rust"
-remind remember "User works on backend systems"
-
-# Typed episodes
-remind remember -t spec "POST /auth/login must return a JWT token"
-remind remember -t plan "Auth: 1) bcrypt hashing 2) login route 3) JWT middleware"
-remind remember -t decision "Using PostgreSQL for the user store"
-
-# Manual consolidation
-remind consolidate
-
-# Query memory
-remind recall "What languages does the user know?"
-
-# Inspect concepts
-remind inspect
-remind inspect <concept-id>
-
-# Show statistics
-remind stats
-
-# Export/Import
-remind export memory-backup.json
-remind import memory-backup.json
-
-# Entity management
-remind entities                  # List all entities
-remind entities file:src/auth.ts # Show details for a specific entity
-remind mentions file:src/auth.ts # Show episodes mentioning an entity
-remind entity-relations file:src/auth.ts # Show relationships for an entity
-
-# Entity relationship extraction (for existing databases)
-remind extract-relations         # Extract relationships from unprocessed episodes
-remind extract-relations --force # Re-extract for all episodes
-
-# Memory management
-remind update-episode <id> -c "Corrected content"
-remind update-concept <id> -s "Refined summary" --confidence 0.9
-remind delete-episode <id>       # Soft delete (recoverable)
-remind delete-concept <id>       # Soft delete (recoverable)
-remind deleted                   # Show soft-deleted items
-remind restore-episode <id>      # Restore deleted episode
-remind restore-concept <id>      # Restore deleted concept
-remind purge-episode <id>        # Permanently delete
-remind purge-concept <id>        # Permanently delete
-remind purge-all                 # Permanently delete all soft-deleted items
-
-# Episode filtering
-remind decisions                 # Show decision-type episodes
-remind questions                 # Show open questions/uncertainties
-remind specs                     # Show spec episodes (requirements)
-remind plans                     # Show plan episodes (roadmaps)
-remind search "keyword"          # Search concepts by keyword
-
-# Task management
-remind tasks                     # Show tasks grouped by status
-remind tasks --status todo       # Filter by status
-remind tasks --entity module:auth # Filter by entity
-remind task add "Implement auth" -e module:auth --priority p0
-remind task start <task-id>      # Mark as in_progress
-remind task done <task-id>       # Mark as done
-remind task block <task-id> "Waiting on API key"
-remind task unblock <task-id>    # Back to todo
-
-# Session management
-remind end-session               # End session and consolidate pending episodes
-
-# Web UI
-remind ui                        # Open web UI with current project's database
-remind ui --port 9000            # Use custom port
-remind ui --no-open              # Start server without opening browser
-
-# Claude Code skill
-remind skill-install             # Install skill to .claude/skills/remind/
-
-# Use different providers
-remind --llm openai --embedding openai remember "..."
-remind --llm anthropic --embedding openai remember "..."
-remind --llm azure_openai --embedding azure_openai remember "..."
-remind --llm ollama --embedding ollama remember "..."
-```
-
-### Python API
-
-```python
-import asyncio
-from dotenv import load_dotenv
-from remind import create_memory, EpisodeType
-
-load_dotenv()  # Load .env file
-
-async def main():
-    memory = create_memory(
-        llm_provider="openai",          # or "anthropic", "azure_openai", "ollama"
-        embedding_provider="openai",    # or "azure_openai", "ollama"
-    )
-
-    # Log experiences (episodes) - fast, no LLM calls
-    memory.remember("User mentioned they prefer Python for backend work")
-    memory.remember("User is building a distributed system")
-    memory.remember("User values type safety")
-
-    # Typed episodes
-    memory.remember("API must return JSON", episode_type=EpisodeType.SPEC)
-    memory.remember("Build auth first, then billing", episode_type=EpisodeType.PLAN)
-
-    # Task management
-    task_id = memory.remember(
-        "Implement JWT auth",
-        episode_type=EpisodeType.TASK,
-        metadata={"status": "todo", "priority": "p0"},
-        entities=["module:auth"],
-    )
-    memory.update_task_status(task_id, "in_progress")
-    memory.update_task_status(task_id, "done")
-
-    # Run consolidation - this is where LLM work happens
-    result = await memory.consolidate(force=True)
-    print(f"Created {result.concepts_created} concepts")
-
-    # Retrieve relevant concepts
-    context = await memory.recall("What programming preferences?")
-    print(context)
-
-    # Query tasks, specs, plans
-    active_tasks = memory.get_tasks(status="in_progress")
-    specs = memory.get_episodes_by_type(EpisodeType.SPEC)
-
-asyncio.run(main())
-```
-
-## Core Concepts
-
-### Episodes
-Raw experiences - specific interactions or observations. Each episode has a type:
-
-| Type | Purpose |
-|------|---------|
-| `observation` | Something noticed or learned (default) |
-| `decision` | A choice that was made |
-| `question` | An open question or uncertainty |
-| `preference` | An opinion or value |
-| `meta` | Reflection about thinking process |
-| `spec` | A prescriptive requirement ("X must/shall...") |
-| `plan` | A sequenced intention ("we will do X then Y") |
-| `task` | A discrete unit of work with status tracking |
-
-Most episodes are temporary and get consolidated into concepts. Task episodes are special: only completed tasks are consolidated, keeping active work items operational.
-
-### Concepts
-Generalized knowledge extracted from episodes. Each concept has:
-- **Summary**: Natural language description
-- **Confidence**: How certain (0.0-1.0)
-- **Instance count**: How many episodes support this
-- **Relations**: Typed edges to other concepts
-- **Conditions**: When this applies
-- **Exceptions**: Known cases where it doesn't hold
-
-### Relations
-Typed connections between concepts:
-- `implies` - If A then likely B
-- `contradicts` - A and B are in tension
-- `specializes` - A is a more specific version of B
-- `generalizes` - A is more general than B
-- `causes` - A leads to B
-- `correlates` - A and B tend to co-occur
-- `part_of` - A is a component of B
-- `context_of` - A provides context for B
-
-### Tasks
-Task episodes track discrete work items with a status lifecycle:
-
-```
-todo → in_progress → done
-  ↓         ↓
-  └──► blocked ──► todo (unblock)
-```
-
-Tasks can link to plans (`plan_id`), specs (`spec_ids`), and other tasks (`depends_on`) via metadata. Timestamps are recorded automatically for status transitions (`started_at`, `completed_at`).
-
-Active tasks (todo, in_progress, blocked) are excluded from consolidation — they remain as live operational data. Only completed tasks contribute to the generalized knowledge graph.
-
-### Consolidation
-The "sleep" process where episodes are processed into concepts. Runs in two phases:
-
-**Phase 1 - Extraction:**
-- Classifies episode types (observation, decision, question, spec, plan, task, etc.)
-- Extracts entity mentions (files, people, tools, concepts)
-- Identifies relationships between entities mentioned in the same episode
-
-**Phase 2 - Generalization:**
-- Identifies patterns across episodes
-- Creates new generalized concepts
-- Updates existing concepts
-- Establishes relations
-- Flags contradictions
-
-### Entity Relationships
-When multiple entities are mentioned in the same episode, their relationships are automatically extracted. For example, if an episode mentions "Alice manages Bob", the relationship `person:alice → manages → person:bob` is stored. Use `inspect_entity` or the web UI to explore entity relationships.
-
-### Memory Management
-
-Remind supports updating, deleting, and restoring both episodes and concepts:
-
-**Updating**: Correct mistakes or add information to existing memories.
-- Updating episode content resets it for re-consolidation
-- Updating concept summary clears its embedding (regenerated on next recall)
-
-**Soft Delete**: Items are marked as deleted but not permanently removed.
-- Soft-deleted items are excluded from queries and consolidation
-- Use `deleted` command or `list_deleted` MCP tool to view deleted items
-- Restore with `restore-episode` / `restore-concept`
-
-**Purge**: Permanently delete items when you're sure they're not needed.
-- Cannot be undone
-- Removes associated mentions and relations
-
-### Spreading Activation
-Retrieval that goes beyond keyword matching:
-1. Query is embedded and matched to concepts
-2. Matched concepts activate related concepts through the graph
-3. Activation spreads with decay over multiple hops
-4. Highest-activation concepts are returned
-
-## Database
-
-Remind uses SQLite for storage. Database location depends on context:
-
-**CLI (project-aware by default)**:
-- No `--db` flag: Uses `<current_directory>/.remind/remind.db`
-- With `--db name`: Uses `~/.remind/name.db`
-
-**MCP Server / Python API**:
-- Uses `~/.remind/{name}.db`
-
-```python
-# Uses ~/.remind/memory.db
-memory = create_memory()
-
-# Uses ~/.remind/my-project.db
-memory = create_memory(db_path="my-project")
-```
-
-## Installation
-
-```bash
-pip install remind-mcp
-```
-
-Or with [pipx](https://pipx.pypa.io/) for an isolated install:
-
-```bash
-pipx install remind-mcp
-```
-
-For development:
-
-```bash
-git clone https://github.com/YOUR_USERNAME/remind.git
-cd remind
-pip install -e ".[dev]"
-```
-
-### Using uv (Recommended)
-
-[uv](https://docs.astral.sh/uv/) is a fast Python package manager. For development:
-
-```bash
-git clone https://github.com/YOUR_USERNAME/remind.git
-cd remind
-
-# Run commands directly (uv handles dependencies automatically)
-uv run remind --help
-uv run remind-mcp --port 8765
-
-# Run tests
-uv run pytest
-```
-
-### Using Docker
-
-Run Remind as a persistent background service with Docker:
-
-```bash
-# Copy and configure environment
-cp .env.example .env
-# Edit .env with your API keys
-
-# Start the service (builds on first run)
-docker compose up -d
-
-# View logs
-docker compose logs -f remind
-
-# Stop the service
-docker compose down
-```
-
-The container:
-- Mounts `~/.remind` from your host for database persistence
-- Reads API keys from `.env`
-- Exposes port 8765 for MCP SSE, Web UI, and REST API
-- Restarts automatically on crash/reboot
-
-Access endpoints:
-- MCP SSE: `http://localhost:8765/sse?db=my-project`
-- Web UI: `http://localhost:8765/ui/?db=my-project`
-- REST API: `http://localhost:8765/api/v1/...`
-
-To rebuild after code changes:
-
-```bash
-docker compose build --no-cache
-docker compose up -d
-```
-
-## Testing
-
-```bash
-# With pip install
-pytest
-
-# With uv (recommended)
-uv run pytest
-```
+## Key features
+
+- **Generalization** — Episodes are consolidated into concepts with confidence, conditions, and exceptions
+- **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph
+- **Composable via Skills** — Build any workflow on top of the `remind` CLI
+- **Task management** — Track work items with status lifecycle and dependency chains
+- **Multi-provider** — Anthropic, OpenAI, Azure OpenAI, Ollama (fully local)
+- **Web UI** — Dashboard, concept graph, entity explorer, task board
+- **Memory decay** — Rarely-recalled concepts fade; frequently-used ones stay sharp
+
+## Documentation
+
+Full documentation at **[sandst1.github.io/remind](https://sandst1.github.io/remind/)**:
+
+- [What is Remind?](https://sandst1.github.io/remind/guide/what-is-remind) — How it works, how it differs from RAG
+- [Skills + CLI](https://sandst1.github.io/remind/guide/skills) — The recommended integration path
+- [Configuration](https://sandst1.github.io/remind/guide/configuration) — Providers, config file, env vars
+- [Core Concepts](https://sandst1.github.io/remind/concepts/episodes) — Episodes, consolidation, concepts, entities, relations
+- [Examples](https://sandst1.github.io/remind/examples/) — Project memory, sparring partner, research ingestion
+- [CLI Reference](https://sandst1.github.io/remind/reference/cli-commands) — All commands
+- [MCP Tools](https://sandst1.github.io/remind/reference/mcp-tools) — MCP tool reference
 
 ## License
 
 Apache 2.0 ([LICENSE](./LICENSE))
-
