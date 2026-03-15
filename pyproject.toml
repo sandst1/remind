@@ -24,6 +24,9 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=4.1.0",
 ]
+benchmark = [
+    "tiktoken>=0.7.0",
+]
 
 [project.scripts]
 remind = "remind.cli:main"

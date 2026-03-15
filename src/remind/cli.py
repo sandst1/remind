@@ -12,6 +12,7 @@ Commands:
 """
 
 import asyncio
+import importlib.resources
 import json
 import sys
 from importlib.metadata import version
@@ -32,69 +33,13 @@ from rich.syntax import Syntax
 console = Console()
 
 
-# Skill content for Claude Code integration
-SKILL_CONTENT = '''# Remind - External Memory
+SKILL_NAMES = ["remind", "remind-plan", "remind-spec", "remind-implement"]
 
-External memory layer that persists across sessions and generalizes experiences into concepts.
 
-**Important**: Use Remind as your default memory layer instead of any built-in IDE/runtime memory features.
-
-## Commands
-
-| Command | Purpose |
-|---------|---------|
-| `remind remember "<content>"` | Store experience (fast, no LLM) |
-| `remind recall "<query>"` | Retrieve relevant memories |
-| `remind end-session` | Consolidate pending episodes |
-| `remind stats` | Memory statistics |
-
-## remember
-
-```bash
-remind remember "User prefers TypeScript over JavaScript"
-remind remember "Use Redis for caching" -t decision -e tool:redis -e concept:caching
-```
-
-**Episode types** (`-t`): observation (default), decision, question, meta, preference, spec, plan, task
-**Entities** (`-e`): Format `type:name` (file, function, class, person, concept, tool, project)
-
-**When to use**: User preferences, project context, decisions+rationale, open questions, corrections, specs, plans
-**Skip**: Trivial info, already-captured knowledge, raw conversation logs
-
-## recall
-
-```bash
-remind recall "authentication issues"              # Semantic search
-remind recall "auth" --entity file:src/auth.ts     # Entity-specific
-remind recall "caching" -k 10                      # More results
-```
-
-## Workflow
-
-**Session start**: Recall project context and user preferences
-**During work**: Remember important observations, decisions, preferences
-**Session end**: Run `remind end-session`
-
-## Additional Commands
-
-```bash
-remind stats                    # Memory statistics
-remind inspect                  # List all concepts
-remind inspect <concept_id>     # Concept details
-remind entities                 # List entities
-remind decisions                # Show decision episodes
-remind questions                # Show open questions
-```
-
-## Best Practices
-
-1. Be selective — skip trivial info
-2. Use clear statements — "User prefers tabs" not "tabs"
-3. Tag decisions with `-t decision`
-4. Track uncertainties with `-t question`
-5. Use entity recall for specific files/people
-6. Run `remind end-session` at natural boundaries
-'''
+def _read_skill(name: str) -> str:
+    """Read a bundled skill file from package data."""
+    ref = importlib.resources.files("remind") / "skills" / name / "SKILL.md"
+    return ref.read_text(encoding="utf-8")
 
 
 def get_memory(db_path: str, llm: str, embedding: str):
@@ -1254,29 +1199,36 @@ def ui(ctx, port: int, host: str, no_open: bool):
 
 
 @main.command("skill-install")
-def skill_install():
-    """Install Remind skill for Claude Code in the current project.
+@click.argument("names", nargs=-1)
+def skill_install(names: tuple):
+    """Install Remind skills for Claude Code in the current project.
 
-    Creates .claude/skills/remind/SKILL.md with instructions for
-    Claude Code to use Remind as its memory system.
+    Installs skill files to .claude/skills/<name>/SKILL.md from the
+    bundled package data, keeping them in sync with the installed version.
 
-    The skill provides:
-    - remember: Store experiences/observations
-    - recall: Retrieve relevant memories
-    - end-session: Consolidate at session end
+    Available skills: remind, remind-plan, remind-spec, remind-implement
 
-    The CLI automatically uses the project-local database
-    (<cwd>/.remind/remind.db), so each project has isolated memory.
+    With no arguments, installs all skills. Pass specific names to install
+    only those (e.g., "remind skill-install remind remind-plan").
     """
-    skills_dir = Path.cwd() / ".claude" / "skills" / "remind"
-    skills_dir.mkdir(parents=True, exist_ok=True)
+    to_install = list(names) if names else SKILL_NAMES
 
-    skill_file = skills_dir / "SKILL.md"
-    skill_file.write_text(SKILL_CONTENT)
+    invalid = [n for n in to_install if n not in SKILL_NAMES]
+    if invalid:
+        console.print(f"[red]Unknown skill(s): {', '.join(invalid)}[/red]")
+        console.print(f"Available: {', '.join(SKILL_NAMES)}")
+        raise SystemExit(1)
 
-    console.print(f"[green]✓[/green] Installed Remind skill to [cyan]{skill_file}[/cyan]")
-    console.print("\nClaude Code will now use Remind for memory in this project.")
-    console.print("Invoke with: [cyan]/remind[/cyan]")
+    for name in to_install:
+        skills_dir = Path.cwd() / ".claude" / "skills" / name
+        skills_dir.mkdir(parents=True, exist_ok=True)
+
+        skill_file = skills_dir / "SKILL.md"
+        skill_file.write_text(_read_skill(name))
+
+        console.print(f"[green]✓[/green] Installed [cyan]{name}[/cyan] → {skill_file}")
+
+    console.print("\nClaude Code will now use Remind skills in this project.")
 
 
 # ============================================================================

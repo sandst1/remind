@@ -43,13 +43,14 @@ Episodes go in, consolidation runs, generalized concepts come out.
 Project-local memory via composable skills. The database lives in your repo at `.remind/remind.db`.
 
 ```bash
-remind skill-install          # Install base skill
-remind remember "..."         # Store experiences
-remind recall "..."           # Retrieve memories
-remind end-session            # Consolidate
+remind skill-install                    # Install all skills
+remind skill-install remind remind-plan # Install specific skills
+remind remember "..."                   # Store experiences
+remind recall "..."                     # Retrieve memories
+remind end-session                      # Consolidate
 ```
 
-Built-in workflow skills cover the full plan → spec → implement lifecycle. Write your own skills for any workflow.
+Available skills: `remind` (core memory), `remind-plan` (interactive planning), `remind-spec` (spec-driven development), `remind-implement` (task execution). Write your own skills for any workflow.
 
 ### MCP Server
 
