@@ -225,17 +225,17 @@ Returns generalized concepts like *"User gravitates toward statically typed, per
 
 <div class="example-cards">
 
-<a class="example-card" href="/examples/project-memory">
+<a class="example-card" href="./examples/project-memory">
 <h3>Project Memory</h3>
 <p>Persistent context across coding sessions. Your agent remembers preferences, decisions, and project architecture.</p>
 </a>
 
-<a class="example-card" href="/examples/sparring-partner">
+<a class="example-card" href="./examples/sparring-partner">
 <h3>Sparring Partner</h3>
 <p>Ongoing debates across sessions. Remind tracks arguments, positions, and open threads.</p>
 </a>
 
-<a class="example-card" href="/examples/research-ingestion">
+<a class="example-card" href="./examples/research-ingestion">
 <h3>Research Ingestion</h3>
 <p>Feed in papers, find commonalities and contradictions. Consolidation surfaces themes across sources.</p>
 </a>
