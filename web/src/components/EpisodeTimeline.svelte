@@ -7,9 +7,9 @@
     episodesError,
     currentDb,
   } from '../lib/stores';
-  import { fetchEpisodes } from '../lib/api';
+  import { fetchEpisodes, updateEpisode } from '../lib/api';
   import type { Episode, EpisodeType } from '../lib/types';
-  import { Eye, Zap, CircleHelp, Brain, Heart, Search, Filter, FileText, MapPin, ListChecks, Circle, Play, CheckCircle2, Ban, Trash2 } from 'lucide-svelte';
+  import { Eye, Zap, CircleHelp, Brain, Heart, Search, Filter, FileText, MapPin, ListChecks, Circle, Play, CheckCircle2, Ban, Trash2, Pencil } from 'lucide-svelte';
   import { deleteEpisode } from '../lib/api';
 
   let filterType: EpisodeType | '' = '';
@@ -125,6 +125,55 @@
       episodesError.set(e instanceof Error ? e.message : 'Failed to delete episode');
     }
   }
+
+  // Inline editing state
+  let editingId: string | null = null;
+  let editingContent: string = '';
+  let savingId: string | null = null;
+
+  function startEdit(episode: Episode) {
+    editingId = episode.id;
+    editingContent = episode.content;
+  }
+
+  function cancelEdit() {
+    editingId = null;
+    editingContent = '';
+  }
+
+  async function saveEdit(episodeId: string) {
+    if (savingId) return;
+    savingId = episodeId;
+    try {
+      await updateEpisode(episodeId, { content: editingContent });
+      editingId = null;
+      editingContent = '';
+      await loadEpisodes();
+    } catch (e) {
+      episodesError.set(e instanceof Error ? e.message : 'Failed to update episode');
+    } finally {
+      savingId = null;
+    }
+  }
+
+  function handleEditKeydown(e: KeyboardEvent, episodeId: string) {
+    if (e.key === 'Escape') {
+      cancelEdit();
+    } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      saveEdit(episodeId);
+    }
+  }
+
+  function autoResize(node: HTMLTextAreaElement) {
+    function resize() {
+      node.style.height = 'auto';
+      node.style.height = node.scrollHeight + 'px';
+    }
+    resize();
+    node.addEventListener('input', resize);
+    return { destroy() { node.removeEventListener('input', resize); } };
+  }
 </script>
 
 <div class="episode-timeline">
@@ -208,7 +257,28 @@
             {#if episode.title}
               <div class="episode-title">{episode.title}</div>
             {/if}
-            <div class="episode-content">{episode.content}</div>
+            {#if editingId === episode.id}
+              <div class="episode-edit">
+                <textarea
+                  bind:value={editingContent}
+                  class="edit-textarea"
+                  onkeydown={(e) => handleEditKeydown(e, episode.id)}
+                  use:autoResize
+                ></textarea>
+                <div class="edit-actions">
+                  <button class="edit-save" onclick={() => saveEdit(episode.id)} disabled={savingId === episode.id}>
+                    {savingId === episode.id ? 'Saving…' : 'Save'}
+                  </button>
+                  <button class="edit-cancel" onclick={cancelEdit}>Cancel</button>
+                  <span class="edit-hint">⌘↵ to save · Esc to cancel</span>
+                </div>
+              </div>
+            {:else}
+              <div class="episode-content-wrap" role="button" tabindex="0" onclick={() => startEdit(episode)} onkeydown={(e) => e.key === 'Enter' && startEdit(episode)}>
+                <div class="episode-content">{episode.content}</div>
+                <span class="edit-icon" title="Edit content"><Pencil size={13} /></span>
+              </div>
+            {/if}
             {#if episode.metadata?.spec_status}
               <div class="spec-status">Status: {episode.metadata.spec_status}</div>
             {/if}
@@ -597,5 +667,109 @@
     color: var(--color-error);
     background: var(--color-error-bg);
     border-color: var(--color-error);
+  }
+
+  .episode-content-wrap {
+    position: relative;
+    cursor: text;
+    border-radius: var(--radius-sm);
+    padding: 2px 4px;
+    margin: -2px -4px;
+    transition: background 0.15s ease;
+  }
+
+  .episode-content-wrap:hover {
+    background: var(--color-bg);
+  }
+
+  .edit-icon {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    opacity: 0;
+    color: var(--color-text-muted);
+    display: flex;
+    align-items: center;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+
+  .episode-content-wrap:hover .edit-icon {
+    opacity: 1;
+  }
+
+  .episode-edit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .edit-textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--color-primary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: var(--font-size-base);
+    font-family: inherit;
+    line-height: 1.6;
+    resize: none;
+    box-shadow: 0 0 0 2px var(--color-primary-bg);
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  .edit-textarea:focus {
+    outline: none;
+  }
+
+  .edit-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .edit-save {
+    padding: 4px 12px;
+    background: var(--color-primary);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+
+  .edit-save:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .edit-save:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .edit-cancel {
+    padding: 4px 12px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .edit-cancel:hover {
+    background: var(--color-surface-hover);
+  }
+
+  .edit-hint {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    margin-left: auto;
   }
 </style>

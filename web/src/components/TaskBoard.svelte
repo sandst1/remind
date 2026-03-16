@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { currentDb } from '../lib/stores';
-  import { fetchTasks, updateTaskStatus, addTask } from '../lib/api';
+  import { fetchTasks, updateTaskStatus, addTask, updateEpisode } from '../lib/api';
   import type { Episode, TaskStatus } from '../lib/types';
-  import { Circle, Play, CheckCircle2, Ban, Plus, ChevronDown, ChevronUp } from 'lucide-svelte';
+  import { Circle, Play, CheckCircle2, Ban, Plus, ChevronDown, ChevronUp, Pencil } from 'lucide-svelte';
 
   let tasks: Episode[] = [];
   let loading = false;
@@ -97,6 +97,98 @@
     };
     return transitions[current] || [];
   }
+
+  // Drag-and-drop state
+  let draggingTaskId: string | null = null;
+  let dragOverColumn: TaskStatus | null = null;
+
+  function handleDragStart(e: DragEvent, task: Episode) {
+    draggingTaskId = task.id;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', task.id);
+    }
+  }
+
+  function handleDragEnd() {
+    draggingTaskId = null;
+    dragOverColumn = null;
+  }
+
+  function handleDragOver(e: DragEvent, status: TaskStatus) {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dragOverColumn = status;
+  }
+
+  function handleDragLeave(e: DragEvent, colEl: HTMLElement) {
+    // Only clear if we're leaving the column entirely (not entering a child)
+    if (!colEl.contains(e.relatedTarget as Node)) {
+      dragOverColumn = null;
+    }
+  }
+
+  async function handleDrop(e: DragEvent, targetStatus: TaskStatus) {
+    e.preventDefault();
+    dragOverColumn = null;
+    const taskId = draggingTaskId || e.dataTransfer?.getData('text/plain');
+    if (!taskId) return;
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const currentStatus = (task.metadata?.status || 'todo') as TaskStatus;
+    if (currentStatus === targetStatus) return;
+    draggingTaskId = null;
+    await handleStatusChange(taskId, targetStatus);
+  }
+
+  // Inline editing state
+  let editingId: string | null = null;
+  let editingContent: string = '';
+  let savingId: string | null = null;
+
+  function startEdit(task: Episode) {
+    editingId = task.id;
+    editingContent = task.content;
+  }
+
+  function cancelEdit() {
+    editingId = null;
+    editingContent = '';
+  }
+
+  async function saveEdit(taskId: string) {
+    if (savingId) return;
+    savingId = taskId;
+    try {
+      await updateEpisode(taskId, { content: editingContent });
+      editingId = null;
+      editingContent = '';
+      await loadTasks();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to update task';
+    } finally {
+      savingId = null;
+    }
+  }
+
+  function handleEditKeydown(e: KeyboardEvent, taskId: string) {
+    if (e.key === 'Escape') {
+      cancelEdit();
+    } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      saveEdit(taskId);
+    }
+  }
+
+  function autoResize(node: HTMLTextAreaElement) {
+    function resize() {
+      node.style.height = 'auto';
+      node.style.height = node.scrollHeight + 'px';
+    }
+    resize();
+    node.addEventListener('input', resize);
+    return { destroy() { node.removeEventListener('input', resize); } };
+  }
 </script>
 
 <div class="task-board">
@@ -160,16 +252,52 @@
               <span class="column-label">{col.label}</span>
               <span class="column-count">{colTasks.length}</span>
             </div>
-            <div class="column-body">
+            <div
+              role="list"
+              class="column-body"
+              class:drag-over={dragOverColumn === col.status}
+              ondragover={(e) => handleDragOver(e, col.status)}
+              ondragleave={(e) => handleDragLeave(e, e.currentTarget as HTMLElement)}
+              ondrop={(e) => handleDrop(e, col.status)}
+            >
               {#each colTasks as task (task.id)}
-                <div class="task-card priority-border-{task.metadata?.priority || 'p1'}">
+                <div
+                  role="listitem"
+                  class="task-card priority-border-{task.metadata?.priority || 'p1'}"
+                  class:dragging={draggingTaskId === task.id}
+                  class:editing={editingId === task.id}
+                  draggable={editingId !== task.id}
+                  ondragstart={(e) => editingId !== task.id && handleDragStart(e, task)}
+                  ondragend={handleDragEnd}
+                >
                   {#if task.metadata?.priority}
                     <span class="task-priority priority-{task.metadata.priority}">{task.metadata.priority}</span>
                   {/if}
                   {#if task.title}
                     <div class="task-title">{task.title}</div>
                   {/if}
-                  <div class="task-content">{task.content}</div>
+                  {#if editingId === task.id}
+                    <div class="task-edit">
+                      <textarea
+                        bind:value={editingContent}
+                        class="edit-textarea"
+                        onkeydown={(e) => handleEditKeydown(e, task.id)}
+                        use:autoResize
+                      ></textarea>
+                      <div class="edit-actions">
+                        <button class="edit-save" onclick={() => saveEdit(task.id)} disabled={savingId === task.id}>
+                          {savingId === task.id ? 'Saving…' : 'Save'}
+                        </button>
+                        <button class="edit-cancel" onclick={cancelEdit}>Cancel</button>
+                        <span class="edit-hint">⌘↵ to save · Esc to cancel</span>
+                      </div>
+                    </div>
+                  {:else}
+                    <div class="task-content-wrap" role="button" tabindex="0" onclick={() => startEdit(task)} onkeydown={(e) => e.key === 'Enter' && startEdit(task)}>
+                      <div class="task-content">{task.content}</div>
+                      <span class="edit-icon" title="Edit content"><Pencil size={11} /></span>
+                    </div>
+                  {/if}
                   {#if task.entity_ids.length > 0}
                     <div class="task-entities">
                       {#each task.entity_ids as entityId}
@@ -495,6 +623,134 @@
     padding: var(--space-xl);
     color: var(--color-text-muted);
     font-size: var(--font-size-sm);
+  }
+
+  .column-body.drag-over {
+    background: var(--color-primary-bg);
+    border-radius: var(--radius-md);
+    outline: 2px dashed var(--color-primary);
+    outline-offset: -4px;
+  }
+
+  .task-card[draggable="true"] {
+    cursor: grab;
+  }
+
+  .task-card[draggable="true"]:active {
+    cursor: grabbing;
+  }
+
+  .task-card.dragging {
+    opacity: 0.4;
+  }
+
+  .task-card.editing {
+    cursor: default;
+  }
+
+  .task-content-wrap {
+    position: relative;
+    cursor: text;
+    border-radius: var(--radius-sm);
+    padding: 2px 4px;
+    margin: -2px -4px;
+    transition: background 0.15s ease;
+  }
+
+  .task-content-wrap:hover {
+    background: var(--color-bg);
+  }
+
+  .edit-icon {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    opacity: 0;
+    color: var(--color-text-muted);
+    display: flex;
+    align-items: center;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+
+  .task-content-wrap:hover .edit-icon {
+    opacity: 1;
+  }
+
+  .task-edit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .edit-textarea {
+    width: 100%;
+    min-height: 60px;
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--color-primary);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: var(--font-size-sm);
+    font-family: inherit;
+    line-height: 1.5;
+    resize: none;
+    box-shadow: 0 0 0 2px var(--color-primary-bg);
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  .edit-textarea:focus {
+    outline: none;
+  }
+
+  .edit-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    flex-wrap: wrap;
+  }
+
+  .edit-save {
+    padding: 3px 10px;
+    background: var(--color-primary);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+
+  .edit-save:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .edit-save:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .edit-cancel {
+    padding: 3px 10px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .edit-cancel:hover {
+    background: var(--color-surface-hover);
+  }
+
+  .edit-hint {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    margin-left: auto;
   }
 
   .loading,
