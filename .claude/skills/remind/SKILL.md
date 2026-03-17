@@ -55,6 +55,8 @@ Tasks are work items with status tracking. Use `remind task` subcommands to mana
 ```bash
 remind task add "Implement bcrypt hashing" -e module:auth --priority p0
 remind task add "Write auth tests" --depends-on <task-id>
+remind task update <id> --plan <plan-id> --spec <spec-id>   # Link to plan/spec after creation
+remind task update <id> --priority p0 --depends-on <task-id>
 remind task start <id>              # todo -> in_progress
 remind task done <id>               # -> done
 remind task block <id> "reason"     # -> blocked
@@ -95,6 +97,17 @@ remind update-concept <id> -s "Refined summary" --confidence 0.9
 ```
 
 **Note**: Updating episode content resets it for re-consolidation.
+
+### Linking Tasks to Plans and Specs
+```bash
+remind task update <id> --plan <plan-id>
+remind task update <id> --spec <spec-id> --spec <spec-id-2>
+remind task update <id> --plan <plan-id> --spec <spec-id> --priority p0
+
+# update-episode works too (for any episode type)
+remind update-episode <id> --plan <plan-id> --spec <spec-id>
+remind update-episode <id> --depends-on <task-id> --priority p1
+```
 
 ### Deleting Outdated Data
 ```bash

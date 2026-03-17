@@ -143,6 +143,10 @@ remind task add "Implement JWT middleware" \
 remind task add "Implement rate limiting middleware" \
   -e module:auth --priority p1 --plan <plan-id> --depends-on <jwt-task-id>
 
+# Link existing tasks to plan/spec after creation
+remind task update <id> --plan <plan-id> --spec <spec-id>
+remind task update <id> --depends-on <task-id> --priority p0
+
 # View all tasks
 remind tasks
 remind tasks --entity module:auth

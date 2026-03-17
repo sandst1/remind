@@ -39,6 +39,9 @@ Before touching code, ground yourself in what Remind knows:
 # Start the task
 remind task start <task-id>
 
+# If the task lacks plan/spec linkage, add it before starting
+remind task update <task-id> --plan <plan-id> --spec <spec-id>
+
 # Recall specs linked to this task
 remind specs --entity module:<relevant-module>
 

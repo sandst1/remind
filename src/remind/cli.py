@@ -991,6 +991,57 @@ def task_add(ctx, content: str, entities: tuple, priority: str, plan: Optional[s
         console.print(f"  Depends on: {', '.join(depends_on)}")
 
 
+@task_group.command("update")
+@click.argument("task_id")
+@click.option("--plan", help="Plan episode ID to link")
+@click.option("--spec", "spec_ids", multiple=True, help="Spec episode ID to link (repeatable)")
+@click.option("--depends-on", "depends_on", multiple=True, help="Task ID this depends on (repeatable)")
+@click.option("--priority", "-p", type=click.Choice(["p0", "p1", "p2"]), help="Priority")
+@click.option("--content", "-c", help="New task description")
+@click.option("--entity", "-e", "entities", multiple=True, help="New entity IDs (replaces existing)")
+@click.pass_context
+def task_update(ctx, task_id: str, plan: Optional[str], spec_ids: tuple, depends_on: tuple,
+                priority: Optional[str], content: Optional[str], entities: tuple):
+    """Update an existing task's linkage, priority, or description."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    meta: dict = {}
+    if plan:
+        meta["plan_id"] = plan
+    if spec_ids:
+        meta["spec_ids"] = list(spec_ids)
+    if depends_on:
+        meta["depends_on"] = list(depends_on)
+    if priority:
+        meta["priority"] = priority
+
+    entity_list = list(entities) if entities else None
+
+    updated = memory.update_episode(
+        task_id,
+        content=content,
+        entities=entity_list,
+        metadata=meta if meta else None,
+    )
+
+    if updated:
+        console.print(f"[green]✓[/green] Updated task [cyan]{task_id}[/cyan]")
+        if content:
+            console.print(f"  [dim]Content updated - will be re-consolidated[/dim]")
+        if entity_list:
+            console.print(f"  Entities: {', '.join(entity_list)}")
+        if plan:
+            console.print(f"  Plan: {plan}")
+        if spec_ids:
+            console.print(f"  Specs: {', '.join(spec_ids)}")
+        if depends_on:
+            console.print(f"  Depends on: {', '.join(depends_on)}")
+        if priority:
+            console.print(f"  Priority: [yellow]{priority}[/yellow]")
+    else:
+        console.print(f"[red]Task {task_id} not found[/red]")
+
+
 @task_group.command("start")
 @click.argument("task_id")
 @click.pass_context
@@ -1242,9 +1293,15 @@ def skill_install(names: tuple):
               type=click.Choice(["observation", "decision", "question", "meta", "preference", "spec", "plan", "task"]),
               help="New episode type")
 @click.option("--entity", "-e", "entities", multiple=True, help="New entity IDs (replaces existing)")
+@click.option("--plan", help="Plan episode ID to link")
+@click.option("--spec", "spec_ids", multiple=True, help="Spec episode ID to link (repeatable)")
+@click.option("--depends-on", "depends_on", multiple=True, help="Task ID this depends on (repeatable)")
+@click.option("--priority", type=click.Choice(["p0", "p1", "p2"]), help="Priority")
 @click.pass_context
 def update_episode(ctx, episode_id: str, content: Optional[str],
-                   episode_type: Optional[str], entities: tuple):
+                   episode_type: Optional[str], entities: tuple,
+                   plan: Optional[str], spec_ids: tuple, depends_on: tuple,
+                   priority: Optional[str]):
     """Update an existing episode."""
     from remind.models import EpisodeType
 
@@ -1253,11 +1310,22 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
     ep_type = EpisodeType(episode_type) if episode_type else None
     entity_list = list(entities) if entities else None
 
+    meta: dict = {}
+    if plan:
+        meta["plan_id"] = plan
+    if spec_ids:
+        meta["spec_ids"] = list(spec_ids)
+    if depends_on:
+        meta["depends_on"] = list(depends_on)
+    if priority:
+        meta["priority"] = priority
+
     updated = memory.update_episode(
         episode_id,
         content=content,
         episode_type=ep_type,
         entities=entity_list,
+        metadata=meta if meta else None,
     )
 
     if updated:
@@ -1268,6 +1336,14 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
             console.print(f"  Type: [yellow]{ep_type.value}[/yellow]")
         if entity_list:
             console.print(f"  Entities: {', '.join(entity_list)}")
+        if plan:
+            console.print(f"  Plan: {plan}")
+        if spec_ids:
+            console.print(f"  Specs: {', '.join(spec_ids)}")
+        if depends_on:
+            console.print(f"  Depends on: {', '.join(depends_on)}")
+        if priority:
+            console.print(f"  Priority: [yellow]{priority}[/yellow]")
     else:
         console.print(f"[red]Episode {episode_id} not found[/red]")
 

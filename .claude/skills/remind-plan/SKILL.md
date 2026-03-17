@@ -101,6 +101,12 @@ remind task add "Write integration tests for notification flow" \
   --priority p1 --plan <plan-id> --depends-on <sdk-task-id>
 ```
 
+If tasks already exist and need linking after the fact:
+```bash
+remind task update <id> --plan <plan-id> --spec <spec-id>
+remind task update <id> --depends-on <task-id> --priority p0
+```
+
 **4. Consolidate** to build the knowledge graph:
 ```bash
 remind consolidate

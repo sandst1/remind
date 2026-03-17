@@ -47,10 +47,12 @@ remind skill-install                    # Install all skills
 remind skill-install remind remind-plan # Install specific skills
 remind remember "..."                   # Store experiences
 remind recall "..."                     # Retrieve memories
-remind end-session                      # Consolidate
+remind end-session                      # Consolidate at end of session
 ```
 
 Available skills: `remind` (core memory), `remind-plan` (interactive planning), `remind-spec` (spec-driven development), `remind-implement` (task execution). Write your own skills for any workflow.
+
+Skills are Markdown files read by AI agents (Claude Code, Cursor, etc.) — they teach the agent how to use Remind as a memory layer for your project.
 
 ### MCP Server
 
@@ -70,15 +72,87 @@ remind-mcp --port 8765
 }
 ```
 
+The MCP server also serves a web UI at `http://127.0.0.1:8765/ui/` and a REST API at `/api/v1/`.
+
+You can also launch the UI directly from the CLI against the current project's database:
+
+```bash
+remind ui
+```
+
 ## Key features
 
 - **Generalization** — Episodes are consolidated into concepts with confidence, conditions, and exceptions
 - **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph
+- **Entity graph** — Files, functions, people, tools and other entities are extracted and linked to episodes and concepts
+- **Task management** — Track work items (todo → in\_progress → done / blocked) with priorities and dependencies
+- **Specs and plans** — First-class episode types for requirements and implementation plans
+- **Soft delete / restore** — Episodes and concepts can be deleted and restored; permanent purge is a separate step
+- **Memory decay** — Rarely-recalled concepts fade; frequently-used ones stay sharp
 - **Composable via Skills** — Build any workflow on top of the `remind` CLI
-- **Task management** — Track work items with status lifecycle and dependency chains
 - **Multi-provider** — Anthropic, OpenAI, Azure OpenAI, Ollama (fully local)
 - **Web UI** — Dashboard, concept graph, entity explorer, task board
-- **Memory decay** — Rarely-recalled concepts fade; frequently-used ones stay sharp
+
+## CLI reference
+
+```
+Core
+  remember     Add an episode (-t type, -e entity, -m metadata)
+  recall       Semantic or entity-based memory retrieval
+  consolidate  Run consolidation manually (--background, --force)
+  reconsolidate  Reset derived data and re-consolidate from scratch
+  end-session  Consolidate all pending episodes in the background
+
+Inspection
+  inspect      List or detail concepts; use --episodes for episodes
+  stats        Memory statistics and decay info
+  search       Keyword/tag search across concepts
+  entities     List entities or show a specific entity
+  mentions     All episodes mentioning an entity
+  entity-relations  Relationships between entities
+
+Episode types
+  decisions    Show decision episodes
+  questions    Show open question episodes
+  specs        Show spec episodes (requirements)
+  plans        Show plan episodes
+
+Task management
+  tasks               List tasks grouped by status
+  task add            Create a task (--priority, --plan, --spec, --depends-on)
+  task update         Update a task's linkage, priority, or description (--plan, --spec, --depends-on, --priority)
+  task start          Mark task in_progress
+  task done           Mark task done
+  task block          Block a task with an optional reason
+  task unblock        Return a blocked task to todo
+
+Editing
+  update-episode      Update content, type, entities, or metadata (--plan, --spec, --depends-on, --priority)
+  update-concept      Update title, summary, confidence, tags, or relations
+  extract-relations   Backfill entity relationships from existing episodes
+
+Soft delete / restore
+  delete-episode   Soft delete an episode
+  restore-episode  Restore a soft-deleted episode
+  purge-episode    Permanently delete an episode
+
+  delete-concept   Soft delete a concept
+  restore-concept  Restore a soft-deleted concept
+  purge-concept    Permanently delete a concept
+
+  deleted          List all soft-deleted items
+  purge-all        Permanently delete all soft-deleted items
+
+Import / Export
+  export       Export memory to JSON
+  import       Import memory from JSON
+
+Skills
+  skill-install  Install Remind skills into .claude/skills/
+
+UI
+  ui           Launch the web UI (auto-opens browser)
+```
 
 ## Documentation
 

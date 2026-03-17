@@ -435,6 +435,10 @@ async def tool_update_episode(
     content: Optional[str] = None,
     episode_type: Optional[str] = None,
     entities: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    spec_ids: Optional[str] = None,
+    depends_on: Optional[str] = None,
+    priority: Optional[str] = None,
 ) -> str:
     """Update an existing episode."""
     from remind.models import EpisodeType
@@ -454,11 +458,23 @@ async def tool_update_episode(
     if entities:
         entity_list = [e.strip() for e in entities.split(",") if e.strip()]
 
+    # Build metadata from linkage fields
+    meta: dict = {}
+    if plan_id:
+        meta["plan_id"] = plan_id
+    if spec_ids:
+        meta["spec_ids"] = [s.strip() for s in spec_ids.split(",") if s.strip()]
+    if depends_on:
+        meta["depends_on"] = [d.strip() for d in depends_on.split(",") if d.strip()]
+    if priority:
+        meta["priority"] = priority
+
     updated = memory.update_episode(
         episode_id,
         content=content,
         episode_type=ep_type,
         entities=entity_list,
+        metadata=meta if meta else None,
     )
 
     if updated:
@@ -470,6 +486,14 @@ async def tool_update_episode(
             lines.append(f"  Type: {ep_type.value}")
         if entity_list:
             lines.append(f"  Entities: {', '.join(entity_list)}")
+        if plan_id:
+            lines.append(f"  Plan: {plan_id}")
+        if spec_ids:
+            lines.append(f"  Specs: {spec_ids}")
+        if depends_on:
+            lines.append(f"  Depends on: {depends_on}")
+        if priority:
+            lines.append(f"  Priority: {priority}")
         if content:
             lines.append("  Note: Episode will be re-consolidated")
         return "\n".join(lines)
@@ -968,10 +992,15 @@ def create_mcp_server():
         content: Optional[str] = None,
         episode_type: Optional[str] = None,
         entities: Optional[str] = None,
+        plan_id: Optional[str] = None,
+        spec_ids: Optional[str] = None,
+        depends_on: Optional[str] = None,
+        priority: Optional[str] = None,
     ) -> str:
         """Update an existing episode in memory.
 
-        Use this to correct mistakes, add information, or reclassify episodes.
+        Use this to correct mistakes, add information, reclassify episodes, or link
+        tasks to plans and specs after creation.
         Only provided fields are updated; omitted fields keep their current values.
 
         Note: Updating content resets the episode for re-consolidation.
@@ -979,13 +1008,18 @@ def create_mcp_server():
         Args:
             episode_id: ID of the episode to update (required)
             content: New content text
-            episode_type: New type: observation, decision, question, meta, preference
+            episode_type: New type: observation, decision, question, meta, preference, spec, plan, task
             entities: New comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
+            plan_id: Plan episode ID to link this task to
+            spec_ids: Comma-separated spec episode IDs to link this task to
+            depends_on: Comma-separated task IDs this task depends on
+            priority: Priority level: p0, p1, or p2
 
         Returns:
             Confirmation or error message
         """
-        return await tool_update_episode(episode_id, content, episode_type, entities)
+        return await tool_update_episode(episode_id, content, episode_type, entities,
+                                         plan_id, spec_ids, depends_on, priority)
 
     @mcp.tool()
     async def delete_episode(episode_id: str) -> str:

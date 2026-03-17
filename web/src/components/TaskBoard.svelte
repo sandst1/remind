@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { currentDb } from '../lib/stores';
-  import { fetchTasks, updateTaskStatus, addTask, updateEpisode } from '../lib/api';
+  import { fetchTasks, updateTaskStatus, addTask, updateEpisode, fetchEpisode } from '../lib/api';
   import type { Episode, TaskStatus } from '../lib/types';
-  import { Circle, Play, CheckCircle2, Ban, Plus, ChevronDown, ChevronUp, Pencil } from 'lucide-svelte';
+  import { Circle, Play, CheckCircle2, Ban, Plus, ChevronDown, ChevronUp, Pencil, BookOpen, ClipboardList } from 'lucide-svelte';
 
   let tasks: Episode[] = [];
   let loading = false;
@@ -14,6 +14,9 @@
   let newTaskContent = '';
   let newTaskPriority = 'p1';
   let addingTask = false;
+
+  // Map of episode ID -> short label for plans/specs linked to tasks
+  let linkedEpisodeLabels: Record<string, string> = {};
 
   const columns: { status: TaskStatus; label: string; icon: any }[] = [
     { status: 'todo', label: 'To Do', icon: Circle },
@@ -38,11 +41,37 @@
     try {
       const response = await fetchTasks({ include_done: showDone });
       tasks = response.tasks;
+      await loadLinkedEpisodes(tasks);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load tasks';
     } finally {
       loading = false;
     }
+  }
+
+  async function loadLinkedEpisodes(taskList: Episode[]) {
+    const ids = new Set<string>();
+    for (const task of taskList) {
+      if (task.metadata?.plan_id) ids.add(task.metadata.plan_id);
+      for (const sid of task.metadata?.spec_ids ?? []) ids.add(sid);
+    }
+
+    const missing = [...ids].filter(id => !(id in linkedEpisodeLabels));
+    if (missing.length === 0) return;
+
+    const results = await Promise.allSettled(missing.map(id => fetchEpisode(id)));
+    const newLabels: Record<string, string> = {};
+    for (let i = 0; i < missing.length; i++) {
+      const result = results[i];
+      if (result.status === 'fulfilled') {
+        const ep = result.value;
+        // Use title if available, otherwise truncate content
+        newLabels[missing[i]] = ep.title ?? ep.content.slice(0, 60) + (ep.content.length > 60 ? '…' : '');
+      } else {
+        newLabels[missing[i]] = missing[i]; // fallback to raw ID
+      }
+    }
+    linkedEpisodeLabels = { ...linkedEpisodeLabels, ...newLabels };
   }
 
   function tasksByStatus(status: TaskStatus): Episode[] {
@@ -298,6 +327,22 @@
                       <span class="edit-icon" title="Edit content"><Pencil size={11} /></span>
                     </div>
                   {/if}
+                  {#if task.metadata?.plan_id || (task.metadata?.spec_ids?.length ?? 0) > 0}
+                    <div class="task-links">
+                      {#if task.metadata?.plan_id}
+                        <span class="link-badge link-badge-plan" title="Plan: {linkedEpisodeLabels[task.metadata.plan_id] ?? task.metadata.plan_id}">
+                          <BookOpen size={10} />
+                          {linkedEpisodeLabels[task.metadata.plan_id] ?? task.metadata.plan_id}
+                        </span>
+                      {/if}
+                      {#each task.metadata?.spec_ids ?? [] as specId}
+                        <span class="link-badge link-badge-spec" title="Spec: {linkedEpisodeLabels[specId] ?? specId}">
+                          <ClipboardList size={10} />
+                          {linkedEpisodeLabels[specId] ?? specId}
+                        </span>
+                      {/each}
+                    </div>
+                  {/if}
                   {#if task.entity_ids.length > 0}
                     <div class="task-entities">
                       {#each task.entity_ids as entityId}
@@ -546,6 +591,50 @@
     display: -webkit-box;
     -webkit-line-clamp: 4;
     -webkit-box-orient: vertical;
+  }
+
+  .task-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: var(--space-sm);
+  }
+
+  .link-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+    font-weight: 500;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: default;
+  }
+
+  .link-badge-plan {
+    background: var(--color-blue-bg, #eff6ff);
+    color: var(--color-blue, #2563eb);
+    border: 1px solid color-mix(in srgb, var(--color-blue, #2563eb) 25%, transparent);
+  }
+
+  .link-badge-spec {
+    background: var(--color-purple-bg, #f5f3ff);
+    color: var(--color-purple, #7c3aed);
+    border: 1px solid color-mix(in srgb, var(--color-purple, #7c3aed) 25%, transparent);
+  }
+
+  :global([data-theme="dark"]) .link-badge-plan {
+    background: color-mix(in srgb, var(--color-blue, #2563eb) 15%, transparent);
+    border-color: color-mix(in srgb, var(--color-blue, #2563eb) 30%, transparent);
+  }
+
+  :global([data-theme="dark"]) .link-badge-spec {
+    background: color-mix(in srgb, var(--color-purple, #7c3aed) 15%, transparent);
+    border-color: color-mix(in srgb, var(--color-purple, #7c3aed) 30%, transparent);
   }
 
   .task-entities {

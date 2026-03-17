@@ -378,6 +378,7 @@ async def update_episode(request: Request) -> JSONResponse:
         content = body.get("content")
         episode_type = body.get("episode_type")
         entities = body.get("entities")
+        metadata = body.get("metadata")
 
         # Parse episode type
         ep_type = None
@@ -390,11 +391,15 @@ async def update_episode(request: Request) -> JSONResponse:
                     status_code=400,
                 )
 
+        if metadata is not None and not isinstance(metadata, dict):
+            return JSONResponse({"error": "metadata must be an object"}, status_code=400)
+
         updated = memory.update_episode(
             episode_id,
             content=content,
             episode_type=ep_type,
             entities=entities,
+            metadata=metadata,
         )
 
         if not updated:

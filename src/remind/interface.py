@@ -420,18 +420,21 @@ class MemoryInterface:
         content: Optional[str] = None,
         episode_type: Optional[EpisodeType] = None,
         entities: Optional[list[str]] = None,
+        metadata: Optional[dict] = None,
     ) -> Optional[Episode]:
         """
         Update an existing episode.
 
         Only provided fields are updated; None values preserve existing data.
         If content is updated, resets consolidation flags so episode will be re-processed.
+        Metadata is shallow-merged into existing metadata (not replaced).
 
         Args:
             episode_id: ID of the episode to update
             content: New content (if None, preserves existing)
             episode_type: New type (if None, preserves existing)
             entities: New entity list (if None, preserves existing)
+            metadata: Metadata keys to merge in (if None, preserves existing)
 
         Returns:
             Updated Episode object, or None if not found
@@ -470,6 +473,9 @@ class MemoryInterface:
                     entity = Entity(id=entity_id, type=etype, display_name=name)
                     self.store.add_entity(entity)
                 self.store.add_mention(episode_id, entity_id)
+
+        if metadata is not None:
+            episode.metadata = {**(episode.metadata or {}), **metadata}
 
         self.store.update_episode(episode)
         return episode
