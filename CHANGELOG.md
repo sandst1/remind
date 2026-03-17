@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-17
+
+### Added
+- Documentation site (VitePress-based) with landing page, guides, concept explainers, real-world examples, and reference pages, deployed to GitHub Pages
+
+### Changed
+- Updated README to point to the new docs site
+- Tweaked UI icons
+
+### Fixed
+- Main page links in website
+- Skill installer updated to install latest Remind skills
+
+### Added
+- Task editing support in the web UI
+- Allow linking existing tasks to plans and specs
+
 ## [0.6.0] - 2026-03-09
 
 ### Added
