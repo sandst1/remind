@@ -123,6 +123,7 @@ class MemoryInterface:
         )
         self._ingest_background = ingest_background
         self._background_tasks: set[asyncio.Task] = set()
+        self._ingest_semaphore = asyncio.Semaphore(2)
         
         # Settings
         self.consolidation_threshold = consolidation_threshold
@@ -393,9 +394,17 @@ class MemoryInterface:
         return await self._process_ingest_chunk(chunk, source="flush")
 
     def _schedule_background_ingest(self, chunk: str, source: str) -> None:
-        """Schedule ingest processing as a background async task."""
+        """Schedule ingest processing as a background async task.
+
+        Concurrency is capped by self._ingest_semaphore (default 2) so
+        at most two chunks process simultaneously in-process.
+        """
+        async def _guarded():
+            async with self._ingest_semaphore:
+                return await self._process_ingest_chunk(chunk, source)
+
         task = asyncio.create_task(
-            self._process_ingest_chunk(chunk, source),
+            _guarded(),
             name=f"remind-ingest-{len(self._background_tasks)}",
         )
         self._background_tasks.add(task)
@@ -1087,17 +1096,16 @@ def create_memory(
     else:
         raise ValueError(f"Unknown embedding provider: {embedding_provider}. Choose from: openai, azure_openai, ollama")
     
-    # Create triage LLM if a separate provider is configured
+    # Create triage LLM if ingest_model is configured for the active provider
     triage_llm = None
-    if config.triage_provider and config.triage_provider != llm_provider:
-        if config.triage_provider == "anthropic":
-            triage_llm = AnthropicLLM(api_key=config.anthropic.api_key, model=config.anthropic.model)
-        elif config.triage_provider == "openai":
-            triage_llm = OpenAILLM(api_key=config.openai.api_key, base_url=config.openai.base_url, model=config.openai.model)
-        elif config.triage_provider == "azure_openai":
-            triage_llm = AzureOpenAILLM(api_key=config.azure_openai.api_key, base_url=config.azure_openai.base_url, api_version=config.azure_openai.api_version, deployment_name=config.azure_openai.deployment_name)
-        elif config.triage_provider == "ollama":
-            triage_llm = OllamaLLM(model=config.ollama.llm_model, base_url=config.ollama.url)
+    if llm_provider == "anthropic" and config.anthropic.ingest_model:
+        triage_llm = AnthropicLLM(api_key=config.anthropic.api_key, model=config.anthropic.ingest_model)
+    elif llm_provider == "openai" and config.openai.ingest_model:
+        triage_llm = OpenAILLM(api_key=config.openai.api_key, base_url=config.openai.base_url, model=config.openai.ingest_model)
+    elif llm_provider == "azure_openai" and config.azure_openai.ingest_deployment_name:
+        triage_llm = AzureOpenAILLM(api_key=config.azure_openai.api_key, base_url=config.azure_openai.base_url, api_version=config.azure_openai.api_version, deployment_name=config.azure_openai.ingest_deployment_name)
+    elif llm_provider == "ollama" and config.ollama.ingest_model:
+        triage_llm = OllamaLLM(model=config.ollama.ingest_model, base_url=config.ollama.url)
 
     return MemoryInterface(
         llm=llm,

@@ -144,6 +144,7 @@ CONFIG_FILE = REMIND_DIR / "remind.config.json"
 class AnthropicConfig:
     api_key: Optional[str] = None
     model: str = "claude-sonnet-4-20250514"
+    ingest_model: Optional[str] = None
 
 @dataclass
 class OpenAIConfig:
@@ -151,6 +152,7 @@ class OpenAIConfig:
     base_url: Optional[str] = None
     model: str = "gpt-4.1"
     embedding_model: str = "text-embedding-3-small"
+    ingest_model: Optional[str] = None
 
 @dataclass
 class AzureOpenAIConfig:
@@ -160,12 +162,14 @@ class AzureOpenAIConfig:
     deployment_name: Optional[str] = None
     embedding_deployment_name: Optional[str] = None
     embedding_size: int = 1536
+    ingest_deployment_name: Optional[str] = None
 
 @dataclass
 class OllamaConfig:
     url: str = "http://localhost:11434"
     llm_model: str = "llama3.2"
     embedding_model: str = "nomic-embed-text"
+    ingest_model: Optional[str] = None
 
 @dataclass
 class RemindConfig:
@@ -176,7 +180,6 @@ class RemindConfig:
     # Auto-ingest settings
     ingest_buffer_size: int = 4000
     ingest_min_density: float = 0.4
-    triage_provider: Optional[str] = None
     # Nested provider configs
     anthropic: AnthropicConfig
     openai: OpenAIConfig

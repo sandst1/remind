@@ -20,14 +20,16 @@ Create `~/.remind/remind.config.json`:
 
   "anthropic": {
     "api_key": "sk-ant-...",
-    "model": "claude-sonnet-4-20250514"
+    "model": "claude-sonnet-4-20250514",
+    "ingest_model": "claude-haiku-4-20250414"
   },
 
   "openai": {
     "api_key": "sk-...",
     "base_url": null,
     "model": "gpt-4.1",
-    "embedding_model": "text-embedding-3-small"
+    "embedding_model": "text-embedding-3-small",
+    "ingest_model": "gpt-4.1-mini"
   },
 
   "azure_openai": {
@@ -36,13 +38,15 @@ Create `~/.remind/remind.config.json`:
     "api_version": "2024-02-15-preview",
     "deployment_name": "gpt-4",
     "embedding_deployment_name": "text-embedding-3-small",
-    "embedding_size": 1536
+    "embedding_size": 1536,
+    "ingest_deployment_name": "gpt-4-mini"
   },
 
   "ollama": {
     "url": "http://localhost:11434",
     "llm_model": "llama3.2",
-    "embedding_model": "nomic-embed-text"
+    "embedding_model": "nomic-embed-text",
+    "ingest_model": "llama3.2:1b"
   },
 
   "decay": {
@@ -52,8 +56,7 @@ Create `~/.remind/remind.config.json`:
   },
 
   "ingest_buffer_size": 4000,
-  "ingest_min_density": 0.4,
-  "triage_provider": null
+  "ingest_min_density": 0.4
 }
 ```
 
@@ -151,12 +154,20 @@ Settings for the `ingest()` pipeline, which buffers raw text, scores information
 |--------|---------|-------------|
 | `ingest_buffer_size` | `4000` | Character threshold before buffer flushes and triggers triage |
 | `ingest_min_density` | `0.4` | Minimum information density score (0.0-1.0) to extract episodes |
-| `triage_provider` | `null` | Optional separate LLM provider for triage (defaults to `llm_provider`). Use a cheaper/faster model for triage without affecting consolidation quality. |
+
+Each provider config has an optional `ingest_model` field (or `ingest_deployment_name` for Azure) to use a cheaper/faster model for triage without affecting consolidation quality. When unset, triage uses the same model as consolidation.
+
+| Provider | Config field | Env var | Example |
+|----------|-------------|---------|---------|
+| Anthropic | `anthropic.ingest_model` | `ANTHROPIC_INGEST_MODEL` | `claude-haiku-4-20250414` |
+| OpenAI | `openai.ingest_model` | `OPENAI_INGEST_MODEL` | `gpt-4.1-mini` |
+| Azure OpenAI | `azure_openai.ingest_deployment_name` | `AZURE_OPENAI_INGEST_DEPLOYMENT_NAME` | `gpt-4-mini` |
+| Ollama | `ollama.ingest_model` | `OLLAMA_INGEST_MODEL` | `llama3.2:1b` |
 
 Environment variable overrides:
 
 ```bash
 INGEST_BUFFER_SIZE=4000
 INGEST_MIN_DENSITY=0.4
-TRIAGE_PROVIDER=ollama
+ANTHROPIC_INGEST_MODEL=claude-haiku-4-20250414
 ```

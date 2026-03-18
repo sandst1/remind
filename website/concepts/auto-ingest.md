@@ -121,6 +121,6 @@ Over time, consolidation produces causal concepts from outcomes — e.g., "grep-
 |--------|---------|-------------|
 | `ingest_buffer_size` | `4000` | Character threshold for buffer flush |
 | `ingest_min_density` | `0.4` | Minimum density score to extract episodes |
-| `triage_provider` | `null` | Optional separate LLM for triage (cheaper/faster) |
+| `<provider>.ingest_model` | `null` | Optional cheaper/faster model for triage (e.g., `anthropic.ingest_model`, `openai.ingest_model`) |
 
 See [Configuration](../guide/configuration.md#auto-ingest) for details.

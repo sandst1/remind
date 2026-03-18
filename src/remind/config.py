@@ -33,6 +33,7 @@ class AnthropicConfig:
 
     api_key: Optional[str] = None
     model: str = "claude-sonnet-4-20250514"
+    ingest_model: Optional[str] = None
 
 
 @dataclass
@@ -43,6 +44,7 @@ class OpenAIConfig:
     base_url: Optional[str] = None
     model: str = "gpt-4.1"
     embedding_model: str = "text-embedding-3-small"
+    ingest_model: Optional[str] = None
 
 
 @dataclass
@@ -55,6 +57,7 @@ class AzureOpenAIConfig:
     deployment_name: Optional[str] = None
     embedding_deployment_name: Optional[str] = None
     embedding_size: int = 1536
+    ingest_deployment_name: Optional[str] = None
 
 
 @dataclass
@@ -64,6 +67,7 @@ class OllamaConfig:
     url: str = "http://localhost:11434"
     llm_model: str = "llama3.2"
     embedding_model: str = "nomic-embed-text"
+    ingest_model: Optional[str] = None
 
 
 @dataclass
@@ -96,7 +100,6 @@ class RemindConfig:
     # Auto-ingest config
     ingest_buffer_size: int = 4000
     ingest_min_density: float = 0.4
-    triage_provider: Optional[str] = None
 
 
 def _load_provider_config(file_config: dict, key: str, config_class: type) -> object:
@@ -160,8 +163,6 @@ def load_config() -> RemindConfig:
                 config.ingest_buffer_size = int(file_config["ingest_buffer_size"])
             if "ingest_min_density" in file_config:
                 config.ingest_min_density = float(file_config["ingest_min_density"])
-            if "triage_provider" in file_config:
-                config.triage_provider = file_config["triage_provider"]
 
             logger.debug(f"Loaded config from {CONFIG_FILE}")
         except (json.JSONDecodeError, IOError, ValueError) as e:
@@ -227,8 +228,16 @@ def load_config() -> RemindConfig:
             config.ingest_min_density = float(min_density)
         except ValueError:
             logger.warning(f"Invalid INGEST_MIN_DENSITY: {min_density}")
-    if triage_prov := os.environ.get("TRIAGE_PROVIDER"):
-        config.triage_provider = triage_prov
+
+    # Per-provider ingest model overrides
+    if ingest_model := os.environ.get("ANTHROPIC_INGEST_MODEL"):
+        config.anthropic.ingest_model = ingest_model
+    if ingest_model := os.environ.get("OPENAI_INGEST_MODEL"):
+        config.openai.ingest_model = ingest_model
+    if ingest_model := os.environ.get("AZURE_OPENAI_INGEST_DEPLOYMENT_NAME"):
+        config.azure_openai.ingest_deployment_name = ingest_model
+    if ingest_model := os.environ.get("OLLAMA_INGEST_MODEL"):
+        config.ollama.ingest_model = ingest_model
 
     return config
 

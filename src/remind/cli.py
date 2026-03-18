@@ -361,11 +361,21 @@ def end_session(ctx):
         console.print("[yellow]No pending episodes to consolidate[/yellow]")
         return
 
-    from remind.background import spawn_background_consolidation
+    from remind.background import (
+        spawn_background_consolidation,
+        get_ingest_queue_dir,
+        spawn_ingest_worker,
+    )
 
     db_path = ctx.obj["db"]
     llm = ctx.obj["llm"]
     embedding = ctx.obj["embedding"]
+
+    # Ensure any queued ingest chunks are being processed
+    queue_dir = get_ingest_queue_dir(db_path)
+    if queue_dir.is_dir() and any(queue_dir.glob("*.json")):
+        if spawn_ingest_worker(db_path, llm, embedding):
+            console.print("[dim]Started ingest worker for queued chunks.[/dim]")
 
     if spawn_background_consolidation(db_path, llm, embedding):
         console.print(f"[green]✓ Session ended — consolidating {pending} episodes in background[/green]")
@@ -419,17 +429,23 @@ def ingest(ctx, content: Optional[str], source: str, foreground: bool):
         else:
             console.print("[yellow]Triage found nothing memory-worthy (low density).[/yellow]")
     else:
-        from remind.background import spawn_background_ingest
+        from remind.background import enqueue_ingest_chunk, spawn_ingest_worker
 
-        spawn_background_ingest(
+        enqueue_ingest_chunk(
             db_path=ctx.obj["db"],
-            llm_provider=ctx.obj["llm"],
-            embedding_provider=ctx.obj["embedding"],
             chunk=content,
             source=source,
         )
-        console.print(f"[green]✓[/green] Ingest started in background ({len(content)} chars)")
-        console.print("[dim]Triage and consolidation will run asynchronously.[/dim]")
+        spawned = spawn_ingest_worker(
+            db_path=ctx.obj["db"],
+            llm_provider=ctx.obj["llm"],
+            embedding_provider=ctx.obj["embedding"],
+        )
+        console.print(f"[green]✓[/green] Ingest queued ({len(content)} chars)")
+        if spawned:
+            console.print("[dim]Background worker started.[/dim]")
+        else:
+            console.print("[dim]Worker already running — it will pick this up.[/dim]")
 
 
 @main.command("flush-ingest")

@@ -23,15 +23,21 @@ logger = logging.getLogger(__name__)
 # Lock timeout in seconds (30 minutes)
 LOCK_TIMEOUT = 1800
 
+# Grace period (seconds) the ingest worker waits after the queue empties
+# before exiting, to catch late arrivals.
+INGEST_WORKER_GRACE_SECONDS = 2
+
+
+def _db_hash(db_path: str) -> str:
+    return hashlib.md5(db_path.encode()).hexdigest()[:12]
+
 
 def get_consolidation_lock_path(db_path: str) -> Path:
     """Get lock file path for a database.
 
     Uses a hash of the db_path to create a unique lock file name.
     """
-    # Create a short hash of the db path for the lock file name
-    db_hash = hashlib.md5(db_path.encode()).hexdigest()[:12]
-    return REMIND_DIR / f".consolidate-{db_hash}.lock"
+    return REMIND_DIR / f".consolidate-{_db_hash(db_path)}.lock"
 
 
 def is_consolidation_running(db_path: str) -> bool:
@@ -104,34 +110,71 @@ def spawn_background_consolidation(
     return True
 
 
-def spawn_background_ingest(
+def get_ingest_queue_dir(db_path: str) -> Path:
+    """Get the queue directory for ingest chunks for a database."""
+    return REMIND_DIR / "ingest-queue" / _db_hash(db_path)
+
+
+def get_ingest_lock_path(db_path: str) -> Path:
+    """Get lock file path for the ingest worker for a database."""
+    return REMIND_DIR / f".ingest-{_db_hash(db_path)}.lock"
+
+
+def is_ingest_running(db_path: str) -> bool:
+    """Check if an ingest worker is already running for this database."""
+    lock_path = get_ingest_lock_path(db_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lock = FileLock(str(lock_path), timeout=0)
+    try:
+        lock.acquire(blocking=False)
+        lock.release()
+        return False
+    except Timeout:
+        return True
+
+
+def enqueue_ingest_chunk(
+    db_path: str,
+    chunk: str,
+    source: str = "conversation",
+) -> Path:
+    """Write a chunk to the ingest queue directory for later processing.
+
+    File is named with a timestamp prefix for FIFO ordering.
+
+    Returns:
+        Path to the enqueued file.
+    """
+    queue_dir = get_ingest_queue_dir(db_path)
+    queue_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = f"{time.time():.6f}"
+    suffix = uuid4().hex[:8]
+    path = queue_dir / f"{ts}-{suffix}.json"
+    path.write_text(json.dumps({"chunk": chunk, "source": source}))
+
+    logger.debug(f"Enqueued ingest chunk: {path.name} ({len(chunk)} chars)")
+    return path
+
+
+def spawn_ingest_worker(
     db_path: str,
     llm_provider: str,
     embedding_provider: str,
-    chunk: str,
-    source: str = "conversation",
 ) -> bool:
-    """Spawn a background process to run triage + consolidation on a chunk.
+    """Spawn a single background ingest worker that drains the queue.
 
-    Unlike consolidation, no file locking is needed -- multiple ingest
-    workers can run concurrently since they write to independent episodes
-    and consolidation has its own lock.
-
-    Args:
-        db_path: Full path to the database file.
-        llm_provider: LLM provider name.
-        embedding_provider: Embedding provider name.
-        chunk: Raw text chunk to triage and ingest.
-        source: Source label for episode metadata.
+    Only one worker runs per database (enforced via FileLock).
+    If a worker is already running it will pick up newly enqueued chunks
+    on its own, so this returns False without spawning.
 
     Returns:
-        True if spawned successfully.
+        True if a new worker was spawned, False if one is already running.
     """
-    tmp_dir = REMIND_DIR / "tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    tmp_path = tmp_dir / f"ingest-{uuid4().hex[:12]}.json"
-    tmp_path.write_text(json.dumps({"chunk": chunk, "source": source}))
+    if is_ingest_running(db_path):
+        logger.debug(f"Ingest worker already running for {db_path}")
+        return False
 
     cmd = [
         sys.executable,
@@ -143,11 +186,10 @@ def spawn_background_ingest(
         llm_provider,
         "--embedding",
         embedding_provider,
-        "--ingest-chunk-file",
-        str(tmp_path),
+        "--ingest-worker",
     ]
 
-    logger.debug(f"Spawning background ingest: {' '.join(cmd)}")
+    logger.debug(f"Spawning ingest worker: {' '.join(cmd)}")
 
     subprocess.Popen(
         cmd,
