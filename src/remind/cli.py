@@ -67,7 +67,7 @@ def run_async(coro):
 @click.pass_context
 def main(ctx, db: str, llm: str, embedding: str):
     """Remind - Generalization-capable memory for LLMs."""
-    from remind.config import load_config, resolve_db_path
+    from remind.config import load_config, resolve_db_path, setup_file_logging
 
     # Load config (priority: env vars > config file > defaults)
     config = load_config()
@@ -83,6 +83,9 @@ def main(ctx, db: str, llm: str, embedding: str):
         db_path = resolve_db_path(db)
     else:
         db_path = resolve_db_path(None, project_aware=True)
+
+    if config.logging_enabled:
+        setup_file_logging(db_path)
 
     ctx.ensure_object(dict)
     ctx.obj["db"] = db_path

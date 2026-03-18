@@ -223,6 +223,15 @@ class Consolidator:
         )
         
         # Call LLM for consolidation
+        logger.debug(
+            "Consolidation LLM request:\n"
+            f"  provider: {self.llm.name}\n"
+            f"  episodes: {len(episodes)}\n"
+            f"  existing_concepts: {len(existing_concepts)}\n"
+            f"  prompt_length: {len(prompt)}\n"
+            f"  prompt:\n{prompt}"
+        )
+
         try:
             operations = await self.llm.complete_json(
                 prompt=prompt,
@@ -233,6 +242,8 @@ class Consolidator:
         except Exception as e:
             logger.error(f"LLM consolidation failed: {e}")
             raise
+
+        logger.debug(f"Consolidation LLM response: {json.dumps(operations, indent=2)}")
         
         # Log the analysis
         if operations.get("analysis"):

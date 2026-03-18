@@ -176,6 +176,14 @@ class EntityExtractor:
 
         prompt = EXTRACTION_PROMPT_TEMPLATE.format(content=content)
 
+        logger.debug(
+            "Extraction LLM request:\n"
+            f"  provider: {self.llm.name}\n"
+            f"  episode_id: {episode_id}\n"
+            f"  content_length: {len(content)}\n"
+            f"  prompt:\n{prompt}"
+        )
+
         try:
             result = await self.llm.complete_json(
                 prompt=prompt,
@@ -183,6 +191,8 @@ class EntityExtractor:
                 temperature=0.1,  # Low temp for consistent extraction
                 max_tokens=1024,  # Increased for relationships
             )
+
+            logger.debug(f"Extraction LLM response: {json.dumps(result, indent=2)}")
 
             return ExtractionResult.from_dict(result, episode_id=episode_id)
 
@@ -327,6 +337,14 @@ class EntityExtractor:
             entities=entities_str,
         )
 
+        logger.debug(
+            "Relation extraction LLM request:\n"
+            f"  provider: {self.llm.name}\n"
+            f"  episode_id: {episode.id}\n"
+            f"  entities: {filtered_entities}\n"
+            f"  prompt:\n{prompt}"
+        )
+
         try:
             result = await self.llm.complete_json(
                 prompt=prompt,
@@ -334,6 +352,8 @@ class EntityExtractor:
                 temperature=0.1,
                 max_tokens=512,
             )
+
+            logger.debug(f"Relation extraction LLM response: {json.dumps(result, indent=2)}")
 
             relations = []
             for rel in result.get("entity_relationships", []):

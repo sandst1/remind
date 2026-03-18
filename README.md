@@ -92,6 +92,7 @@ remind ui
 - **Soft delete / restore** — Episodes and concepts can be deleted and restored; permanent purge is a separate step
 - **Memory decay** — Rarely-recalled concepts fade; frequently-used ones stay sharp
 - **Composable via Skills** — Build any workflow on top of the `remind` CLI
+- **Debug logging** — Enable `logging_enabled` to get full LLM prompt/response logs in `remind.log` next to the database
 - **Multi-provider** — Anthropic, OpenAI, Azure OpenAI, Ollama (fully local)
 - **Web UI** — Dashboard, concept graph, entity explorer, task board
 

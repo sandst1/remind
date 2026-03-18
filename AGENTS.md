@@ -180,6 +180,8 @@ class RemindConfig:
     # Auto-ingest settings
     ingest_buffer_size: int = 4000
     ingest_min_density: float = 0.4
+    # Logging
+    logging_enabled: bool = False
     # Nested provider configs
     anthropic: AnthropicConfig
     openai: OpenAIConfig
@@ -204,6 +206,7 @@ def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
   "embedding_provider": "openai",
   "consolidation_threshold": 5,
   "auto_consolidate": true,
+  "logging_enabled": false,
   "anthropic": { "api_key": "sk-ant-..." },
   "openai": { "api_key": "sk-..." },
   "azure_openai": { "api_key": "...", "base_url": "..." },

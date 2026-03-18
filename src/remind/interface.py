@@ -23,7 +23,7 @@ from remind.providers.base import LLMProvider, EmbeddingProvider
 from remind.consolidation import Consolidator
 from remind.retrieval import MemoryRetriever, ActivatedConcept
 from remind.extraction import EntityExtractor
-from remind.config import load_config, DecayConfig, RemindConfig
+from remind.config import load_config, DecayConfig, RemindConfig, setup_file_logging
 from remind.triage import IngestionBuffer, IngestionTriager, TriageResult
 
 logger = logging.getLogger(__name__)
@@ -1024,6 +1024,9 @@ def create_memory(
     # Resolve database name to full path (skip if already absolute)
     if not os.path.isabs(db_path):
         db_path = resolve_db_path(db_path)
+
+    if config.logging_enabled:
+        setup_file_logging(db_path)
 
     # Use config values if not explicitly provided
     llm_provider = llm_provider or config.llm_provider

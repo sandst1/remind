@@ -56,7 +56,9 @@ Create `~/.remind/remind.config.json`:
   },
 
   "ingest_buffer_size": 4000,
-  "ingest_min_density": 0.4
+  "ingest_min_density": 0.4,
+
+  "logging_enabled": false
 }
 ```
 
@@ -170,4 +172,33 @@ Environment variable overrides:
 INGEST_BUFFER_SIZE=4000
 INGEST_MIN_DENSITY=0.4
 ANTHROPIC_INGEST_MODEL=claude-haiku-4-20250414
+```
+
+## Logging
+
+When enabled, Remind writes detailed debug logs to `remind.log` in the same directory as the database. This includes full LLM prompts and responses for triage, extraction, and consolidation — useful for debugging why episodes were scored a certain way or how concepts were derived.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `logging_enabled` | `false` | Write debug logs to `remind.log` next to the database |
+
+The log file location follows the database:
+
+| Database path | Log path |
+|--------------|----------|
+| `~/.remind/myproject.db` | `~/.remind/remind.log` |
+| `<project>/.remind/remind.db` | `<project>/.remind/remind.log` |
+
+Enable via config file:
+
+```json
+{
+  "logging_enabled": true
+}
+```
+
+Or environment variable:
+
+```bash
+REMIND_LOGGING_ENABLED=true
 ```

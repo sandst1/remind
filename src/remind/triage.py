@@ -178,6 +178,14 @@ class IngestionTriager:
             min_density=self.min_density,
         )
 
+        logger.debug(
+            "Triage LLM request:\n"
+            f"  provider: {self.llm.name}\n"
+            f"  system: {TRIAGE_SYSTEM_PROMPT[:120]}...\n"
+            f"  chunk_length: {len(chunk)}\n"
+            f"  prompt (first 500 chars): {prompt[:500]}"
+        )
+
         try:
             response = await self.llm.complete_json(
                 prompt=prompt,
@@ -187,6 +195,8 @@ class IngestionTriager:
         except Exception as e:
             logger.warning(f"Triage LLM call failed: {e}. Falling back to raw storage.")
             return self._fallback_result(chunk, str(e))
+
+        logger.debug(f"Triage LLM response: {json.dumps(response, indent=2)}")
 
         return self._parse_response(response, chunk)
 

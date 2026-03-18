@@ -101,6 +101,9 @@ class RemindConfig:
     ingest_buffer_size: int = 4000
     ingest_min_density: float = 0.4
 
+    # Logging
+    logging_enabled: bool = False
+
 
 def _load_provider_config(file_config: dict, key: str, config_class: type) -> object:
     """Load a provider config from file config dict."""
@@ -163,6 +166,10 @@ def load_config() -> RemindConfig:
                 config.ingest_buffer_size = int(file_config["ingest_buffer_size"])
             if "ingest_min_density" in file_config:
                 config.ingest_min_density = float(file_config["ingest_min_density"])
+
+            # Logging
+            if "logging_enabled" in file_config:
+                config.logging_enabled = bool(file_config["logging_enabled"])
 
             logger.debug(f"Loaded config from {CONFIG_FILE}")
         except (json.JSONDecodeError, IOError, ValueError) as e:
@@ -228,6 +235,10 @@ def load_config() -> RemindConfig:
             config.ingest_min_density = float(min_density)
         except ValueError:
             logger.warning(f"Invalid INGEST_MIN_DENSITY: {min_density}")
+
+    # Logging override
+    if logging_enabled := os.environ.get("REMIND_LOGGING_ENABLED"):
+        config.logging_enabled = logging_enabled.lower() in ("true", "1", "yes")
 
     # Per-provider ingest model overrides
     if ingest_model := os.environ.get("ANTHROPIC_INGEST_MODEL"):
@@ -303,3 +314,37 @@ def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
         # No name, not project-aware: use ~/.remind/memory.db (legacy behavior)
         REMIND_DIR.mkdir(parents=True, exist_ok=True)
         return str(REMIND_DIR / "memory.db")
+
+
+_file_logging_configured: set[str] = set()
+
+
+def setup_file_logging(db_path: str) -> None:
+    """Configure file logging to remind.log in the same directory as the database.
+
+    Attaches a FileHandler to the ``remind`` package logger so all
+    sub-module loggers (remind.interface, remind.consolidation, etc.)
+    propagate their output to the log file at DEBUG level.
+
+    Safe to call multiple times -- duplicate handlers for the same
+    directory are skipped.
+    """
+    log_dir = str(Path(db_path).parent)
+    if log_dir in _file_logging_configured:
+        return
+
+    log_path = Path(log_dir) / "remind.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    handler = logging.FileHandler(str(log_path))
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+
+    pkg_logger = logging.getLogger("remind")
+    pkg_logger.addHandler(handler)
+    pkg_logger.setLevel(logging.DEBUG)
+
+    _file_logging_configured.add(log_dir)
+    logger.info(f"File logging enabled: {log_path}")

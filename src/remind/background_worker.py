@@ -31,11 +31,16 @@ from remind.background import (
     LOCK_TIMEOUT,
     INGEST_WORKER_GRACE_SECONDS,
 )
-from remind.config import REMIND_DIR
+from remind.config import REMIND_DIR, load_config, setup_file_logging
 
 
-def setup_logging() -> logging.Logger:
-    """Set up logging to a file."""
+def setup_logging(db_path: str) -> logging.Logger:
+    """Set up logging to a file.
+
+    Always logs to ~/.remind/logs/consolidation.log at INFO level.
+    When logging_enabled is set in config, also logs DEBUG-level
+    detail to remind.log next to the database.
+    """
     log_dir = REMIND_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -44,6 +49,11 @@ def setup_logging() -> logging.Logger:
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
+
+    config = load_config()
+    if config.logging_enabled:
+        setup_file_logging(db_path)
+
     return logging.getLogger(__name__)
 
 
@@ -232,7 +242,7 @@ def main():
     parser.add_argument("--ingest-chunk-file", help="(Legacy) Path to temp JSON file with chunk to ingest")
     args = parser.parse_args()
 
-    logger = setup_logging()
+    logger = setup_logging(args.db)
 
     if args.ingest_worker:
         run_ingest_worker(args, logger)
