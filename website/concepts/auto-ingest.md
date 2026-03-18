@@ -1,0 +1,126 @@
+# Auto-Ingest
+
+Auto-ingest is Remind's automatic memory curation pipeline. Instead of requiring the agent to decide what's worth remembering (which competes for attention with the actual task), auto-ingest handles input selection as a separate, cheaper subsystem.
+
+## How it works
+
+The pipeline has three stages:
+
+### 1. Buffer
+
+Raw text accumulates in an in-memory buffer via `ingest()`. When the buffer exceeds a character threshold (default ~4000 chars), it flushes and triggers triage.
+
+### 2. Information density scoring
+
+The flushed chunk gets scored by an LLM for how much useful, memory-worthy information it contains (0.0-1.0):
+
+| Score | Meaning |
+|-------|---------|
+| 0.0 | Pure boilerplate, greetings, acknowledgments |
+| 0.3 | Some context but nothing specific or actionable |
+| 0.5 | Contains some facts or context worth noting |
+| 0.7 | Contains decisions, preferences, or important facts |
+| 1.0 | Dense with critical decisions, corrections, or surprises |
+
+Chunks below the minimum density threshold (default 0.4) are dropped.
+
+### 3. Triage extraction
+
+Chunks that pass the density threshold get distilled into tight, information-dense episode statements. These go through `remember()` and then **immediately consolidate**, bypassing the normal auto-consolidation threshold.
+
+## `ingest()` vs `remember()`
+
+| | `remember()` | `ingest()` |
+|---|---|---|
+| **Input** | Curated, standalone statement | Raw conversation text |
+| **LLM calls** | None (fast) | Yes (density scoring + extraction) |
+| **Filtering** | None — everything is stored | Density-based — low-value content is dropped |
+| **Consolidation** | Normal threshold-based | Immediate (`force=True`) |
+| **Use when** | You know what's worth storing | You want Remind to decide |
+
+Both paths are additive. Using `ingest()` doesn't affect existing `remember()` calls.
+
+## Usage
+
+### From an MCP-connected agent
+
+Auto-ingest is available via MCP tools, CLI, and the Python API. The agent streams conversation fragments or tool output into `ingest()`, and Remind handles the rest.
+
+A good place to call `ingest()` is from deterministic hooks -- after each tool call returns, at the end of each turn, or on a timer. This way the agent doesn't have to "decide" when to ingest; it just always does, and the density scoring handles the filtering. The buffer threshold is configurable (default 4000 chars), so no LLM calls happen until enough text has accumulated:
+
+```text
+# During the conversation, the agent periodically sends chunks
+ingest(content="User: Can you fix the auth bug?\nAssistant: Looking at verify_credentials...")
+ingest(content="...I see the issue. The token expiry check uses <= instead of <, so tokens are accepted one second past expiry. Fixing now...")
+ingest(content="Assistant: Fixed. Changed the comparison operator in verify_credentials from <= to <. All auth tests pass now.")
+
+# At session end
+flush_ingest()
+```
+
+Remind buffers the text internally. When the buffer threshold is reached (default 4000 chars, configurable via `ingest_buffer_size`), it scores the chunk for information density and extracts distilled episodes like:
+
+> "Auth bug in verify_credentials: token expiry check used `<=` instead of `<`, accepting tokens one second past expiry"
+
+Low-value text (greetings, acknowledgments, routine narration) is dropped automatically.
+
+### From the CLI
+
+Pipe conversation logs or transcripts directly:
+
+```bash
+# Pipe a file
+cat conversation-log.txt | remind ingest --source transcript
+
+# Pass as argument
+remind ingest "User prefers dark mode and Vim keybindings in all editors"
+
+# Force-process whatever is in the buffer
+remind flush-ingest
+```
+
+### From Python
+
+```python
+from remind.interface import create_memory
+
+memory = create_memory(db_path="my-project")
+
+# Stream text in
+await memory.ingest("User: How should we handle rate limiting?")
+await memory.ingest("Assistant: I'd suggest a token bucket at the gateway...")
+# ... more conversation ...
+
+# At session end, flush remaining buffer
+await memory.flush_ingest()
+```
+
+### Practical workflow for an AI agent
+
+The recommended pattern for an agent using auto-ingest:
+
+1. **Session start** — `recall()` to load context as usual
+2. **During work** — use `ingest()` to stream raw conversation/tool output. Use `remember()` for things you *know* are important (decisions, corrections, preferences).
+3. **Session end** — call `flush_ingest()` (or `end-session` in CLI, which does this automatically)
+
+You don't have to choose one or the other. `ingest()` and `remember()` are complementary -- `remember()` is the explicit "I know this matters" path, `ingest()` is the "let Remind decide" path.
+
+## Outcome detection
+
+Auto-ingest automatically detects action-result pairs in raw conversation data and extracts them as `outcome` episodes with structured metadata:
+
+- **strategy** — what approach was used
+- **result** — `success`, `failure`, or `partial`
+- **prediction_error** — `low`, `medium`, or `high`
+
+Over time, consolidation produces causal concepts from outcomes — e.g., "grep-based search is unreliable when function names don't match the domain term" — which spreading activation surfaces when the agent faces similar situations.
+
+## Configuration
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ingest_buffer_size` | `4000` | Character threshold for buffer flush |
+| `ingest_min_density` | `0.4` | Minimum density score to extract episodes |
+| `triage_provider` | `null` | Optional separate LLM for triage (cheaper/faster) |
+
+See [Configuration](../guide/configuration.md#auto-ingest) for details.

@@ -19,6 +19,7 @@ src/remind/
 ├── consolidation.py   # LLM-powered episode → concept transformation
 ├── extraction.py      # Entity/type extraction from episodes
 ├── retrieval.py       # Spreading activation retrieval
+├── triage.py          # Auto-ingest: buffered intake + density scoring
 ├── cli.py             # Command-line interface (project-aware)
 ├── mcp_server.py      # MCP (Model Context Protocol) server
 ├── background.py      # Background consolidation spawning
@@ -49,9 +50,11 @@ src/remind/
 | `Relation` | Typed edge between concepts (implies, contradicts, specializes, etc.) |
 | `TaskStatus` | Enum for task status: `todo`, `in_progress`, `done`, `blocked` |
 
-**Episode types**: `observation`, `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`
+**Episode types**: `observation`, `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`
 
-**Episode lifecycle**: Created via `remember()` → Entity extraction → Consolidation → Marked consolidated
+**Episode lifecycle**: Created via `remember()` or `ingest()` → Entity extraction → Consolidation → Marked consolidated
+
+**Outcome episode metadata**: `strategy` (approach used), `result` (success/failure/partial), `prediction_error` (low/medium/high)
 
 **Task lifecycle**: `todo` → `in_progress` → `done` (or `blocked` → `todo`). Active tasks are excluded from consolidation; only completed tasks consolidate.
 
@@ -81,8 +84,9 @@ class EmbeddingProvider(ABC):
 The main entry point. Key design decisions:
 
 1. **`remember()` is synchronous and fast** - no LLM calls, just stores episode
-2. **`consolidate()` does all LLM work** - extraction + generalization
-3. **Two consolidation modes**: Automatic (threshold-based) or manual (hook-based)
+2. **`ingest()` is async with LLM triage** - buffers, scores density, extracts episodes, immediately consolidates
+3. **`consolidate()` does all LLM work** - extraction + generalization
+4. **Two consolidation modes**: Automatic (threshold-based) or manual (hook-based)
 
 ```python
 # Consolidation happens in two phases:
@@ -93,11 +97,20 @@ The main entry point. Key design decisions:
 ### Consolidation (`consolidation.py`)
 
 The "brain" of the system. Uses LLM to:
-- Classify episode types (observation, decision, question, meta, preference)
+- Classify episode types (observation, decision, question, meta, preference, outcome)
 - Extract entity mentions from natural language
 - Identify patterns across episodes
 - Create generalized concepts with relations
 - Detect contradictions
+- Identify causal patterns in outcome episodes (strategy-outcome relations)
+
+### Auto-Ingest Triage (`triage.py`)
+
+The "input selection" subsystem. Two classes:
+- `IngestionBuffer` — character-threshold accumulator. Buffers raw text until threshold (~4000 chars).
+- `IngestionTriager` — LLM-based density scoring + episode extraction. Scores information density (0.0-1.0), extracts distilled episodes from high-density chunks, detects action-result pairs as outcome episodes.
+
+Pipeline: `ingest()` → buffer → density score + extract (LLM) → `remember()` → `consolidate(force=True)`
 
 ### Retrieval (`retrieval.py`)
 
@@ -160,6 +173,10 @@ class RemindConfig:
     embedding_provider: str = "openai"
     consolidation_threshold: int = 5
     auto_consolidate: bool = True
+    # Auto-ingest settings
+    ingest_buffer_size: int = 4000
+    ingest_min_density: float = 0.4
+    triage_provider: Optional[str] = None
     # Nested provider configs
     anthropic: AnthropicConfig
     openai: OpenAIConfig
@@ -372,6 +389,7 @@ When making changes, these files are most commonly modified together:
 | New provider | `providers/newprovider.py`, `providers/__init__.py`, `interface.py` |
 | Consolidation logic | `consolidation.py`, `extraction.py` |
 | Retrieval behavior | `retrieval.py` |
+| Auto-ingest pipeline | `triage.py`, `interface.py`, `config.py` |
 | CLI commands | `cli.py` |
 | Configuration | `config.py`, `interface.py`, `mcp_server.py`, `cli.py` |
 | Background consolidation | `background.py`, `background_worker.py`, `cli.py` |

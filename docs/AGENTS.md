@@ -10,6 +10,8 @@ External memory layer that persists across sessions and generalizes experiences 
 |------|---------|
 | `remember(content, [episode_type], [entities])` | Store experience (fast, no LLM) |
 | `recall(query, [entity])` | Retrieve relevant memories |
+| `ingest(content, [source])` | Auto-ingest raw text with density scoring |
+| `flush_ingest()` | Force-flush ingestion buffer |
 | `consolidate([force])` | Extract entities + process episodes → concepts |
 | `inspect([concept_id], [show_episodes])` | View concepts or episodes |
 | `entities([entity_type], [limit])` | List entities with mention counts |
@@ -30,10 +32,29 @@ remember(content="User prefers TypeScript over JavaScript")
 remember(content="Use Redis for caching", episode_type="decision", entities="tool:redis,concept:caching")
 ```
 
-**Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`
+**Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`
 
 **When to use**: User preferences, project context, decisions+rationale, open questions, corrections
 **Skip**: Trivial info, already-captured knowledge, raw conversation logs
+
+## ingest
+
+```
+ingest(content="User: Fix the auth bug\nAssistant: Looking at verify_credentials...")
+ingest(content="<raw tool output>", source="tool_output")
+```
+
+Streams raw text into Remind's auto-ingest pipeline. Text buffers internally (~4000 chars) then gets scored for information density and distilled into episodes automatically. Use `flush_ingest()` at session end to process remaining buffer.
+
+**`ingest()` vs `remember()`**: Use `remember()` when you've already decided what's worth storing. Use `ingest()` when you want Remind to decide — it filters, scores, and distills automatically.
+
+## flush_ingest
+
+```
+flush_ingest()
+```
+
+Forces processing of whatever text is in the ingestion buffer, regardless of threshold.
 
 ## recall
 
@@ -119,6 +140,37 @@ restore_concept(concept_id="def456")
 - Use `inspect(show_episodes=True)` to find episode IDs
 - Use `inspect()` to find concept IDs
 
+## Auto-Ingest Workflow
+
+For continuous memory capture without manual curation:
+
+**During work** — stream raw conversation/output into `ingest()`:
+```
+ingest(content="<conversation fragment or tool output>")
+```
+
+**Session end** — flush remaining buffer:
+```
+flush_ingest()
+```
+
+Remind handles density scoring, distillation, and consolidation automatically. High-density content produces episodes; low-density content (greetings, boilerplate) is dropped.
+
+## Outcome Episodes
+
+Use `outcome` type to record action-result pairs:
+
+```
+remember(content="Grep search for 'auth' missed verify_credentials", episode_type="outcome", metadata='{"strategy":"grep search","result":"partial","prediction_error":"high"}')
+```
+
+Outcome metadata conventions:
+- `strategy` — what approach was used
+- `result` — `success`, `failure`, or `partial`
+- `prediction_error` — `low`, `medium`, or `high` (how surprising the result was)
+
+Auto-ingest detects outcomes automatically from raw conversation data.
+
 ## Best Practices
 
 1. Be selective — skip trivial info
@@ -129,3 +181,5 @@ restore_concept(concept_id="def456")
 6. Consolidate at natural boundaries
 7. Remember updates to flag contradictions
 8. Delete outdated/incorrect information rather than adding corrections
+9. Use `ingest()` for raw conversation logs instead of `remember()`
+10. Use `outcome` type to close the feedback loop on strategies

@@ -25,6 +25,7 @@ Across all pending episodes:
 - **Concept update** — Existing concepts are strengthened, refined, or given exceptions
 - **Relation establishment** — Typed edges between concepts (implies, contradicts, specializes, etc.)
 - **Contradiction detection** — Flagging when new episodes conflict with existing knowledge
+- **Causal pattern detection** — For outcome-typed episodes, identifying strategy-outcome patterns (e.g., "strategy X tends to fail in context Y") and connecting them with `causes` relations
 
 ## Triggering consolidation
 
@@ -72,3 +73,7 @@ Consolidation might produce:
 > - Source episodes: [ep_1, ep_2, ep_3, ep_4]
 
 This is understanding, not storage.
+
+## Immediate consolidation from auto-ingest
+
+Episodes created via `ingest()` are immediately consolidated with `force=True`, bypassing the normal episode threshold. The triage step already filtered for quality, so there's no reason to wait. This does not affect `remember()`-created episodes, which still follow normal threshold-based consolidation.

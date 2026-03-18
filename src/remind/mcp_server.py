@@ -756,6 +756,50 @@ async def tool_list_plans(
     return "\n".join(lines)
 
 
+async def tool_ingest(
+    content: str,
+    source: str = "conversation",
+) -> str:
+    """Ingest raw text for automatic memory curation."""
+    memory = await get_memory()
+
+    episode_ids = await memory.ingest(content, source=source)
+
+    if episode_ids:
+        lines = [f"Ingested and created {len(episode_ids)} episode(s):"]
+        for eid in episode_ids:
+            lines.append(f"  {eid}")
+        lines.append("Immediate consolidation completed.")
+        return "\n".join(lines)
+
+    buf_size = memory.ingest_buffer_size
+    if buf_size > 0:
+        threshold = memory._ingest_buffer.threshold
+        return f"Buffered ({buf_size}/{threshold} chars). Will process when threshold reached."
+    else:
+        return "Ingested but triage found nothing memory-worthy (low density)."
+
+
+async def tool_flush_ingest() -> str:
+    """Force-flush the ingestion buffer and process contents."""
+    memory = await get_memory()
+
+    buf_size = memory.ingest_buffer_size
+    if buf_size == 0:
+        return "Ingestion buffer is empty, nothing to flush."
+
+    episode_ids = await memory.flush_ingest()
+
+    if episode_ids:
+        lines = [f"Flushed buffer ({buf_size} chars) and created {len(episode_ids)} episode(s):"]
+        for eid in episode_ids:
+            lines.append(f"  {eid}")
+        lines.append("Immediate consolidation completed.")
+        return "\n".join(lines)
+
+    return f"Flushed buffer ({buf_size} chars) but triage found nothing memory-worthy."
+
+
 async def tool_list_deleted(
     item_type: Optional[str] = None,
     limit: int = 20,
@@ -1242,6 +1286,44 @@ def create_mcp_server():
             List of plan episodes
         """
         return await tool_list_plans(entity, status, limit)
+
+    @mcp.tool()
+    async def ingest(
+        content: str,
+        source: str = "conversation",
+    ) -> str:
+        """Ingest raw text for automatic memory curation.
+
+        Streams raw conversation text into Remind's auto-ingest pipeline.
+        Text accumulates in an internal buffer until the threshold (~4000
+        chars) is reached, then gets scored for information density and
+        distilled into memory-worthy episodes automatically.
+
+        Use this instead of remember() when you want Remind to decide
+        what's worth remembering. remember() stores everything as-is;
+        ingest() filters and distills.
+
+        Args:
+            content: Raw text to ingest (conversation fragments, tool output, etc.)
+            source: Source label for metadata tracking (default: "conversation")
+
+        Returns:
+            Status message (buffered, episodes created, or dropped)
+        """
+        return await tool_ingest(content, source)
+
+    @mcp.tool()
+    async def flush_ingest() -> str:
+        """Force-flush the ingestion buffer.
+
+        Processes whatever text is in the buffer immediately, regardless
+        of whether the character threshold has been reached. Use at
+        session end or when you want to ensure all ingested text is processed.
+
+        Returns:
+            Status message with results
+        """
+        return await tool_flush_ingest()
 
     return mcp
 

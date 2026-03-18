@@ -14,12 +14,13 @@ Episodes are raw experiences — specific interactions, observations, or decisio
 | `spec` | A prescriptive requirement | "POST /auth/login must return JWT with 1h expiry" |
 | `plan` | A sequenced intention | "Auth plan: 1) bcrypt 2) login route 3) JWT middleware" |
 | `task` | A discrete unit of work with status tracking | "Implement bcrypt password hashing utility" |
+| `outcome` | Result of an action or strategy | "Grep search for 'auth' missed verify_credentials due to naming" |
 
 ## Lifecycle
 
 Episodes are **temporary by design**. The lifecycle:
 
-1. **Created** via `remember()` — fast, no LLM calls
+1. **Created** via `remember()` or `ingest()` — `remember` is fast with no LLM calls; `ingest` buffers and triages automatically
 2. **Entity extraction** — during consolidation, entities and types are extracted
 3. **Consolidated** — episodes are generalized into concepts
 4. **Marked consolidated** — the episode is flagged so it isn't processed again
@@ -78,6 +79,25 @@ Episodes can be tagged with entities to build a navigable knowledge graph. Entit
 | `subject` | `subject:login-flow` |
 
 Entities are also extracted automatically during consolidation — you don't always need to tag them manually.
+
+## Outcome episodes
+
+Outcome episodes record the result of an action or strategy, closing the feedback loop. They use structured metadata:
+
+| Metadata field | Values | Purpose |
+|----------------|--------|---------|
+| `strategy` | Free text | What approach was used |
+| `result` | `success`, `failure`, `partial` | What happened |
+| `prediction_error` | `low`, `medium`, `high` | How surprising the result was |
+
+```bash
+remind remember "Grep search missed auth function due to naming" -t outcome \
+  -m '{"strategy":"grep search for auth","result":"partial","prediction_error":"high"}'
+```
+
+During consolidation, outcome episodes produce causal concepts with `causes` relations — e.g., "grep-based search is unreliable when function names don't match the domain term."
+
+Auto-ingest (`ingest()`) detects action-result pairs automatically and creates outcome episodes without manual tagging.
 
 ## Managing episodes
 

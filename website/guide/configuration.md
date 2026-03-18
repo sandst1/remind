@@ -49,7 +49,11 @@ Create `~/.remind/remind.config.json`:
     "enabled": true,
     "decay_interval": 20,
     "decay_rate": 0.1
-  }
+  },
+
+  "ingest_buffer_size": 4000,
+  "ingest_min_density": 0.4,
+  "triage_provider": null
 }
 ```
 
@@ -138,3 +142,21 @@ View decay stats with `remind stats`.
 |--------|---------|-------------|
 | `consolidation_threshold` | `5` | Episodes before auto-consolidation triggers |
 | `auto_consolidate` | `true` | Whether to auto-consolidate after `remember` |
+
+## Auto-ingest
+
+Settings for the `ingest()` pipeline, which buffers raw text, scores information density, and extracts memory-worthy episodes automatically.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ingest_buffer_size` | `4000` | Character threshold before buffer flushes and triggers triage |
+| `ingest_min_density` | `0.4` | Minimum information density score (0.0-1.0) to extract episodes |
+| `triage_provider` | `null` | Optional separate LLM provider for triage (defaults to `llm_provider`). Use a cheaper/faster model for triage without affecting consolidation quality. |
+
+Environment variable overrides:
+
+```bash
+INGEST_BUFFER_SIZE=4000
+INGEST_MIN_DENSITY=0.4
+TRIAGE_PROVIDER=ollama
+```

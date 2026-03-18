@@ -2,13 +2,15 @@
 CLI for Remind - testing and experimentation interface.
 
 Commands:
-    remindremember "text"     - Add an episode
-    remindrecall "query"      - Retrieve relevant concepts
-    remindconsolidate         - Run consolidation
-    remindinspect [id]        - View concepts/relations
-    remindstats               - Show memory statistics
-    remindexport <file>       - Export memory to JSON
-    remindimport <file>       - Import memory from JSON
+    remind remember "text"       - Add an episode
+    remind recall "query"        - Retrieve relevant concepts
+    remind consolidate           - Run consolidation
+    remind inspect [id]          - View concepts/relations
+    remind stats                 - Show memory statistics
+    remind export <file>         - Export memory to JSON
+    remind import <file>         - Import memory from JSON
+    remind ingest "text"         - Auto-ingest with density scoring
+    remind flush-ingest          - Force-flush ingestion buffer
 """
 
 import asyncio
@@ -92,7 +94,7 @@ def main(ctx, db: str, llm: str, embedding: str):
 @click.argument("content")
 @click.option("--metadata", "-m", help="JSON metadata to attach")
 @click.option("--type", "-t", "episode_type", 
-              type=click.Choice(["observation", "decision", "question", "meta", "preference", "spec", "plan", "task"]),
+              type=click.Choice(["observation", "decision", "question", "meta", "preference", "spec", "plan", "task", "outcome"]),
               help="Episode type (detected during consolidation if not provided)")
 @click.option("--entity", "-e", "entities", multiple=True, 
               help="Entity IDs (e.g., file:src/auth.ts, person:alice)")
@@ -336,7 +338,7 @@ def reconsolidate(ctx):
 @main.command("end-session")
 @click.pass_context
 def end_session(ctx):
-    """End session and consolidate all pending episodes in the background.
+    """End session: flush ingestion buffer, then consolidate in background.
 
     Use this as a hook point in your agent workflow:
     - At end of conversation
@@ -344,6 +346,14 @@ def end_session(ctx):
     - Before shutdown
     """
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    # Flush ingestion buffer first
+    if not memory._ingest_buffer.is_empty:
+        buf_size = memory.ingest_buffer_size
+        console.print(f"[blue]Flushing ingestion buffer ({buf_size} chars)...[/blue]")
+        episode_ids = run_async(memory.flush_ingest())
+        if episode_ids:
+            console.print(f"[green]✓ Created {len(episode_ids)} episodes from buffer[/green]")
 
     pending = memory.pending_episodes_count
 
@@ -361,6 +371,76 @@ def end_session(ctx):
         console.print(f"[green]✓ Session ended — consolidating {pending} episodes in background[/green]")
     else:
         console.print(f"[yellow]Consolidation already running ({pending} episodes pending)[/yellow]")
+
+
+@main.command()
+@click.argument("content", required=False)
+@click.option("--source", "-s", default="conversation", help="Source label for metadata")
+@click.pass_context
+def ingest(ctx, content: Optional[str], source: str):
+    """Ingest raw text for automatic memory curation.
+
+    Text is buffered internally and processed when the threshold is reached.
+    Remind scores information density and extracts memory-worthy episodes
+    automatically.
+
+    Accepts text as an argument or via stdin (for piping).
+
+    Examples:
+        remind ingest "User prefers dark mode and Vim keybindings"
+        echo "conversation log" | remind ingest
+        cat transcript.txt | remind ingest --source transcript
+    """
+    # Read from stdin if no argument provided
+    if content is None:
+        if not sys.stdin.isatty():
+            content = sys.stdin.read().strip()
+        if not content:
+            console.print("[red]No content provided. Pass as argument or pipe via stdin.[/red]")
+            return
+
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    episode_ids = run_async(memory.ingest(content, source=source))
+
+    if episode_ids:
+        console.print(f"[green]✓ Created {len(episode_ids)} episode(s) from ingest[/green]")
+        for eid in episode_ids:
+            console.print(f"  {eid}")
+        console.print("[dim]Immediate consolidation completed.[/dim]")
+    else:
+        buf_size = memory.ingest_buffer_size
+        if buf_size > 0:
+            threshold = memory._ingest_buffer.threshold
+            console.print(f"[blue]Buffered ({buf_size}/{threshold} chars). Will process when threshold reached.[/blue]")
+        else:
+            console.print("[yellow]Triage found nothing memory-worthy (low density).[/yellow]")
+
+
+@main.command("flush-ingest")
+@click.pass_context
+def flush_ingest(ctx):
+    """Force-flush the ingestion buffer.
+
+    Processes whatever text is in the buffer immediately, regardless of
+    whether the character threshold has been reached.
+    """
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    buf_size = memory.ingest_buffer_size
+    if buf_size == 0:
+        console.print("[yellow]Ingestion buffer is empty, nothing to flush.[/yellow]")
+        return
+
+    console.print(f"[blue]Flushing buffer ({buf_size} chars)...[/blue]")
+    episode_ids = run_async(memory.flush_ingest())
+
+    if episode_ids:
+        console.print(f"[green]✓ Created {len(episode_ids)} episode(s)[/green]")
+        for eid in episode_ids:
+            console.print(f"  {eid}")
+        console.print("[dim]Immediate consolidation completed.[/dim]")
+    else:
+        console.print("[yellow]Triage found nothing memory-worthy.[/yellow]")
 
 
 @main.command()

@@ -17,9 +17,33 @@ remind remember "content" -t spec -e module:auth -m '{"status":"approved"}'
 
 | Flag | Description |
 |------|-------------|
-| `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task` |
+| `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome` |
 | `-e, --entity` | Entity tag(s) in `type:name` format. Repeat for multiple. |
 | `-m, --metadata` | JSON metadata string |
+
+### ingest
+
+Auto-ingest raw text with information density scoring. Text buffers internally and processes when the threshold is reached.
+
+```bash
+remind ingest "User said they prefer dark mode and Vim keybindings"
+echo "conversation log" | remind ingest
+cat transcript.txt | remind ingest --source transcript
+```
+
+| Flag | Description |
+|------|-------------|
+| `-s, --source` | Source label for metadata (default: `conversation`) |
+
+Accepts text as an argument or via stdin (for piping).
+
+### flush-ingest
+
+Force-flush the ingestion buffer, processing whatever has accumulated.
+
+```bash
+remind flush-ingest
+```
 
 ### recall
 
@@ -47,7 +71,7 @@ remind consolidate --force    # Force even with few episodes
 
 ### end-session
 
-Consolidate pending episodes and clean up. Recommended at the end of every session.
+Flush the ingestion buffer, then consolidate pending episodes in the background. Recommended at the end of every session.
 
 ```bash
 remind end-session

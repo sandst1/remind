@@ -32,6 +32,7 @@ class EpisodeType(Enum):
     SPEC = "spec"                 # A prescriptive requirement ("X shall be")
     PLAN = "plan"                 # A sequenced intention ("we will do X then Y")
     TASK = "task"                 # A discrete unit of work with status tracking
+    OUTCOME = "outcome"           # Result of an action/strategy (success/failure/partial)
 
 
 class TaskStatus(Enum):

@@ -41,7 +41,12 @@ You look for:
 - Exceptions and boundary conditions
 
 Be precise and conservative. Only create concepts when there's clear evidence.
-Prefer updating existing concepts over creating redundant ones."""
+Prefer updating existing concepts over creating redundant ones.
+
+For OUTCOME episodes, look specifically for:
+- Strategy-outcome patterns: "strategy X tends to succeed/fail in context Y"
+- Use 'causes' relations to connect strategies to outcomes
+- Use 'contradicts' when a strategy that usually works fails, or vice versa"""
 
 
 CONSOLIDATION_PROMPT_TEMPLATE = """## EXISTING CONCEPTUAL MEMORY

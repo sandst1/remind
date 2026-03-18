@@ -14,8 +14,34 @@ remember(content="Use Redis for caching", episode_type="decision", entities="too
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content` | string | Yes | The experience to store |
-| `episode_type` | string | No | `observation` (default), `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task` |
+| `episode_type` | string | No | `observation` (default), `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome` |
 | `entities` | string | No | Comma-separated entity tags (`type:name`) |
+
+## ingest
+
+Stream raw text into the auto-ingest pipeline. Text buffers internally until a character threshold (~4000 chars) is reached, then gets scored for information density and distilled into episodes automatically.
+
+```
+ingest(content="User: Fix the auth bug\nAssistant: Looking at verify_credentials...")
+ingest(content="<tool output>", source="tool_output")
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content` | string | Yes | Raw text to ingest |
+| `source` | string | No | Source label for metadata (default: `conversation`) |
+
+**`ingest` vs `remember`**: Use `remember` when you've already decided what's worth storing. Use `ingest` when you want Remind to decide — it scores information density, filters low-value content, and distills memory-worthy episodes automatically. Episodes from `ingest` are immediately consolidated.
+
+## flush_ingest
+
+Force-flush the ingestion buffer, processing whatever text has accumulated regardless of the character threshold.
+
+```
+flush_ingest()
+```
+
+Use at session end or whenever you want to ensure all ingested text is processed.
 
 ## recall
 

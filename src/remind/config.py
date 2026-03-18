@@ -93,6 +93,11 @@ class RemindConfig:
     # Decay config
     decay: DecayConfig = field(default_factory=DecayConfig)
 
+    # Auto-ingest config
+    ingest_buffer_size: int = 4000
+    ingest_min_density: float = 0.4
+    triage_provider: Optional[str] = None
+
 
 def _load_provider_config(file_config: dict, key: str, config_class: type) -> object:
     """Load a provider config from file config dict."""
@@ -150,6 +155,14 @@ def load_config() -> RemindConfig:
                 if "decay_rate" in decay_data:
                     config.decay.decay_rate = float(decay_data["decay_rate"])
 
+            # Auto-ingest settings
+            if "ingest_buffer_size" in file_config:
+                config.ingest_buffer_size = int(file_config["ingest_buffer_size"])
+            if "ingest_min_density" in file_config:
+                config.ingest_min_density = float(file_config["ingest_min_density"])
+            if "triage_provider" in file_config:
+                config.triage_provider = file_config["triage_provider"]
+
             logger.debug(f"Loaded config from {CONFIG_FILE}")
         except (json.JSONDecodeError, IOError, ValueError) as e:
             logger.warning(f"Failed to load config file {CONFIG_FILE}: {e}")
@@ -202,6 +215,20 @@ def load_config() -> RemindConfig:
         config.ollama.llm_model = llm_model
     if embed_model := os.environ.get("OLLAMA_EMBEDDING_MODEL"):
         config.ollama.embedding_model = embed_model
+
+    # Auto-ingest overrides
+    if buf_size := os.environ.get("INGEST_BUFFER_SIZE"):
+        try:
+            config.ingest_buffer_size = int(buf_size)
+        except ValueError:
+            logger.warning(f"Invalid INGEST_BUFFER_SIZE: {buf_size}")
+    if min_density := os.environ.get("INGEST_MIN_DENSITY"):
+        try:
+            config.ingest_min_density = float(min_density)
+        except ValueError:
+            logger.warning(f"Invalid INGEST_MIN_DENSITY: {min_density}")
+    if triage_prov := os.environ.get("TRIAGE_PROVIDER"):
+        config.triage_provider = triage_prov
 
     return config
 

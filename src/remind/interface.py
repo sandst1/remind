@@ -22,7 +22,8 @@ from remind.providers.base import LLMProvider, EmbeddingProvider
 from remind.consolidation import Consolidator
 from remind.retrieval import MemoryRetriever, ActivatedConcept
 from remind.extraction import EntityExtractor
-from remind.config import load_config, DecayConfig
+from remind.config import load_config, DecayConfig, RemindConfig
+from remind.triage import IngestionBuffer, IngestionTriager, TriageResult
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,10 @@ class MemoryInterface:
         spread_hops: int = 2,
         # Decay settings
         decay_config=None,
+        # Auto-ingest settings
+        ingest_buffer_size: int = 4000,
+        ingest_min_density: float = 0.4,
+        triage_llm: Optional[LLMProvider] = None,
     ):
         self.llm = llm
         self.embedding = embedding
@@ -106,6 +111,13 @@ class MemoryInterface:
         self.extractor = EntityExtractor(
             llm=llm,
             store=self.store,
+        )
+        
+        # Auto-ingest components
+        self._ingest_buffer = IngestionBuffer(threshold=ingest_buffer_size)
+        self._triager = IngestionTriager(
+            llm=triage_llm or llm,
+            min_density=ingest_min_density,
         )
         
         # Settings
@@ -284,8 +296,8 @@ class MemoryInterface:
         - Before shutting down
         - Scheduled maintenance
         
-        This always triggers consolidation if there are pending episodes,
-        regardless of the threshold setting.
+        This flushes any pending ingestion buffer and then triggers
+        consolidation if there are pending episodes.
         
         Usage in agent hooks:
             async def on_conversation_end(self):
@@ -298,6 +310,11 @@ class MemoryInterface:
         Returns:
             ConsolidationResult with statistics
         """
+        # Flush ingestion buffer first
+        if not self._ingest_buffer.is_empty:
+            logger.info("end_session: flushing ingestion buffer")
+            await self.flush_ingest()
+        
         pending = self.pending_episodes_count
         
         if pending == 0:
@@ -307,6 +324,118 @@ class MemoryInterface:
         logger.info(f"end_session: consolidating {pending} pending episodes")
         return await self.consolidate(force=True)
     
+    async def ingest(self, content: str, source: str = "conversation") -> list[str]:
+        """Ingest raw text for automatic memory curation.
+
+        Text accumulates in an internal buffer. When the buffer exceeds
+        the character threshold, it flushes and triggers triage (LLM-based
+        density scoring + episode extraction). Episodes that pass triage
+        are stored via remember() and immediately consolidated.
+
+        This is separate from remember() -- explicit remember() calls bypass
+        triage entirely. Auto-ingest is additive.
+
+        Args:
+            content: Raw text to ingest (conversation fragments, tool output, etc.)
+            source: Source label for metadata (default: "conversation")
+
+        Returns:
+            List of episode IDs created (empty if buffer didn't flush or
+            triage dropped everything).
+        """
+        chunk = self._ingest_buffer.add(content)
+        if chunk is None:
+            logger.debug(
+                f"Ingested {len(content)} chars, buffer at {self._ingest_buffer.size} "
+                f"(threshold: {self._ingest_buffer.threshold})"
+            )
+            return []
+
+        return await self._process_ingest_chunk(chunk, source)
+
+    async def flush_ingest(self) -> list[str]:
+        """Force-flush the ingestion buffer and process whatever is in it.
+
+        Call at session end or when you want to ensure everything is processed.
+
+        Returns:
+            List of episode IDs created (empty if buffer was empty or
+            triage dropped everything).
+        """
+        chunk = self._ingest_buffer.flush()
+        if chunk is None:
+            return []
+
+        return await self._process_ingest_chunk(chunk, source="flush")
+
+    async def _process_ingest_chunk(self, chunk: str, source: str) -> list[str]:
+        """Run triage on a chunk and store/consolidate resulting episodes."""
+        # Get existing concept context for the triage prompt
+        existing_concepts = ""
+        try:
+            result = await self.recall(chunk[:500], k=5, raw=True)
+            if isinstance(result, list) and result:
+                lines = []
+                for item in result:
+                    concept = item.concept if hasattr(item, 'concept') else item
+                    if hasattr(concept, 'summary'):
+                        lines.append(f"- {concept.summary}")
+                if lines:
+                    existing_concepts = "\n".join(lines)
+        except Exception as e:
+            logger.debug(f"Recall for triage context failed (ok for empty memory): {e}")
+
+        # Run triage
+        triage_result = await self._triager.triage(chunk, existing_concepts)
+
+        logger.info(
+            f"Triage: density={triage_result.density:.2f}, "
+            f"episodes={len(triage_result.episodes)}, "
+            f"reasoning={triage_result.reasoning}"
+        )
+
+        if not triage_result.episodes:
+            return []
+
+        # Store extracted episodes via remember()
+        episode_ids = []
+        for ep in triage_result.episodes:
+            ep_type = None
+            try:
+                ep_type = EpisodeType(ep.episode_type)
+            except ValueError:
+                ep_type = EpisodeType.OBSERVATION
+
+            metadata = ep.metadata.copy() if ep.metadata else {}
+            metadata["source"] = source
+            metadata["triage_density"] = triage_result.density
+
+            episode_id = self.remember(
+                content=ep.content,
+                metadata=metadata,
+                episode_type=ep_type,
+                entities=ep.entities if ep.entities else None,
+            )
+            episode_ids.append(episode_id)
+
+        # Immediate consolidation -- triage already filtered for quality
+        if episode_ids:
+            try:
+                result = await self.consolidate(force=True)
+                logger.info(
+                    f"Post-ingest consolidation: {result.episodes_processed} episodes, "
+                    f"{result.concepts_created} concepts created"
+                )
+            except Exception as e:
+                logger.warning(f"Post-ingest consolidation failed: {e}")
+
+        return episode_ids
+
+    @property
+    def ingest_buffer_size(self) -> int:
+        """Current character count in the ingestion buffer."""
+        return self._ingest_buffer.size
+
     @property
     def pending_episodes_count(self) -> int:
         """Number of episodes waiting to be consolidated."""
@@ -861,6 +990,10 @@ def create_memory(
         kwargs["auto_consolidate"] = config.auto_consolidate
     if "decay_config" not in kwargs:
         kwargs["decay_config"] = config.decay
+    if "ingest_buffer_size" not in kwargs:
+        kwargs["ingest_buffer_size"] = config.ingest_buffer_size
+    if "ingest_min_density" not in kwargs:
+        kwargs["ingest_min_density"] = config.ingest_min_density
     
     # Import providers
     from remind.providers import (
@@ -917,10 +1050,23 @@ def create_memory(
     else:
         raise ValueError(f"Unknown embedding provider: {embedding_provider}. Choose from: openai, azure_openai, ollama")
     
+    # Create triage LLM if a separate provider is configured
+    triage_llm = None
+    if config.triage_provider and config.triage_provider != llm_provider:
+        if config.triage_provider == "anthropic":
+            triage_llm = AnthropicLLM(api_key=config.anthropic.api_key, model=config.anthropic.model)
+        elif config.triage_provider == "openai":
+            triage_llm = OpenAILLM(api_key=config.openai.api_key, base_url=config.openai.base_url, model=config.openai.model)
+        elif config.triage_provider == "azure_openai":
+            triage_llm = AzureOpenAILLM(api_key=config.azure_openai.api_key, base_url=config.azure_openai.base_url, api_version=config.azure_openai.api_version, deployment_name=config.azure_openai.deployment_name)
+        elif config.triage_provider == "ollama":
+            triage_llm = OllamaLLM(model=config.ollama.llm_model, base_url=config.ollama.url)
+
     return MemoryInterface(
         llm=llm,
         embedding=embedding,
         db_path=db_path,
+        triage_llm=triage_llm,
         **kwargs,
     )
 

@@ -90,6 +90,7 @@ class TestDecayAlgorithm:
             id="decay-test",
             summary="Test decay",
             decay_factor=0.8,
+            access_count=1,
             embedding=[0.1] * 128,
         )
         store.add_concept(concept)
@@ -106,6 +107,7 @@ class TestDecayAlgorithm:
             id="low-decay",
             summary="Low decay test",
             decay_factor=0.05,
+            access_count=1,
             embedding=[0.1] * 128,
         )
         store.add_concept(concept)
@@ -124,6 +126,7 @@ class TestDecayAlgorithm:
                     id=f"concept-{i}",
                     summary=f"Concept {i}",
                     decay_factor=0.9,
+                    access_count=1,
                     embedding=[0.1] * 128,
                 )
             )
@@ -144,12 +147,14 @@ class TestDecayAlgorithm:
             id="parent",
             summary="Parent concept",
             decay_factor=0.9,
+            access_count=1,
             embedding=[0.1] * 128,
         )
         c2 = Concept(
             id="child",
             summary="Child concept",
             decay_factor=0.9,
+            access_count=1,
             embedding=[0.2] * 128,
         )
         
@@ -177,6 +182,7 @@ class TestDecayAlgorithm:
             id="multi-decay",
             summary="Multi decay test",
             decay_factor=1.0,
+            access_count=1,
             embedding=[0.1] * 128,
         )
         store.add_concept(concept)
@@ -196,6 +202,7 @@ class TestDecayAlgorithm:
             id="recent",
             summary="Recently accessed",
             decay_factor=1.0,
+            access_count=1,
             last_accessed=datetime.now(),  # just accessed
             embedding=[0.1] * 128,
         )
@@ -215,6 +222,7 @@ class TestDecayAlgorithm:
             id="old",
             summary="Old access",
             decay_factor=1.0,
+            access_count=1,
             last_accessed=datetime.now() - timedelta(hours=2),  # well outside window
             embedding=[0.1] * 128,
         )
@@ -308,6 +316,7 @@ class TestPeriodicDecay:
             id="interval-test",
             summary="Interval test",
             decay_factor=1.0,
+            access_count=1,
             embedding=[0.1] * 128,
         )
         store.add_concept(concept)
