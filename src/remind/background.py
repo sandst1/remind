@@ -1,16 +1,18 @@
 """
-Background consolidation support for Remind CLI.
+Background processing support for Remind CLI.
 
-Provides non-blocking consolidation by spawning a background subprocess.
-Uses file locking to prevent concurrent consolidation processes.
+Provides non-blocking consolidation and ingestion by spawning background
+subprocesses. Uses file locking to prevent concurrent consolidation.
 """
 
 import hashlib
+import json
 import logging
 import subprocess
 import sys
 import time
 from pathlib import Path
+from uuid import uuid4
 
 from filelock import FileLock, Timeout
 
@@ -97,6 +99,62 @@ def spawn_background_consolidation(
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,  # Detach from parent process group
+    )
+
+    return True
+
+
+def spawn_background_ingest(
+    db_path: str,
+    llm_provider: str,
+    embedding_provider: str,
+    chunk: str,
+    source: str = "conversation",
+) -> bool:
+    """Spawn a background process to run triage + consolidation on a chunk.
+
+    Unlike consolidation, no file locking is needed -- multiple ingest
+    workers can run concurrently since they write to independent episodes
+    and consolidation has its own lock.
+
+    Args:
+        db_path: Full path to the database file.
+        llm_provider: LLM provider name.
+        embedding_provider: Embedding provider name.
+        chunk: Raw text chunk to triage and ingest.
+        source: Source label for episode metadata.
+
+    Returns:
+        True if spawned successfully.
+    """
+    tmp_dir = REMIND_DIR / "tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    tmp_path = tmp_dir / f"ingest-{uuid4().hex[:12]}.json"
+    tmp_path.write_text(json.dumps({"chunk": chunk, "source": source}))
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "remind.background_worker",
+        "--db",
+        db_path,
+        "--llm",
+        llm_provider,
+        "--embedding",
+        embedding_provider,
+        "--ingest-chunk-file",
+        str(tmp_path),
+    ]
+
+    logger.debug(f"Spawning background ingest: {' '.join(cmd)}")
+
+    subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
 
     return True

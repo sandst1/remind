@@ -265,6 +265,7 @@ class TestIngestionIntegration:
             auto_consolidate=False,
             ingest_buffer_size=50,
             ingest_min_density=0.4,
+            ingest_background=False,
         )
 
     @pytest.mark.asyncio

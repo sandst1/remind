@@ -10,6 +10,7 @@ It provides a simple interface for:
 from datetime import datetime
 from typing import Optional
 from pathlib import Path
+import asyncio
 import logging
 import json
 
@@ -90,6 +91,7 @@ class MemoryInterface:
         ingest_buffer_size: int = 4000,
         ingest_min_density: float = 0.4,
         triage_llm: Optional[LLMProvider] = None,
+        ingest_background: bool = True,
     ):
         self.llm = llm
         self.embedding = embedding
@@ -119,6 +121,8 @@ class MemoryInterface:
             llm=triage_llm or llm,
             min_density=ingest_min_density,
         )
+        self._ingest_background = ingest_background
+        self._background_tasks: set[asyncio.Task] = set()
         
         # Settings
         self.consolidation_threshold = consolidation_threshold
@@ -296,8 +300,9 @@ class MemoryInterface:
         - Before shutting down
         - Scheduled maintenance
         
-        This flushes any pending ingestion buffer and then triggers
-        consolidation if there are pending episodes.
+        This drains any in-flight background ingest tasks, flushes any
+        pending ingestion buffer, and then triggers consolidation if there
+        are pending episodes.
         
         Usage in agent hooks:
             async def on_conversation_end(self):
@@ -310,10 +315,21 @@ class MemoryInterface:
         Returns:
             ConsolidationResult with statistics
         """
-        # Flush ingestion buffer first
+        # Drain in-flight background ingest tasks first
+        if self._background_tasks:
+            logger.info(f"end_session: waiting for {len(self._background_tasks)} background ingest tasks")
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
+
+        # Flush ingestion buffer (force foreground so we capture episodes)
         if not self._ingest_buffer.is_empty:
             logger.info("end_session: flushing ingestion buffer")
-            await self.flush_ingest()
+            was_bg = self._ingest_background
+            self._ingest_background = False
+            try:
+                await self.flush_ingest()
+            finally:
+                self._ingest_background = was_bg
         
         pending = self.pending_episodes_count
         
@@ -329,8 +345,8 @@ class MemoryInterface:
 
         Text accumulates in an internal buffer. When the buffer exceeds
         the character threshold, it flushes and triggers triage (LLM-based
-        density scoring + episode extraction). Episodes that pass triage
-        are stored via remember() and immediately consolidated.
+        density scoring + episode extraction). Triage and consolidation
+        run in the background by default (controlled by ingest_background).
 
         This is separate from remember() -- explicit remember() calls bypass
         triage entirely. Auto-ingest is additive.
@@ -340,8 +356,8 @@ class MemoryInterface:
             source: Source label for metadata (default: "conversation")
 
         Returns:
-            List of episode IDs created (empty if buffer didn't flush or
-            triage dropped everything).
+            List of episode IDs created (empty if buffer didn't flush,
+            triage dropped everything, or processing is running in background).
         """
         chunk = self._ingest_buffer.add(content)
         if chunk is None:
@@ -349,6 +365,10 @@ class MemoryInterface:
                 f"Ingested {len(content)} chars, buffer at {self._ingest_buffer.size} "
                 f"(threshold: {self._ingest_buffer.threshold})"
             )
+            return []
+
+        if self._ingest_background:
+            self._schedule_background_ingest(chunk, source)
             return []
 
         return await self._process_ingest_chunk(chunk, source)
@@ -359,14 +379,31 @@ class MemoryInterface:
         Call at session end or when you want to ensure everything is processed.
 
         Returns:
-            List of episode IDs created (empty if buffer was empty or
-            triage dropped everything).
+            List of episode IDs created (empty if buffer was empty,
+            triage dropped everything, or processing is running in background).
         """
         chunk = self._ingest_buffer.flush()
         if chunk is None:
             return []
 
+        if self._ingest_background:
+            self._schedule_background_ingest(chunk, source="flush")
+            return []
+
         return await self._process_ingest_chunk(chunk, source="flush")
+
+    def _schedule_background_ingest(self, chunk: str, source: str) -> None:
+        """Schedule ingest processing as a background async task."""
+        task = asyncio.create_task(
+            self._process_ingest_chunk(chunk, source),
+            name=f"remind-ingest-{len(self._background_tasks)}",
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        logger.info(
+            f"Scheduled background ingest ({len(chunk)} chars, "
+            f"{len(self._background_tasks)} tasks in flight)"
+        )
 
     async def _process_ingest_chunk(self, chunk: str, source: str) -> list[str]:
         """Run triage on a chunk and store/consolidate resulting episodes."""

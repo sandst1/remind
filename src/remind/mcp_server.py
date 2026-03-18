@@ -763,21 +763,25 @@ async def tool_ingest(
     """Ingest raw text for automatic memory curation."""
     memory = await get_memory()
 
+    buf_size_before = memory.ingest_buffer_size
     episode_ids = await memory.ingest(content, source=source)
 
     if episode_ids:
         lines = [f"Ingested and created {len(episode_ids)} episode(s):"]
         for eid in episode_ids:
             lines.append(f"  {eid}")
-        lines.append("Immediate consolidation completed.")
+        lines.append("Consolidation completed.")
         return "\n".join(lines)
 
     buf_size = memory.ingest_buffer_size
     if buf_size > 0:
         threshold = memory._ingest_buffer.threshold
         return f"Buffered ({buf_size}/{threshold} chars). Will process when threshold reached."
-    else:
-        return "Ingested but triage found nothing memory-worthy (low density)."
+
+    if buf_size_before > 0 and buf_size == 0:
+        return "Ingested. Triage and consolidation running in background."
+
+    return "Ingested but triage found nothing memory-worthy (low density)."
 
 
 async def tool_flush_ingest() -> str:
@@ -794,8 +798,11 @@ async def tool_flush_ingest() -> str:
         lines = [f"Flushed buffer ({buf_size} chars) and created {len(episode_ids)} episode(s):"]
         for eid in episode_ids:
             lines.append(f"  {eid}")
-        lines.append("Immediate consolidation completed.")
+        lines.append("Consolidation completed.")
         return "\n".join(lines)
+
+    if memory._ingest_background:
+        return f"Flushed buffer ({buf_size} chars). Triage and consolidation running in background."
 
     return f"Flushed buffer ({buf_size} chars) but triage found nothing memory-worthy."
 

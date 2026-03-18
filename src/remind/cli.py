@@ -376,13 +376,13 @@ def end_session(ctx):
 @main.command()
 @click.argument("content", required=False)
 @click.option("--source", "-s", default="conversation", help="Source label for metadata")
+@click.option("--foreground", "-f", is_flag=True, help="Run triage and consolidation in foreground (blocking)")
 @click.pass_context
-def ingest(ctx, content: Optional[str], source: str):
+def ingest(ctx, content: Optional[str], source: str, foreground: bool):
     """Ingest raw text for automatic memory curation.
 
-    Text is buffered internally and processed when the threshold is reached.
-    Remind scores information density and extracts memory-worthy episodes
-    automatically.
+    By default, spawns triage and consolidation in a background process
+    and returns immediately. Use --foreground to run synchronously.
 
     Accepts text as an argument or via stdin (for piping).
 
@@ -390,6 +390,7 @@ def ingest(ctx, content: Optional[str], source: str):
         remind ingest "User prefers dark mode and Vim keybindings"
         echo "conversation log" | remind ingest
         cat transcript.txt | remind ingest --source transcript
+        remind ingest --foreground "important observation"
     """
     # Read from stdin if no argument provided
     if content is None:
@@ -399,21 +400,36 @@ def ingest(ctx, content: Optional[str], source: str):
             console.print("[red]No content provided. Pass as argument or pipe via stdin.[/red]")
             return
 
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-    episode_ids = run_async(memory.ingest(content, source=source))
+    if foreground:
+        from remind.interface import create_memory
+        memory = create_memory(
+            llm_provider=ctx.obj["llm"],
+            embedding_provider=ctx.obj["embedding"],
+            db_path=ctx.obj["db"],
+            ingest_background=False,
+        )
+        with console.status("[bold cyan]Running triage and consolidation..."):
+            episode_ids = run_async(memory.ingest(content, source=source))
 
-    if episode_ids:
-        console.print(f"[green]✓ Created {len(episode_ids)} episode(s) from ingest[/green]")
-        for eid in episode_ids:
-            console.print(f"  {eid}")
-        console.print("[dim]Immediate consolidation completed.[/dim]")
-    else:
-        buf_size = memory.ingest_buffer_size
-        if buf_size > 0:
-            threshold = memory._ingest_buffer.threshold
-            console.print(f"[blue]Buffered ({buf_size}/{threshold} chars). Will process when threshold reached.[/blue]")
+        if episode_ids:
+            console.print(f"[green]✓ Created {len(episode_ids)} episode(s) from ingest[/green]")
+            for eid in episode_ids:
+                console.print(f"  {eid}")
+            console.print("[dim]Consolidation completed.[/dim]")
         else:
             console.print("[yellow]Triage found nothing memory-worthy (low density).[/yellow]")
+    else:
+        from remind.background import spawn_background_ingest
+
+        spawn_background_ingest(
+            db_path=ctx.obj["db"],
+            llm_provider=ctx.obj["llm"],
+            embedding_provider=ctx.obj["embedding"],
+            chunk=content,
+            source=source,
+        )
+        console.print(f"[green]✓[/green] Ingest started in background ({len(content)} chars)")
+        console.print("[dim]Triage and consolidation will run asynchronously.[/dim]")
 
 
 @main.command("flush-ingest")
@@ -422,7 +438,9 @@ def flush_ingest(ctx):
     """Force-flush the ingestion buffer.
 
     Processes whatever text is in the buffer immediately, regardless of
-    whether the character threshold has been reached.
+    whether the character threshold has been reached. Note: in CLI context,
+    the buffer is per-process and typically empty. This is mainly useful
+    when called from end-session or long-lived contexts.
     """
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
 
@@ -438,7 +456,7 @@ def flush_ingest(ctx):
         console.print(f"[green]✓ Created {len(episode_ids)} episode(s)[/green]")
         for eid in episode_ids:
             console.print(f"  {eid}")
-        console.print("[dim]Immediate consolidation completed.[/dim]")
+        console.print("[dim]Consolidation completed.[/dim]")
     else:
         console.print("[yellow]Triage found nothing memory-worthy.[/yellow]")
 
