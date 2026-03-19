@@ -766,15 +766,25 @@ async def execute_query(request: Request) -> JSONResponse:
 
     try:
         body = await request.json()
-        query = body.get("query", "")
+        query = body.get("query") or None
         k = body.get("k", 3)
+        entity = body.get("entity") or None
 
-        if not query:
-            return JSONResponse({"error": "Missing 'query' in request body"}, status_code=400)
+        if not query and not entity:
+            return JSONResponse(
+                {"error": "Either 'query' or 'entity' must be provided"},
+                status_code=400,
+            )
 
-        activated = await memory.recall(query, k=k, raw=True)
+        result = await memory.recall(query=query, k=k, entity=entity, raw=True)
 
-        formatted = memory.retriever.format_for_llm(activated)
+        if entity:
+            return JSONResponse({
+                "episodes": [e.to_dict() for e in result],
+                "formatted": memory.retriever.format_entity_context(entity, result),
+            })
+
+        formatted = memory.retriever.format_for_llm(result)
 
         return JSONResponse({
             "concepts": [
@@ -784,7 +794,7 @@ async def execute_query(request: Request) -> JSONResponse:
                     "source": r.source,
                     "hops": r.hops,
                 }
-                for r in activated
+                for r in result
             ],
             "formatted": formatted,
         })

@@ -221,6 +221,26 @@ class MemoryStore(ABC):
         """
         ...
 
+    @abstractmethod
+    def search_entities_by_words(
+        self, words: list[str], limit: int = 10
+    ) -> list[tuple[Entity, int]]:
+        """Find entities whose display_name or ID contains any of the given words.
+
+        Performs case-insensitive substring matching. Returns entities sorted by
+        the number of distinct query words that matched (descending), then by
+        mention count as a tiebreaker.
+
+        Args:
+            words: Query words to match (should be pre-filtered, e.g. 3+ chars).
+            limit: Maximum entities to return.
+
+        Returns:
+            List of (entity, match_count) tuples where match_count is the number
+            of query words found in the entity's name or ID.
+        """
+        ...
+
     # Mention operations (episode <-> entity)
     @abstractmethod
     def add_mention(self, episode_id: str, entity_id: str) -> None:
@@ -1302,6 +1322,31 @@ class SQLiteMemoryStore(MemoryStore):
                 return None
 
             return Entity.from_dict(json.loads(row["data"]))
+        finally:
+            conn.close()
+
+    def search_entities_by_words(
+        self, words: list[str], limit: int = 10
+    ) -> list[tuple[Entity, int]]:
+        if not words:
+            return []
+
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, data FROM entities"
+            ).fetchall()
+
+            results: list[tuple[Entity, int]] = []
+            for row in rows:
+                entity = Entity.from_dict(json.loads(row["data"]))
+                searchable = f"{entity.id} {entity.display_name}".lower()
+                match_count = sum(1 for w in words if w in searchable)
+                if match_count > 0:
+                    results.append((entity, match_count))
+
+            results.sort(key=lambda x: x[1], reverse=True)
+            return results[:limit]
         finally:
             conn.close()
 

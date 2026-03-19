@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
+import math
 
 from remind.models import Concept, Episode, Entity, EpisodeType, RelationType
 from remind.store import MemoryStore
@@ -106,7 +107,7 @@ class MemoryRetriever:
         self,
         query: str,
         k: int = 3,
-        min_activation: float = 0.3,
+        min_activation: float = 0.15,
         context: Optional[str] = None,
         include_weak: bool = False,
     ) -> list[ActivatedConcept]:
@@ -204,6 +205,23 @@ class MemoryRetriever:
             
             logger.debug(f"After hop {hop + 1}: {len(activation_map)} concepts")
         
+        # Step 2.5: Entity name matching (fast, no embedding needed)
+        entity_matches, self._last_matched_entities = self._entity_name_matches(
+            query, max_concepts=k
+        )
+        for em in entity_matches:
+            current = activation_map.get(em.concept.id, (0, "", 0))[0]
+            if em.activation > current:
+                activation_map[em.concept.id] = (em.activation, "entity_name", 0)
+                concept_cache[em.concept.id] = em.concept
+
+        if entity_matches:
+            entity_sourced = sum(
+                1 for cid, (_, src, _) in activation_map.items()
+                if src == "entity_name"
+            )
+            logger.debug(f"Entity name matching: {entity_sourced} concepts from entities")
+        
         # Step 3: Build result list
         results = []
         for concept_id, (activation, source, hops) in activation_map.items():
@@ -228,6 +246,103 @@ class MemoryRetriever:
             results = [r for r in results if r.activation >= min_activation]
         return results[:k]
     
+    def _entity_name_matches(
+        self,
+        query: str,
+        max_entities: int = 5,
+        max_concepts: int = 5,
+    ) -> tuple[list[ActivatedConcept], list[Entity]]:
+        """Find concepts via entity name matching on the query words.
+
+        Splits the query into words (3+ chars), finds entities whose name or ID
+        contains those words, then retrieves concepts derived from those entities'
+        episodes.
+
+        Returns:
+            Tuple of (activated_concepts, matched_entities). The concepts have
+            source="entity_name" and heuristic activation scores. The entities
+            are the raw Entity objects that matched the query words.
+        """
+        words = [w.lower() for w in query.split() if len(w) >= 3]
+        if not words:
+            return [], []
+
+        matched_entities = self.store.search_entities_by_words(words, limit=max_entities)
+        if not matched_entities:
+            return [], []
+
+        entity_list = [entity for entity, _ in matched_entities]
+
+        # Collect episode IDs per entity so we can link concepts back
+        entity_episode_ids: dict[str, set[str]] = {}
+        for entity, _match_count in matched_entities:
+            eps = self.store.get_episodes_mentioning(entity.id, limit=100)
+            entity_episode_ids[entity.id] = {ep.id for ep in eps}
+
+        all_ep_ids = set()
+        for ep_set in entity_episode_ids.values():
+            all_ep_ids |= ep_set
+
+        if not all_ep_ids:
+            return [], entity_list
+
+        # Find concepts whose source_episodes overlap with matched entity episodes
+        all_concepts = self.store.get_all_concepts()
+        concept_scores: list[tuple[Concept, float]] = []
+
+        for concept in all_concepts:
+            overlap = set(concept.source_episodes) & all_ep_ids
+            if not overlap:
+                continue
+
+            # Heuristic activation score:
+            # - word_ratio: fraction of query words that matched the best entity
+            # - overlap_ratio: how many of the concept's source episodes are relevant
+            # - mention_boost: log-scaled boost for high-mention entities
+            best_word_ratio = 0.0
+            best_mention_boost = 0.0
+            for entity, match_count in matched_entities:
+                ep_ids = entity_episode_ids.get(entity.id, set())
+                if ep_ids & set(concept.source_episodes):
+                    word_ratio = match_count / len(words)
+                    mention_count = len(ep_ids)
+                    mention_boost = min(1.0, math.log1p(mention_count) / math.log1p(50))
+                    if word_ratio > best_word_ratio:
+                        best_word_ratio = word_ratio
+                        best_mention_boost = mention_boost
+
+            overlap_ratio = len(overlap) / max(len(concept.source_episodes), 1)
+
+            activation = (
+                0.30 * best_word_ratio
+                + 0.15 * overlap_ratio
+                + 0.15 * best_mention_boost
+            )
+
+            activation *= concept.confidence
+            activation *= max(0.0, min(1.0, concept.decay_factor))
+
+            # Floor: don't surface noise
+            if activation > 0.05:
+                concept_scores.append((concept, activation))
+
+        concept_scores.sort(key=lambda x: x[1], reverse=True)
+
+        results = []
+        for concept, activation in concept_scores[:max_concepts]:
+            results.append(ActivatedConcept(
+                concept=concept,
+                activation=activation,
+                source="entity_name",
+                hops=0,
+            ))
+
+        logger.debug(
+            f"Entity name matching: {len(matched_entities)} entities, "
+            f"{len(results)} concepts"
+        )
+        return results, entity_list
+
     async def retrieve_by_tags(
         self,
         tags: list[str],
@@ -465,6 +580,8 @@ class MemoryRetriever:
         include_relations: bool = True,
         max_relations: int = 5,
         include_episodes: bool = True,
+        matched_entities: Optional[list[Entity]] = None,
+        max_entity_episodes: int = 10,
     ) -> str:
         """
         Format retrieved concepts and episodes for injection into an LLM prompt.
@@ -476,8 +593,15 @@ class MemoryRetriever:
             include_relations: Show concept relations.
             max_relations: Max relations per concept.
             include_episodes: Show source episodes under each concept.
+            matched_entities: Entities matched by name from the query. If provided,
+                appends entity context sections after concepts.
+            max_entity_episodes: Max episodes to show per matched entity.
         """
-        if not activated:
+        # Use stashed entities from last retrieve() if not explicitly provided
+        if matched_entities is None:
+            matched_entities = getattr(self, "_last_matched_entities", None) or []
+
+        if not activated and not matched_entities:
             return "(No relevant memories found)"
 
         lines = ["RELEVANT MEMORY:\n"]
@@ -492,6 +616,8 @@ class MemoryRetriever:
                 header = f"[{c.id}] (confidence: {c.confidence:.2f}"
             if ac.source == "spread":
                 header += f", via association"
+            elif ac.source == "entity_name":
+                header += f", via entity match"
             header += ")"
             lines.append(header)
 
@@ -540,6 +666,32 @@ class MemoryRetriever:
                     lines.append(f"    • [{episode.episode_type.value}] {episode.content}")
 
             lines.append("")  # Blank line between concepts
+
+        # Append entity context for name-matched entities
+        if matched_entities:
+            lines.append("---")
+            lines.append("MATCHED ENTITIES:\n")
+            for entity in matched_entities:
+                episodes = self.store.get_episodes_mentioning(
+                    entity.id, limit=max_entity_episodes
+                )
+                if not episodes:
+                    continue
+                lines.append(f"[{entity.id}] {entity.display_name}")
+                by_type: dict[str, list[Episode]] = {}
+                for ep in episodes:
+                    by_type.setdefault(ep.episode_type.value, []).append(ep)
+                type_order = [
+                    "fact", "decision", "question", "preference",
+                    "observation", "outcome", "meta",
+                ]
+                for type_name in type_order:
+                    if type_name not in by_type:
+                        continue
+                    lines.append(f"  [{type_name.upper()}S]")
+                    for ep in by_type[type_name]:
+                        lines.append(f"    • {ep.content}")
+                lines.append("")
 
         return "\n".join(lines)
     

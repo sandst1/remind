@@ -690,7 +690,7 @@ class TestMemoryInterfaceInitialization:
 
         assert memory.consolidation_threshold == 5
         assert memory.auto_consolidate == True
-        assert memory.default_recall_k == 5
+        assert memory.default_recall_k == 3
 
     def test_init_custom_values(self, mock_llm, mock_embedding, temp_db_path):
         """Test initialization with custom values."""

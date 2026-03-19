@@ -155,22 +155,26 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
 
 
 @main.command()
-@click.argument("query")
+@click.argument("query", required=False, default=None)
 @click.option("-k", default=3, help="Number of concepts to retrieve")
 @click.option("--context", "-c", help="Additional context for search")
 @click.option("--entity", "-e", help="Retrieve by entity ID instead of semantic search")
 @click.option("--raw", is_flag=True, help="Show raw concept data")
 @click.pass_context
-def recall(ctx, query: str, k: int, context: Optional[str], entity: Optional[str], raw: bool):
+def recall(ctx, query: Optional[str], k: int, context: Optional[str], entity: Optional[str], raw: bool):
     """Retrieve relevant concepts for a query.
     
     By default, does semantic search across concepts. 
     Use --entity to retrieve by entity ID instead.
     
     Examples:
-        remindrecall "authentication issues"
-        remindrecall "auth" --entity file:src/auth.ts
+        remind recall "authentication issues"
+        remind recall --entity file:src/auth.ts
+        remind recall -e "person:alice"
     """
+    if not query and not entity:
+        raise click.UsageError("Either QUERY or --entity must be provided.")
+    
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
     
     async def _recall():

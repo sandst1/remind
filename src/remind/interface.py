@@ -229,7 +229,7 @@ class MemoryInterface:
     
     async def recall(
         self,
-        query: str,
+        query: Optional[str] = None,
         k: Optional[int] = None,
         context: Optional[str] = None,
         entity: Optional[str] = None,
@@ -239,7 +239,7 @@ class MemoryInterface:
         Retrieve relevant memory for a query.
         
         Args:
-            query: What to search for
+            query: What to search for (required for semantic search, ignored for entity recall)
             k: Number of concepts to return
             context: Additional context for the search
             entity: If provided, retrieve by entity instead of semantic search
@@ -250,6 +250,9 @@ class MemoryInterface:
             When raw=True: list[ActivatedConcept] for concept-based,
             list[Episode] for entity-based.
         """
+        if not entity and query is None:
+            raise ValueError("Either query or entity must be provided")
+        
         k = k or self.default_recall_k
         
         # Increment recall count and persist when decay is enabled

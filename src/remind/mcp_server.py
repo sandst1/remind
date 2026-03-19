@@ -157,14 +157,14 @@ async def tool_remember(
 
 
 async def tool_recall(
-    query: str,
+    query: Optional[str] = None,
     k: int = 3,
     context: Optional[str] = None,
     entity: Optional[str] = None,
 ) -> str:
     """Retrieve relevant memories for a query."""
     memory = await get_memory()
-    return await memory.recall(query, k=k, context=context, entity=entity)
+    return await memory.recall(query=query, k=k, context=context, entity=entity)
 
 
 async def tool_consolidate(force: bool = False) -> str:
@@ -898,7 +898,7 @@ def create_mcp_server():
     
     @mcp.tool()
     async def recall(
-        query: str,
+        query: Optional[str] = None,
         k: int = 3,
         context: Optional[str] = None,
         entity: Optional[str] = None,
@@ -909,8 +909,11 @@ def create_mcp_server():
         1. Semantic search (default): Uses embeddings with spreading activation
         2. Entity-based: Retrieves all memories about a specific entity
         
+        Provide query for semantic search, or entity for entity-based lookup.
+        At least one of query or entity must be provided.
+        
         Args:
-            query: What to search for in memory
+            query: What to search for in memory (required for semantic search)
             k: Number of concepts to retrieve (default: 5)
             context: Optional additional context to improve retrieval
             entity: Optional entity ID to retrieve by (e.g., "file:src/auth.ts")
