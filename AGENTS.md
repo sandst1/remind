@@ -50,9 +50,11 @@ src/remind/
 | `Relation` | Typed edge between concepts (implies, contradicts, specializes, etc.) |
 | `TaskStatus` | Enum for task status: `todo`, `in_progress`, `done`, `blocked` |
 
-**Episode types**: `observation`, `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`
+**Episode types**: `observation`, `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`, `fact`
 
 **Episode lifecycle**: Created via `remember()` or `ingest()` → Entity extraction → Consolidation → Marked consolidated
+
+**Fact episodes**: Specific factual assertions (config values, names, dates, concrete technical details). Consolidation preserves fact details verbatim in concept summaries rather than generalizing them away.
 
 **Outcome episode metadata**: `strategy` (approach used), `result` (success/failure/partial), `prediction_error` (low/medium/high)
 
@@ -114,11 +116,11 @@ Pipeline: `ingest()` → buffer → density score + extract (LLM) → `remember(
 
 ### Retrieval (`retrieval.py`)
 
-**Spreading activation** algorithm:
+**Hybrid recall** with spreading activation + entity-based episode retrieval:
 1. Query is embedded and matched to concepts via cosine similarity
 2. Matched concepts activate related concepts through the graph
 3. Activation spreads with decay over multiple hops
-4. Highest-activation concepts are returned
+4. Highest-activation concepts are returned with source episodes (including type labels and entity context)
 
 Key class: `MemoryRetriever` with `ActivatedConcept` results.
 

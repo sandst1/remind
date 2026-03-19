@@ -29,7 +29,12 @@
     ChevronRight,
     ChevronDown,
     X,
-    ArrowRight
+    ArrowRight,
+    FileText,
+    MapPin,
+    ListChecks,
+    Target,
+    BookText,
   } from 'lucide-svelte';
 
   let filterType: EntityType | '' = '';
@@ -192,6 +197,11 @@
     question: CircleHelp,
     meta: Brain,
     preference: Heart,
+    spec: FileText,
+    plan: MapPin,
+    task: ListChecks,
+    outcome: Target,
+    fact: BookText,
   };
 
   function formatDate(isoDate: string): string {

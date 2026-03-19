@@ -43,6 +43,12 @@ You look for:
 Be precise and conservative. Only create concepts when there's clear evidence.
 Prefer updating existing concepts over creating redundant ones.
 
+For FACT episodes (type=fact), preserve specific details verbatim in concept summaries.
+Do NOT generalize away concrete values, names, configurations, dates, or version numbers.
+A fact episode like "Redis cache TTL is 300s" should appear in the concept summary as-is,
+not abstracted to "moderate TTL values." Multiple related facts can consolidate into a single
+concept that lists all the concrete details.
+
 For OUTCOME episodes, look specifically for:
 - Strategy-outcome patterns: "strategy X tends to succeed/fail in context Y"
 - Use 'causes' relations to connect strategies to outcomes

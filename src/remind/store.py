@@ -107,7 +107,16 @@ class MemoryStore(ABC):
     def get_episode(self, id: str) -> Optional[Episode]:
         """Get an episode by ID."""
         ...
-    
+
+    @abstractmethod
+    def get_episodes_batch(self, ids: list[str]) -> list[Episode]:
+        """Get multiple episodes by ID in a single query.
+
+        Returns episodes in no guaranteed order. Missing or soft-deleted
+        IDs are silently skipped.
+        """
+        ...
+
     @abstractmethod
     def update_episode(self, episode: Episode) -> None:
         """Update an existing episode."""
@@ -222,7 +231,26 @@ class MemoryStore(ABC):
     def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
         """Get all episodes that mention an entity."""
         ...
-    
+
+    @abstractmethod
+    def find_episodes_by_entities(
+        self,
+        entity_ids: list[str],
+        exclude_episode_ids: Optional[set[str]] = None,
+        limit: int = 20,
+    ) -> list[Episode]:
+        """Find episodes that share any of the given entities.
+
+        Args:
+            entity_ids: Entity IDs to search for.
+            exclude_episode_ids: Episode IDs to exclude from results.
+            limit: Maximum episodes to return.
+
+        Returns:
+            Episodes ordered by number of matching entities (descending).
+        """
+        ...
+
     @abstractmethod
     def get_entities_mentioned_in(self, episode_id: str) -> list[Entity]:
         """Get all entities mentioned in an episode."""
@@ -922,7 +950,26 @@ class SQLiteMemoryStore(MemoryStore):
             return Episode.from_dict(json.loads(row["data"]))
         finally:
             conn.close()
-    
+
+    def get_episodes_batch(self, ids: list[str]) -> list[Episode]:
+        """Get multiple episodes by ID in a single query."""
+        if not ids:
+            return []
+        conn = self._get_conn()
+        try:
+            placeholders = ",".join("?" for _ in ids)
+            rows = conn.execute(
+                f"""
+                SELECT data FROM episodes
+                WHERE id IN ({placeholders})
+                AND json_extract(data, '$.deleted_at') IS NULL
+                """,
+                tuple(ids),
+            ).fetchall()
+            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
+        finally:
+            conn.close()
+
     def update_episode(self, episode: Episode) -> None:
         """Update an existing episode."""
         conn = self._get_conn()
@@ -1295,6 +1342,45 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
     
+    def find_episodes_by_entities(
+        self,
+        entity_ids: list[str],
+        exclude_episode_ids: Optional[set[str]] = None,
+        limit: int = 20,
+    ) -> list[Episode]:
+        """Find episodes sharing any of the given entities, ordered by overlap count."""
+        if not entity_ids:
+            return []
+
+        exclude = exclude_episode_ids or set()
+        conn = self._get_conn()
+        try:
+            placeholders = ",".join("?" for _ in entity_ids)
+            rows = conn.execute(
+                f"""
+                SELECT e.data, COUNT(DISTINCT m.entity_id) as overlap_count
+                FROM episodes e
+                JOIN mentions m ON e.id = m.episode_id
+                WHERE m.entity_id IN ({placeholders})
+                AND json_extract(e.data, '$.deleted_at') IS NULL
+                GROUP BY e.id
+                ORDER BY overlap_count DESC, e.timestamp DESC
+                LIMIT ?
+                """,
+                (*entity_ids, limit + len(exclude))
+            ).fetchall()
+
+            results = []
+            for row in rows:
+                ep = Episode.from_dict(json.loads(row["data"]))
+                if ep.id not in exclude:
+                    results.append(ep)
+                    if len(results) >= limit:
+                        break
+            return results
+        finally:
+            conn.close()
+
     def get_entities_mentioned_in(self, episode_id: str) -> list[Entity]:
         """Get all entities mentioned in an episode."""
         conn = self._get_conn()

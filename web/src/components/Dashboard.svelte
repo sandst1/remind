@@ -41,6 +41,8 @@
     spec: 'Specs',
     plan: 'Plans',
     task: 'Tasks',
+    outcome: 'Outcomes',
+    fact: 'Facts',
   };
 
   const relationTypeLabels: Record<string, string> = {

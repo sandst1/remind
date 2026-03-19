@@ -7,14 +7,30 @@ relationship structure, mimicking associative memory in the brain.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Optional
 import logging
 
-from remind.models import Concept, Episode, Entity, RelationType
+from remind.models import Concept, Episode, Entity, EpisodeType, RelationType
 from remind.store import MemoryStore
 from remind.providers.base import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
+
+
+# Episode type weights for scoring -- higher value = more signal
+_EPISODE_TYPE_WEIGHTS: dict[EpisodeType, float] = {
+    EpisodeType.FACT: 1.0,
+    EpisodeType.DECISION: 0.95,
+    EpisodeType.PREFERENCE: 0.85,
+    EpisodeType.OUTCOME: 0.8,
+    EpisodeType.SPEC: 0.8,
+    EpisodeType.OBSERVATION: 0.6,
+    EpisodeType.QUESTION: 0.5,
+    EpisodeType.PLAN: 0.5,
+    EpisodeType.TASK: 0.4,
+    EpisodeType.META: 0.3,
+}
 
 
 @dataclass
@@ -28,6 +44,17 @@ class ActivatedConcept:
     
     def __repr__(self) -> str:
         return f"ActivatedConcept({self.concept.id}, activation={self.activation:.3f}, source={self.source})"
+
+
+@dataclass
+class ScoredEpisode:
+    """An episode with a relevance score from hybrid recall."""
+
+    episode: Episode
+    score: float  # 0.0 - 1.0 composite relevance score
+
+    def __repr__(self) -> str:
+        return f"ScoredEpisode({self.episode.id}, score={self.score:.3f}, type={self.episode.episode_type.value})"
 
 
 class MemoryRetriever:
@@ -78,7 +105,8 @@ class MemoryRetriever:
     async def retrieve(
         self,
         query: str,
-        k: int = 5,
+        k: int = 3,
+        min_activation: float = 0.3,
         context: Optional[str] = None,
         include_weak: bool = False,
     ) -> list[ActivatedConcept]:
@@ -87,7 +115,9 @@ class MemoryRetriever:
         
         Args:
             query: The query text
-            k: Number of concepts to return
+            k: Maximum number of concepts to return
+            min_activation: Minimum activation score to include in results.
+                Concepts below this floor are dropped even if k budget remains.
             context: Optional additional context to include in embedding
             include_weak: If True, include lower-activation concepts
             
@@ -192,14 +222,16 @@ class MemoryRetriever:
                     hops=hops,
                 ))
         
-        # Sort by activation (highest first) and take top k
+        # Sort by activation (highest first), apply floor, take top k
         results.sort(key=lambda x: x.activation, reverse=True)
+        if not include_weak:
+            results = [r for r in results if r.activation >= min_activation]
         return results[:k]
     
     async def retrieve_by_tags(
         self,
         tags: list[str],
-        k: int = 5,
+        k: int = 3,
     ) -> list[Concept]:
         """
         Retrieve concepts by tag matching.
@@ -237,6 +269,101 @@ class MemoryRetriever:
         """
         return self.store.get_episodes_mentioning(entity_id, limit=limit)
     
+    def retrieve_related_episodes(
+        self,
+        activated: list[ActivatedConcept],
+        max_episodes: int = 10,
+    ) -> list[ScoredEpisode]:
+        """Retrieve episodes related to activated concepts via entity overlap.
+
+        Finds episodes that share entities with the source episodes of matched
+        concepts, scores them using a lightweight composite function (no
+        embeddings), and returns the top-scored ones.
+
+        Args:
+            activated: Concepts returned by retrieve().
+            max_episodes: Maximum episodes to return.
+
+        Returns:
+            Scored episodes sorted by relevance, highest first.
+        """
+        if not activated:
+            return []
+
+        # Collect source episode IDs and their entity IDs from matched concepts
+        source_ep_ids: set[str] = set()
+        for ac in activated:
+            source_ep_ids.update(ac.concept.source_episodes)
+
+        concept_entity_ids: set[str] = set()
+        if source_ep_ids:
+            source_episodes = self.store.get_episodes_batch(list(source_ep_ids))
+            for ep in source_episodes:
+                concept_entity_ids.update(ep.entity_ids)
+
+        if not concept_entity_ids:
+            return []
+
+        # Find candidate episodes sharing those entities (exclude source episodes)
+        candidates = self.store.find_episodes_by_entities(
+            entity_ids=list(concept_entity_ids),
+            exclude_episode_ids=source_ep_ids,
+            limit=max_episodes * 3,
+        )
+
+        if not candidates:
+            return []
+
+        # Score each candidate
+        now = datetime.now()
+        scored: list[ScoredEpisode] = []
+
+        for ep in candidates:
+            score = self._score_episode(ep, concept_entity_ids, now)
+            if score > 0.05:
+                scored.append(ScoredEpisode(episode=ep, score=score))
+
+        scored.sort(key=lambda s: s.score, reverse=True)
+        return scored[:max_episodes]
+
+    @staticmethod
+    def _score_episode(
+        episode: Episode,
+        concept_entity_ids: set[str],
+        now: datetime,
+    ) -> float:
+        """Compute a composite relevance score for an episode.
+
+        Weights:
+          - Entity overlap:        ~60%
+          - Unconsolidated bonus:  ~20%
+          - Episode type weight:   ~10%
+          - Recency:               ~10%
+        """
+        # Entity overlap (0.0 - 1.0)
+        if episode.entity_ids:
+            overlap = len(set(episode.entity_ids) & concept_entity_ids)
+            entity_score = overlap / max(len(episode.entity_ids), 1)
+        else:
+            entity_score = 0.0
+
+        # Unconsolidated bonus
+        unconsolidated_bonus = 1.0 if not episode.consolidated else 0.0
+
+        # Episode type weight
+        type_weight = _EPISODE_TYPE_WEIGHTS.get(episode.episode_type, 0.5)
+
+        # Recency (1.0 for today, decays to 0.3 over 90 days)
+        age = now - episode.timestamp
+        recency = max(0.3, 1.0 - (age.total_seconds() / (90 * 86400)) * 0.7)
+
+        return (
+            0.60 * entity_score
+            + 0.20 * unconsolidated_bonus
+            + 0.10 * type_weight
+            + 0.10 * recency
+        )
+
     async def retrieve_related_entities(
         self,
         entity_id: str,
@@ -340,9 +467,15 @@ class MemoryRetriever:
         include_episodes: bool = True,
     ) -> str:
         """
-        Format retrieved concepts for injection into an LLM prompt.
+        Format retrieved concepts and episodes for injection into an LLM prompt.
 
         This is the "recall" output that gets added to context.
+
+        Args:
+            activated: Concept matches from spreading activation.
+            include_relations: Show concept relations.
+            max_relations: Max relations per concept.
+            include_episodes: Show source episodes under each concept.
         """
         if not activated:
             return "(No relevant memories found)"
@@ -385,14 +518,26 @@ class MemoryRetriever:
                         lines.append(rel_str)
                         shown += 1
 
-            # Source episodes - full content, no truncation
+            # Source episodes with type labels and entity context
             if include_episodes and c.source_episodes:
+                source_eps = self.store.get_episodes_batch(c.source_episodes)
+
+                # Collect entities from source episodes
+                entity_names: list[str] = []
+                seen_entities: set[str] = set()
+                for ep in source_eps:
+                    for eid in ep.entity_ids:
+                        if eid not in seen_entities:
+                            seen_entities.add(eid)
+                            _, name = Entity.parse_id(eid)
+                            entity_names.append(name)
+                if entity_names:
+                    lines.append(f"  Entities: {', '.join(entity_names)}")
+
                 lines.append("")
                 lines.append("  Source episodes:")
-                for ep_id in c.source_episodes:
-                    episode = self.store.get_episode(ep_id)
-                    if episode:
-                        lines.append(f"    • {episode.content}")
+                for episode in source_eps:
+                    lines.append(f"    • [{episode.episode_type.value}] {episode.content}")
 
             lines.append("")  # Blank line between concepts
 
@@ -432,8 +577,7 @@ class MemoryRetriever:
                 type_name = ep.episode_type.value
                 by_type.setdefault(type_name, []).append(ep)
             
-            # Show decisions first, then questions, then others
-            type_order = ["decision", "question", "preference", "observation", "meta"]
+            type_order = ["fact", "decision", "question", "preference", "observation", "meta"]
             for type_name in type_order:
                 if type_name not in by_type:
                     continue

@@ -7,7 +7,7 @@
   import {
     File, Code, Box, Folder, Lightbulb, User, Briefcase, Wrench, HelpCircle, BookOpen,
     ZoomIn, ZoomOut, RotateCcw, Eye, Zap, CircleHelp, Brain, Heart,
-    ChevronRight, ChevronDown
+    ChevronRight, ChevronDown, FileText, MapPin, ListChecks, Target, BookText
   } from 'lucide-svelte';
 
   let container: HTMLDivElement;
@@ -331,6 +331,11 @@
     question: CircleHelp,
     meta: Brain,
     preference: Heart,
+    spec: FileText,
+    plan: MapPin,
+    task: ListChecks,
+    outcome: Target,
+    fact: BookText,
   };
 
   // Toggle episode expansion

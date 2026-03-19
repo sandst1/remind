@@ -51,6 +51,8 @@ Bad:  "The assistant looked at the auth bug and found that the issue is in verif
 
 Additionally, detect ACTION-RESULT pairs: when a strategy, tool, or approach was tried and produced a result. Extract these as "outcome" type episodes with metadata fields: strategy (what was tried), result (success/failure/partial), prediction_error (low/medium/high - how surprising was the outcome).
 
+Use "fact" type for specific factual assertions: concrete values, configuration details, names, dates, version numbers, or technical details that would be lost if generalized. Facts are high-value and should not be paraphrased into vague summaries.
+
 Output JSON:
 {{
   "density": 0.7,
@@ -58,7 +60,7 @@ Output JSON:
   "episodes": [
     {{
       "content": "tight, distilled factual statement",
-      "type": "observation|decision|preference|question|meta|outcome",
+      "type": "observation|decision|preference|question|meta|outcome|fact",
       "entities": ["type:name"],
       "metadata": {{}}
     }}

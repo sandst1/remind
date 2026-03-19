@@ -99,18 +99,18 @@ class TestMemoryInterface:
         assert entity.type == EntityType.FILE
 
     def test_remember_creates_entities_from_ids(self, memory):
-        """Test remember creates entity objects from IDs."""
+        """Test remember creates entity objects from IDs (normalized to lowercase)."""
         memory.remember(
             "Test",
             entities=["function:myFunc", "class:MyClass", "tool:redis"],
         )
 
-        func = memory.store.get_entity("function:myFunc")
+        func = memory.store.get_entity("function:myfunc")
         assert func is not None
         assert func.type == EntityType.FUNCTION
         assert func.display_name == "myFunc"
 
-        cls = memory.store.get_entity("class:MyClass")
+        cls = memory.store.get_entity("class:myclass")
         assert cls.type == EntityType.CLASS
 
         tool = memory.store.get_entity("tool:redis")
@@ -187,7 +187,7 @@ class TestMemoryInterface:
     async def test_recall_raw_returns_objects(
         self, memory, sample_concept, mock_embedding
     ):
-        """Test recall with raw=True returns objects."""
+        """Test recall with raw=True returns list of ActivatedConcept."""
         memory.store.add_concept(sample_concept)
         mock_embedding.set_embedding("python", sample_concept.embedding)
 

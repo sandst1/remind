@@ -26,6 +26,8 @@
     FileText,
     MapPin,
     ListChecks,
+    Target,
+    BookText,
     Trash2,
   } from 'lucide-svelte';
   import { deleteConcept } from '../lib/api';
@@ -217,6 +219,8 @@
     spec: FileText,
     plan: MapPin,
     task: ListChecks,
+    outcome: Target,
+    fact: BookText,
   };
 
   const episodeTypeLabels: Record<EpisodeType, string> = {
@@ -228,6 +232,8 @@
     spec: 'Spec',
     plan: 'Plan',
     task: 'Task',
+    outcome: 'Outcome',
+    fact: 'Fact',
   };
 
   function formatDate(isoDate: string): string {
@@ -1043,6 +1049,8 @@
   .type-spec { background: var(--color-amber-bg, #fef3c7); color: var(--color-amber, #d97706); }
   .type-plan { background: var(--color-cyan-bg, #e0f2fe); color: var(--color-cyan, #0891b2); }
   .type-task { background: var(--color-indigo-bg, #e0e7ff); color: var(--color-indigo, #4f46e5); }
+  .type-outcome { background: var(--color-teal-bg, #ccfbf1); color: var(--color-teal, #0d9488); }
+  .type-fact { background: var(--color-slate-bg, #e2e8f0); color: var(--color-slate, #475569); }
 
   .episode-date {
     font-size: var(--font-size-xs);

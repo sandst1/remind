@@ -9,9 +9,17 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from remind.models import EpisodeType, TaskStatus
+from remind.models import Entity, EpisodeType, TaskStatus, normalize_entity_name
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_entity_param(raw: str) -> str:
+    """Normalize an entity ID from a URL path or query parameter."""
+    from urllib.parse import unquote
+    entity_id = unquote(raw)
+    type_str, name = Entity.parse_id(entity_id)
+    return Entity.make_id(type_str, normalize_entity_name(name))
 
 # Import config and memory instance cache
 from remind.config import resolve_db_path, REMIND_DIR
@@ -516,9 +524,7 @@ async def get_entity_detail(request: Request) -> JSONResponse:
     if error:
         return error
 
-    # Entity IDs may be URL-encoded (they contain colons)
-    from urllib.parse import unquote
-    entity_id = unquote(request.path_params.get("id", ""))
+    entity_id = _normalize_entity_param(request.path_params.get("id", ""))
 
     try:
         entity = memory.store.get_entity(entity_id)
@@ -566,8 +572,7 @@ async def get_entity_episodes(request: Request) -> JSONResponse:
     if error:
         return error
 
-    from urllib.parse import unquote
-    entity_id = unquote(request.path_params.get("id", ""))
+    entity_id = _normalize_entity_param(request.path_params.get("id", ""))
     limit = int(request.query_params.get("limit", 50))
 
     try:
@@ -586,8 +591,7 @@ async def get_entity_concepts(request: Request) -> JSONResponse:
     if error:
         return error
 
-    from urllib.parse import unquote
-    entity_id = unquote(request.path_params.get("id", ""))
+    entity_id = _normalize_entity_param(request.path_params.get("id", ""))
     limit = int(request.query_params.get("limit", 50))
 
     try:
@@ -763,16 +767,14 @@ async def execute_query(request: Request) -> JSONResponse:
     try:
         body = await request.json()
         query = body.get("query", "")
-        k = body.get("k", 5)
+        k = body.get("k", 3)
 
         if not query:
             return JSONResponse({"error": "Missing 'query' in request body"}, status_code=400)
 
-        # Use the memory interface's recall method with raw=True to get ActivatedConcept objects
-        results = await memory.recall(query, k=k, raw=True)
+        activated = await memory.recall(query, k=k, raw=True)
 
-        # Get the formatted output for LLM context
-        formatted = memory.retriever.format_for_llm(results)
+        formatted = memory.retriever.format_for_llm(activated)
 
         return JSONResponse({
             "concepts": [
@@ -782,7 +784,7 @@ async def execute_query(request: Request) -> JSONResponse:
                     "source": r.source,
                     "hops": r.hops,
                 }
-                for r in results
+                for r in activated
             ],
             "formatted": formatted,
         })
@@ -1007,7 +1009,8 @@ async def get_specs(request: Request) -> JSONResponse:
         specs = memory.store.get_episodes_by_type(EpisodeType.SPEC, limit=1000)
 
         if entity_id:
-            specs = [s for s in specs if entity_id in s.entity_ids]
+            norm_eid = _normalize_entity_param(entity_id)
+            specs = [s for s in specs if norm_eid in s.entity_ids]
         if status:
             specs = [s for s in specs if (s.metadata or {}).get("spec_status") == status]
 
@@ -1037,7 +1040,8 @@ async def get_plans(request: Request) -> JSONResponse:
         plans = memory.store.get_episodes_by_type(EpisodeType.PLAN, limit=1000)
 
         if entity_id:
-            plans = [p for p in plans if entity_id in p.entity_ids]
+            norm_eid = _normalize_entity_param(entity_id)
+            plans = [p for p in plans if norm_eid in p.entity_ids]
         if status:
             plans = [p for p in plans if (p.metadata or {}).get("plan_status") == status]
 

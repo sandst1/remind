@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from remind.interface import create_memory, MemoryInterface
+from remind.models import Entity, normalize_entity_name
 from remind.config import REMIND_DIR, resolve_db_path, load_config
 
 logger = logging.getLogger(__name__)
@@ -156,8 +157,8 @@ async def tool_remember(
 
 
 async def tool_recall(
-    query: str, 
-    k: int = 5, 
+    query: str,
+    k: int = 3,
     context: Optional[str] = None,
     entity: Optional[str] = None,
 ) -> str:
@@ -388,6 +389,8 @@ async def tool_inspect_entity(
     memory = await get_memory()
     store = memory.store
 
+    type_str, name = Entity.parse_id(entity_id)
+    entity_id = Entity.make_id(type_str, normalize_entity_name(name))
     entity = store.get_entity(entity_id)
     if not entity:
         return f"Entity '{entity_id}' not found."
@@ -896,7 +899,7 @@ def create_mcp_server():
     @mcp.tool()
     async def recall(
         query: str,
-        k: int = 5,
+        k: int = 3,
         context: Optional[str] = None,
         entity: Optional[str] = None,
     ) -> str:

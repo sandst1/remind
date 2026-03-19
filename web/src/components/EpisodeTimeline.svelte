@@ -9,7 +9,7 @@
   } from '../lib/stores';
   import { fetchEpisodes, updateEpisode } from '../lib/api';
   import type { Episode, EpisodeType } from '../lib/types';
-  import { Eye, Zap, CircleHelp, Brain, Heart, Search, Filter, FileText, MapPin, ListChecks, Circle, Play, CheckCircle2, Ban, Trash2, Pencil } from 'lucide-svelte';
+  import { Eye, Zap, CircleHelp, Brain, Heart, Search, Filter, FileText, MapPin, ListChecks, Circle, Play, CheckCircle2, Ban, Trash2, Pencil, Target, BookText } from 'lucide-svelte';
   import { deleteEpisode } from '../lib/api';
 
   let filterType: EpisodeType | '' = '';
@@ -89,6 +89,8 @@
     spec: 'Spec',
     plan: 'Plan',
     task: 'Task',
+    outcome: 'Outcome',
+    fact: 'Fact',
   };
 
   const episodeTypeIcons: Record<EpisodeType, any> = {
@@ -100,6 +102,8 @@
     spec: FileText,
     plan: MapPin,
     task: ListChecks,
+    outcome: Target,
+    fact: BookText,
   };
 
   const taskStatusIcons: Record<string, any> = {
@@ -204,6 +208,8 @@
           <option value="spec">Specs</option>
           <option value="plan">Plans</option>
           <option value="task">Tasks</option>
+          <option value="outcome">Outcomes</option>
+          <option value="fact">Facts</option>
         </select>
       </div>
 
@@ -495,6 +501,8 @@
   .type-spec { background: var(--color-amber-bg, #fef3c7); color: var(--color-amber, #d97706); }
   .type-plan { background: var(--color-cyan-bg, #e0f2fe); color: var(--color-cyan, #0891b2); }
   .type-task { background: var(--color-indigo-bg, #e0e7ff); color: var(--color-indigo, #4f46e5); }
+  .type-outcome { background: var(--color-teal-bg, #ccfbf1); color: var(--color-teal, #0d9488); }
+  .type-fact { background: var(--color-slate-bg, #e2e8f0); color: var(--color-slate, #475569); }
 
   .task-status {
     display: inline-flex;

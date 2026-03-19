@@ -33,6 +33,7 @@ class EpisodeType(Enum):
     PLAN = "plan"                 # A sequenced intention ("we will do X then Y")
     TASK = "task"                 # A discrete unit of work with status tracking
     OUTCOME = "outcome"           # Result of an action/strategy (success/failure/partial)
+    FACT = "fact"                 # Specific factual assertion (config value, name, date, technical detail)
 
 
 class TaskStatus(Enum):

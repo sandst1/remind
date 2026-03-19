@@ -32,9 +32,9 @@ remember(content="User prefers TypeScript over JavaScript")
 remember(content="Use Redis for caching", episode_type="decision", entities="tool:redis,concept:caching")
 ```
 
-**Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`
+**Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
 
-**When to use**: User preferences, project context, decisions+rationale, open questions, corrections
+**When to use**: User preferences, project context, decisions+rationale, open questions, corrections, specific facts
 **Skip**: Trivial info, already-captured knowledge, raw conversation logs
 
 ## ingest
@@ -62,6 +62,8 @@ Forces processing of whatever text is in the ingestion buffer, regardless of thr
 recall(query="authentication issues")           # Semantic search
 recall(query="auth", entity="file:src/auth.ts") # Entity-specific
 ```
+
+Recall returns matching **concepts** (generalized knowledge) with their source episodes. Each concept shows related entities and source episodes with type labels (fact, observation, decision, etc.), preserving concrete details alongside generalizations.
 
 ## consolidate
 
@@ -156,6 +158,20 @@ flush_ingest()
 
 Remind handles density scoring, distillation, and consolidation automatically. High-density content produces episodes; low-density content (greetings, boilerplate) is dropped.
 
+## Fact Episodes
+
+Use `fact` type for specific factual assertions — concrete values that should be preserved verbatim through consolidation:
+
+```
+remember(content="Redis cache TTL is 300 seconds for auth tokens", episode_type="fact", entities="tool:redis,concept:auth")
+remember(content="Production database runs on port 5432", episode_type="fact")
+remember(content="API rate limit is 100 requests/second per tenant", episode_type="fact")
+```
+
+Facts differ from observations: an observation like "Redis seems fast" may generalize, but a fact like "Redis TTL is 300s" should be preserved exactly. Consolidation retains fact details in concept summaries rather than abstracting them away.
+
+Auto-ingest also detects facts from raw conversation data (config values, version numbers, concrete technical details).
+
 ## Outcome Episodes
 
 Use `outcome` type to record action-result pairs:
@@ -183,3 +199,4 @@ Auto-ingest detects outcomes automatically from raw conversation data.
 8. Delete outdated/incorrect information rather than adding corrections
 9. Use `ingest()` for raw conversation logs instead of `remember()`
 10. Use `outcome` type to close the feedback loop on strategies
+11. Use `fact` type for concrete values, configs, and technical details that must not be generalized

@@ -18,7 +18,9 @@ export type EpisodeType =
   | 'preference'
   | 'spec'
   | 'plan'
-  | 'task';
+  | 'task'
+  | 'outcome'
+  | 'fact';
 
 export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked';
 

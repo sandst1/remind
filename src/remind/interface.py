@@ -15,8 +15,9 @@ import logging
 import json
 
 from remind.models import (
-    Episode, Concept, ConsolidationResult, 
+    Episode, Concept, ConsolidationResult,
     Entity, EntityType, EpisodeType, TaskStatus, Relation, RelationType,
+    normalize_entity_name,
 )
 from remind.store import MemoryStore, SQLiteMemoryStore
 from remind.providers.base import LLMProvider, EmbeddingProvider
@@ -83,7 +84,7 @@ class MemoryInterface:
         consolidation_threshold: int = 5,  # episodes before auto-consolidation
         auto_consolidate: bool = True,
         # Retrieval settings
-        default_recall_k: int = 5,
+        default_recall_k: int = 3,
         spread_hops: int = 2,
         # Decay settings
         decay_config=None,
@@ -149,20 +150,22 @@ class MemoryInterface:
         ``family:Capulet`` and ``character:Capulet``.
 
         If no match is found, creates a new entity and returns its ID.
+        Entity IDs are always normalized to lowercase.
         """
         type_str, name = Entity.parse_id(raw_entity_id)
         existing = self.store.find_entity_by_name(name)
         if existing:
             return existing.id
 
-        if not self.store.get_entity(raw_entity_id):
+        normalized_id = Entity.make_id(type_str, normalize_entity_name(name))
+        if not self.store.get_entity(normalized_id):
             try:
                 etype = EntityType(type_str)
             except ValueError:
                 etype = EntityType.OTHER
-            entity = Entity(id=raw_entity_id, type=etype, display_name=name)
+            entity = Entity(id=normalized_id, type=etype, display_name=name)
             self.store.add_entity(entity)
-        return raw_entity_id
+        return normalized_id
 
     def remember(
         self,
@@ -243,7 +246,9 @@ class MemoryInterface:
             raw: If True, return raw objects instead of formatted string
             
         Returns:
-            Formatted memory string for LLM injection, or raw objects if raw=True
+            Formatted memory string for LLM injection, or raw objects if raw=True.
+            When raw=True: list[ActivatedConcept] for concept-based,
+            list[Episode] for entity-based.
         """
         k = k or self.default_recall_k
         
@@ -254,6 +259,8 @@ class MemoryInterface:
         
         # Entity-based retrieval
         if entity:
+            type_str, name = Entity.parse_id(entity)
+            entity = Entity.make_id(type_str, normalize_entity_name(name))
             episodes = await self.retriever.retrieve_by_entity(entity, limit=k * 4)
             # Trigger decay every N recalls (consistent with concept-based path)
             if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
@@ -477,10 +484,12 @@ class MemoryInterface:
         """Triage a single sub-chunk and store extracted episodes."""
         existing_concepts = ""
         try:
-            result = await self.recall(chunk[:500], k=5, raw=True)
-            if isinstance(result, list) and result:
+            activated = await self.recall(
+                chunk[:500], k=5, raw=True,
+            )
+            if activated:
                 lines = []
-                for item in result:
+                for item in activated:
                     concept = item.concept if hasattr(item, 'concept') else item
                     if hasattr(concept, 'summary'):
                         lines.append(f"- {concept.summary}")
@@ -858,17 +867,22 @@ class MemoryInterface:
 
     # Entity operations
     
+    def _normalize_entity_id(self, entity_id: str) -> str:
+        """Normalize an entity ID to canonical lowercase form."""
+        type_str, name = Entity.parse_id(entity_id)
+        return Entity.make_id(type_str, normalize_entity_name(name))
+
     def get_entity(self, entity_id: str) -> Optional[Entity]:
         """Get an entity by ID."""
-        return self.store.get_entity(entity_id)
-    
+        return self.store.get_entity(self._normalize_entity_id(entity_id))
+
     def get_all_entities(self) -> list[Entity]:
         """Get all entities."""
         return self.store.get_all_entities()
-    
+
     def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
         """Get all episodes that mention a specific entity."""
-        return self.store.get_episodes_mentioning(entity_id, limit=limit)
+        return self.store.get_episodes_mentioning(self._normalize_entity_id(entity_id), limit=limit)
     
     def get_entity_mention_counts(self) -> list[tuple[Entity, int]]:
         """Get all entities with their mention counts, sorted by most mentioned."""
@@ -892,13 +906,14 @@ class MemoryInterface:
             limit: Maximum number of tasks to return
         """
         all_tasks = self.store.get_episodes_by_type(EpisodeType.TASK, limit=1000)
+        normalized_entity = self._normalize_entity_id(entity_id) if entity_id else None
 
         filtered = []
         for task in all_tasks:
             meta = task.metadata or {}
             if status and meta.get("status") != status:
                 continue
-            if entity_id and entity_id not in task.entity_ids:
+            if normalized_entity and normalized_entity not in task.entity_ids:
                 continue
             if plan_id and meta.get("plan_id") != plan_id:
                 continue

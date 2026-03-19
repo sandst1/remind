@@ -156,7 +156,7 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
 
 @main.command()
 @click.argument("query")
-@click.option("-k", default=5, help="Number of concepts to retrieve")
+@click.option("-k", default=3, help="Number of concepts to retrieve")
 @click.option("--context", "-c", help="Additional context for search")
 @click.option("--entity", "-e", help="Retrieve by entity ID instead of semantic search")
 @click.option("--raw", is_flag=True, help="Show raw concept data")
@@ -193,7 +193,7 @@ def recall(ctx, query: str, k: int, context: Optional[str], entity: Optional[str
             
             console.print(table)
         else:
-            console.print(Panel(result, title=f"Memory: {entity}", border_style="cyan"))
+            console.print(Panel(result, title=f"Memory: {entity}", border_style="cyan"), markup=False)
     elif raw:
         # Show detailed concept view
         for ac in result:
@@ -214,8 +214,8 @@ Exceptions: {', '.join(c.exceptions) if c.exceptions else 'none'}"""
             
             console.print(Panel(panel_content, title=f"[cyan]{c.id}[/cyan]", border_style="dim"))
     else:
-        # Show formatted output
-        console.print(Panel(result, title="Retrieved Memory", border_style="cyan"))
+        # Show formatted output (markup=False so [observation] etc. aren't eaten by Rich)
+        console.print(Panel(result, title="Retrieved Memory", border_style="cyan"), markup=False)
 
 
 @main.command()
