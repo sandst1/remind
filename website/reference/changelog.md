@@ -2,7 +2,7 @@
 
 All notable changes to Remind.
 
-## [0.6.1] - 2026-03-19
+## [0.7.0] - 2026-03-19
 
 ### Added
 - **Auto-ingest pipeline** — `ingest()` and `flush_ingest()` for automatic memory curation. Buffers raw text, scores information density via LLM, and distills memory-worthy episodes automatically. Available via CLI, MCP, and Python API.

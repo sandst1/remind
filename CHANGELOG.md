@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-19
+
+### Added
+- Auto-ingest mode: LLM-powered triage pipeline that buffers raw text, scores information density, and extracts memory-worthy episodes automatically
+  - `IngestionBuffer` accumulates text until a configurable threshold (~4000 chars)
+  - `IngestionTriager` uses an LLM to score density (0.0–1.0) and extract distilled episodes, including outcome detection
+  - New `ingest()` and `flush_ingest()` methods on `MemoryInterface`
+  - New `remind ingest` and `remind flush-ingest` CLI commands
+  - New `ingest` and `flush_ingest` MCP tools
+- Non-blocking ingestion: triage and consolidation run in background workers to avoid blocking the caller
+- Configurable ingest model: each provider supports a separate `ingest_model` for cheaper/faster triage (e.g., Haiku for triage, Sonnet for consolidation)
+- Hybrid recall with entity name matching: retrieval now does fast entity-name lookups alongside embedding search, improving recall for queries that mention known entities
+- `ScoredEpisode` dataclass for ranked episode results from hybrid recall
+- Batch episode retrieval (`get_episodes_batch`) and entity word search (`search_entities_by_words`, `find_episodes_by_entities`) in the store layer
+- `remind status` CLI command showing processing status (workers, queues)
+- Configurable file logging (`logging_enabled` in config, `REMIND_LOGGING_ENABLED` env var) with per-database log files
+- Episode type weights for retrieval scoring (facts and decisions ranked higher than meta/tasks)
+- Minimum activation floor on retrieval to filter out noise
+
+### Changed
+- Default recall `k` reduced from 5 to 3 for more focused results
+- Consolidation now processes all pending episodes in batches with optional progress callback
+- Consolidation prompts improved: fact episodes preserve specific details verbatim; outcome episodes extract strategy-outcome patterns with causal relations
+- Extraction phase now deduplicates entity names, merging entities that share the same display name regardless of type prefix
+- Entity IDs normalized to lowercase throughout
+- Recall query argument is now optional when using `--entity` flag
+- Updated documentation site with auto-ingest guide, expanded configuration docs, and new MCP tool references
+
+### Fixed
+- `remind status` command crash
+- Entity name deduplication during extraction (prevents `family:Capulet` vs `character:Capulet` splits)
+- Triage batching: ingestion buffer now processed in proper batches
+
 ## [0.6.1] - 2026-03-17
 
 ### Added

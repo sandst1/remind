@@ -27,7 +27,7 @@ Basic usage:
     response = await llm.complete(f"{context}\\n\\nUser: {message}")
 """
 
-__version__ = "0.1.0"
+__version__ = "0.7.0"
 
 # Core models
 from remind.models import (
