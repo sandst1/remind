@@ -24,7 +24,7 @@ from remind.consolidation import Consolidator
 from remind.retrieval import MemoryRetriever, ActivatedConcept
 from remind.extraction import EntityExtractor
 from remind.config import load_config, DecayConfig, RemindConfig, setup_file_logging
-from remind.triage import IngestionBuffer, IngestionTriager, TriageResult
+from remind.triage import IngestionBuffer, IngestionTriager, TriageResult, split_text
 
 logger = logging.getLogger(__name__)
 
@@ -415,8 +415,40 @@ class MemoryInterface:
         )
 
     async def _process_ingest_chunk(self, chunk: str, source: str) -> list[str]:
-        """Run triage on a chunk and store/consolidate resulting episodes."""
-        # Get existing concept context for the triage prompt
+        """Run triage on a chunk and store/consolidate resulting episodes.
+
+        Large chunks are split into sub-chunks of at most
+        ``self._ingest_buffer.threshold`` characters before triage so that
+        each LLM call receives a reasonable amount of text.  Consolidation
+        runs once at the end after all sub-chunks have been triaged.
+        """
+        sub_chunks = split_text(chunk, max_size=self._ingest_buffer.threshold)
+        if not sub_chunks:
+            return []
+
+        all_episode_ids: list[str] = []
+
+        for i, sub_chunk in enumerate(sub_chunks):
+            ids = await self._triage_sub_chunk(sub_chunk, source, i, len(sub_chunks))
+            all_episode_ids.extend(ids)
+
+        # Single consolidation pass after all sub-chunks are processed
+        if all_episode_ids:
+            try:
+                result = await self.consolidate(force=True)
+                logger.info(
+                    f"Post-ingest consolidation: {result.episodes_processed} episodes, "
+                    f"{result.concepts_created} concepts created"
+                )
+            except Exception as e:
+                logger.warning(f"Post-ingest consolidation failed: {e}")
+
+        return all_episode_ids
+
+    async def _triage_sub_chunk(
+        self, chunk: str, source: str, chunk_index: int, total_chunks: int,
+    ) -> list[str]:
+        """Triage a single sub-chunk and store extracted episodes."""
         existing_concepts = ""
         try:
             result = await self.recall(chunk[:500], k=5, raw=True)
@@ -431,11 +463,11 @@ class MemoryInterface:
         except Exception as e:
             logger.debug(f"Recall for triage context failed (ok for empty memory): {e}")
 
-        # Run triage
         triage_result = await self._triager.triage(chunk, existing_concepts)
 
         logger.info(
-            f"Triage: density={triage_result.density:.2f}, "
+            f"Triage [{chunk_index + 1}/{total_chunks}]: "
+            f"density={triage_result.density:.2f}, "
             f"episodes={len(triage_result.episodes)}, "
             f"reasoning={triage_result.reasoning}"
         )
@@ -443,8 +475,7 @@ class MemoryInterface:
         if not triage_result.episodes:
             return []
 
-        # Store extracted episodes via remember()
-        episode_ids = []
+        episode_ids: list[str] = []
         for ep in triage_result.episodes:
             ep_type = None
             try:
@@ -463,17 +494,6 @@ class MemoryInterface:
                 entities=ep.entities if ep.entities else None,
             )
             episode_ids.append(episode_id)
-
-        # Immediate consolidation -- triage already filtered for quality
-        if episode_ids:
-            try:
-                result = await self.consolidate(force=True)
-                logger.info(
-                    f"Post-ingest consolidation: {result.episodes_processed} episodes, "
-                    f"{result.concepts_created} concepts created"
-                )
-            except Exception as e:
-                logger.warning(f"Post-ingest consolidation failed: {e}")
 
         return episode_ids
 

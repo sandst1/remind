@@ -93,6 +93,77 @@ class TriageResult:
     raw_chunk: str = ""
 
 
+DEFAULT_OVERLAP = 200
+
+
+def split_text(text: str, max_size: int, overlap: int = DEFAULT_OVERLAP) -> list[str]:
+    """Split text into chunks of at most max_size characters.
+
+    Splits on paragraph boundaries (\\n\\n) when possible, falling back to
+    line breaks (\\n), then hard-cutting as a last resort. Adjacent chunks
+    share an overlap region so context isn't lost at boundaries.
+
+    Args:
+        text: The text to split.
+        max_size: Maximum character count per chunk.
+        overlap: Characters of overlap between adjacent chunks.
+
+    Returns:
+        List of text chunks. Returns [text] as-is if it fits in one chunk.
+        Returns [] for empty input.
+    """
+    if not text or not text.strip():
+        return []
+
+    if len(text) <= max_size:
+        return [text]
+
+    if overlap >= max_size:
+        overlap = max_size // 5
+
+    chunks: list[str] = []
+    start = 0
+
+    while start < len(text):
+        end = start + max_size
+
+        if end >= len(text):
+            chunks.append(text[start:])
+            break
+
+        # Try to find a paragraph boundary to split on
+        split_at = _find_split_point(text, start, end)
+        chunks.append(text[start:split_at])
+
+        # Advance past the split point, minus overlap
+        start = max(start + 1, split_at - overlap)
+
+    return chunks
+
+
+def _find_split_point(text: str, start: int, end: int) -> int:
+    """Find the best place to split within text[start:end].
+
+    Searches backwards from end for paragraph breaks, then line breaks,
+    then falls back to a hard cut at end.
+    """
+    # Search the last 25% of the window for a good split point
+    search_start = start + (end - start) * 3 // 4
+
+    # Prefer paragraph boundary (\n\n)
+    pos = text.rfind("\n\n", search_start, end)
+    if pos != -1:
+        return pos + 2  # after the double newline
+
+    # Fall back to line boundary (\n)
+    pos = text.rfind("\n", search_start, end)
+    if pos != -1:
+        return pos + 1
+
+    # Hard cut
+    return end
+
+
 class IngestionBuffer:
     """Character-threshold buffer for raw text accumulation.
 

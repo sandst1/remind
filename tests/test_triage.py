@@ -2,9 +2,98 @@
 
 import pytest
 
-from remind.triage import IngestionBuffer, IngestionTriager, TriageResult, TriageEpisode
+from remind.triage import IngestionBuffer, IngestionTriager, TriageResult, TriageEpisode, split_text
 from remind.interface import MemoryInterface
 from remind.models import EpisodeType
+
+
+class TestSplitText:
+    """Tests for split_text() -- pre-triage chunk splitting."""
+
+    def test_small_text_returns_single_chunk(self):
+        result = split_text("hello world", max_size=100)
+        assert result == ["hello world"]
+
+    def test_empty_text_returns_empty(self):
+        assert split_text("", max_size=100) == []
+
+    def test_whitespace_only_returns_empty(self):
+        assert split_text("   \n\t  ", max_size=100) == []
+
+    def test_exact_max_size_returns_single_chunk(self):
+        text = "a" * 50
+        result = split_text(text, max_size=50)
+        assert result == [text]
+
+    def test_splits_on_paragraph_boundary(self):
+        # Place the \n\n boundary in the last 25% of the chunk so the
+        # search window finds it.
+        para1 = "First paragraph. " * 10   # ~170 chars
+        para2 = "Second paragraph. " * 10  # ~180 chars
+        text = para1.rstrip() + "\n\n" + para2.rstrip()
+        result = split_text(text, max_size=200, overlap=0)
+        assert len(result) == 2
+        assert result[0].startswith("First paragraph.")
+        assert result[1].startswith("Second paragraph.")
+
+    def test_splits_on_newline_fallback(self):
+        # Place the \n in the last 25% of the chunk so the search window
+        # finds it (no \n\n available, so it falls back to \n).
+        line1 = "a" * 50
+        line2 = "b" * 50
+        text = line1 + "\n" + line2
+        result = split_text(text, max_size=60, overlap=0)
+        assert len(result) == 2
+        assert result[0] == line1 + "\n"
+        assert result[1].startswith("b")
+
+    def test_hard_cut_when_no_boundaries(self):
+        text = "a" * 200
+        result = split_text(text, max_size=80, overlap=0)
+        assert len(result) == 3
+        assert all(len(c) <= 80 for c in result)
+        joined = "".join(result)
+        assert joined == text
+
+    def test_overlap_between_chunks(self):
+        text = "a" * 100 + "\n\n" + "b" * 100
+        result = split_text(text, max_size=120, overlap=20)
+        assert len(result) >= 2
+        # The second chunk should start before where the first chunk ends
+        first_end = len(result[0])
+        # With overlap=20, the second chunk should recapture some of the first
+        full = result[0] + result[1][20:] if len(result) == 2 else None
+        # All original text must be covered
+        full_text = result[0]
+        for chunk in result[1:]:
+            full_text += chunk[min(20, len(chunk)):]
+        assert len(full_text) >= len(text)
+
+    def test_overlap_clamped_when_too_large(self):
+        text = "a" * 100
+        result = split_text(text, max_size=30, overlap=30)
+        assert len(result) >= 2
+        assert all(len(c) <= 30 for c in result)
+
+    def test_many_chunks_from_large_text(self):
+        paragraphs = [f"Paragraph {i}. " * 10 for i in range(20)]
+        text = "\n\n".join(paragraphs)
+        result = split_text(text, max_size=200, overlap=0)
+        assert len(result) > 5
+        assert all(len(c) <= 200 for c in result)
+
+    def test_full_coverage(self):
+        """Every character in the original appears in at least one chunk."""
+        text = "Hello world.\n\nThis is a test.\n\nFinal paragraph here."
+        result = split_text(text, max_size=25, overlap=5)
+        covered = set()
+        for chunk in result:
+            start = text.find(chunk[:10])
+            if start >= 0:
+                for i in range(start, min(start + len(chunk), len(text))):
+                    covered.add(i)
+        non_ws_positions = {i for i, c in enumerate(text) if not c.isspace()}
+        assert non_ws_positions.issubset(covered)
 
 
 class TestIngestionBuffer:
@@ -410,3 +499,88 @@ class TestOutcomeEpisodeType:
         episode = memory.store.get_episode(episode_id)
         assert episode.episode_type == EpisodeType.OUTCOME
         assert episode.metadata["strategy"] == "grep-based search"
+
+
+class TestLargeInputIngestion:
+    """Integration test: large input is split into multiple triage calls."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        from tests.conftest import MockLLMProvider
+        return MockLLMProvider()
+
+    @pytest.fixture
+    def mock_embedding(self):
+        from tests.conftest import MockEmbeddingProvider
+        return MockEmbeddingProvider(dimensions=128)
+
+    @pytest.fixture
+    def memory(self, mock_llm, mock_embedding, memory_store):
+        return MemoryInterface(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=memory_store,
+            consolidation_threshold=5,
+            auto_consolidate=False,
+            ingest_buffer_size=50,
+            ingest_min_density=0.4,
+            ingest_background=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_large_input_splits_into_multiple_triage_calls(self, memory, mock_llm):
+        """A 300-char input with buffer_size=50 should produce multiple triage LLM calls."""
+        mock_llm.set_complete_json_response({
+            "density": 0.8,
+            "reasoning": "Good info",
+            "episodes": [
+                {
+                    "content": "Distilled fact",
+                    "type": "observation",
+                    "entities": [],
+                    "metadata": {},
+                }
+            ],
+        })
+
+        large_text = "x" * 300
+        result = await memory.ingest(large_text)
+
+        # Should have created multiple episodes (one per sub-chunk)
+        assert len(result) > 1
+
+        # Count triage LLM calls (complete_json with triage system prompt)
+        triage_calls = [
+            c for c in mock_llm.get_call_history()
+            if c["method"] == "complete_json" and "memory curation" in (c.get("system") or "")
+        ]
+        assert len(triage_calls) > 1
+
+    @pytest.mark.asyncio
+    async def test_large_input_with_paragraphs(self, memory, mock_llm):
+        """Large input with paragraph structure splits on boundaries."""
+        mock_llm.set_complete_json_response({
+            "density": 0.7,
+            "reasoning": "Contains info",
+            "episodes": [
+                {
+                    "content": "Extracted fact",
+                    "type": "observation",
+                    "entities": [],
+                    "metadata": {},
+                }
+            ],
+        })
+
+        paragraphs = [f"Paragraph {i} with some content." for i in range(10)]
+        text = "\n\n".join(paragraphs)
+        result = await memory.ingest(text)
+
+        assert len(result) >= 1
+
+        # Verify triage calls happened for each sub-chunk
+        triage_calls = [
+            c for c in mock_llm.get_call_history()
+            if c["method"] == "complete_json" and "memory curation" in (c.get("system") or "")
+        ]
+        assert len(triage_calls) >= 2
