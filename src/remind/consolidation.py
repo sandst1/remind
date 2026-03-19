@@ -12,7 +12,7 @@ This is where the magic happens. Consolidation runs in two phases:
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 import json
 import logging
 
@@ -157,33 +157,83 @@ class Consolidator:
         self.min_confidence = min_confidence
         self.extractor = EntityExtractor(llm, store)
     
-    async def consolidate(self, force: bool = False) -> ConsolidationResult:
+    async def consolidate(
+        self,
+        force: bool = False,
+        on_batch_complete: Optional[Callable[[int, ConsolidationResult], None]] = None,
+    ) -> ConsolidationResult:
         """
-        Run a consolidation pass.
+        Run a full consolidation pass, processing all pending episodes in batches.
         
         This runs in two phases:
         1. Extraction: Process any episodes that haven't had entity extraction
         2. Generalization: Create/update concepts from unconsolidated episodes
         
+        Phase 2 loops over batches of `batch_size` episodes until all pending
+        episodes are processed.
+        
         Args:
             force: If True, process even if there aren't many episodes
+            on_batch_complete: Optional callback(batch_num, batch_result) called
+                after each generalization batch completes, for progress reporting.
             
         Returns:
-            ConsolidationResult with statistics about what was done
+            ConsolidationResult with aggregate statistics across all batches
         """
         result = ConsolidationResult()
         
-        # Phase 1: Extract entities and relationships from unextracted episodes
-        extraction_result = await self._run_extraction_phase()
-        if extraction_result:
+        # Phase 1: Extract entities and relationships from all unextracted episodes
+        while True:
+            extraction_result = await self._run_extraction_phase()
+            if not extraction_result:
+                break
             logger.info(
                 f"Extraction phase: processed {extraction_result['episodes_processed']} episodes, "
                 f"created {extraction_result['entities_created']} entities, "
                 f"extracted {extraction_result['relations_extracted']} relationships"
             )
         
-        # Phase 2: Generalize unconsolidated episodes into concepts
-        # Get unconsolidated episodes
+        # Phase 2: Generalize unconsolidated episodes into concepts, batch by batch
+        batch_num = 0
+        while True:
+            batch_result = await self._consolidate_batch(force=force, batch_num=batch_num)
+            if batch_result is None:
+                break
+            
+            result.episodes_processed += batch_result.episodes_processed
+            result.concepts_created += batch_result.concepts_created
+            result.concepts_updated += batch_result.concepts_updated
+            result.contradictions_found += batch_result.contradictions_found
+            result.created_concept_ids.extend(batch_result.created_concept_ids)
+            result.updated_concept_ids.extend(batch_result.updated_concept_ids)
+            result.contradiction_details.extend(batch_result.contradiction_details)
+            
+            batch_num += 1
+            # After the first batch, force=True so stragglers (<3 episodes) still get processed
+            force = True
+            
+            if on_batch_complete:
+                on_batch_complete(batch_num, batch_result)
+        
+        if batch_num > 1:
+            logger.info(
+                f"All batches complete ({batch_num} batches): "
+                f"{result.episodes_processed} episodes, "
+                f"{result.concepts_created} created, "
+                f"{result.concepts_updated} updated"
+            )
+        
+        return result
+
+    async def _consolidate_batch(self, force: bool = False, batch_num: int = 0) -> Optional[ConsolidationResult]:
+        """
+        Consolidate a single batch of unconsolidated episodes.
+        
+        Returns:
+            ConsolidationResult for this batch, or None if no episodes to process.
+        """
+        result = ConsolidationResult()
+        
         episodes = self.store.get_unconsolidated_episodes(limit=self.batch_size)
 
         # Filter out active task episodes — only completed tasks should consolidate
@@ -204,14 +254,15 @@ class Consolidator:
         
         if not episodes:
             logger.info("No episodes to consolidate")
-            return result
+            return None
         
         if len(episodes) < 3 and not force:
             logger.info(f"Only {len(episodes)} episodes, waiting for more (use force=True to override)")
-            return result
+            return None
         
         result.episodes_processed = len(episodes)
-        logger.info(f"Consolidating {len(episodes)} episodes")
+        batch_label = f" (batch {batch_num + 1})" if batch_num > 0 else ""
+        logger.info(f"Consolidating {len(episodes)} episodes{batch_label}")
         
         # Get existing concepts for context
         existing_concepts = self.store.get_concepts_summary()
@@ -330,7 +381,7 @@ class Consolidator:
             self.store.update_episode(episode)
         
         logger.info(
-            f"Consolidation complete: {result.concepts_created} created, "
+            f"Consolidation batch complete: {result.concepts_created} created, "
             f"{result.concepts_updated} updated, {result.contradictions_found} contradictions"
         )
         

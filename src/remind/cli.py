@@ -7,6 +7,7 @@ Commands:
     remind consolidate           - Run consolidation
     remind inspect [id]          - View concepts/relations
     remind stats                 - Show memory statistics
+    remind status                - Show processing status (workers, queues)
     remind export <file>         - Export memory to JSON
     remind import <file>         - Import memory from JSON
     remind ingest "text"         - Auto-ingest with density scoring
@@ -232,10 +233,15 @@ def consolidate(ctx, force: bool, background: bool):
         console.print("[yellow]No episodes to consolidate[/yellow]")
         return
 
-    if background:
-        from remind.background import spawn_background_consolidation
+    from filelock import FileLock, Timeout
+    from remind.background import (
+        spawn_background_consolidation,
+        get_consolidation_lock_path,
+    )
 
-        db_path = ctx.obj["db"]
+    db_path = ctx.obj["db"]
+
+    if background:
         llm = ctx.obj["llm"]
         embedding = ctx.obj["embedding"]
 
@@ -245,14 +251,37 @@ def consolidate(ctx, force: bool, background: bool):
             console.print("[yellow]Consolidation already running[/yellow]")
         return
 
-    console.print(f"[cyan]Consolidating {unconsolidated} episodes...[/cyan]")
+    lock_path = get_consolidation_lock_path(db_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(str(lock_path), timeout=0)
 
-    async def _consolidate():
-        # Always force when user explicitly runs consolidate command
-        return await memory.consolidate(force=True)
+    try:
+        lock.acquire(blocking=False)
+    except Timeout:
+        console.print("[yellow]Consolidation already running (another process holds the lock)[/yellow]")
+        return
 
-    with console.status("[bold cyan]Running consolidation..."):
+    try:
+        console.print(f"[cyan]Consolidating {unconsolidated} episodes...[/cyan]")
+
+        batch_size = memory.consolidator.batch_size
+        total_batches = (unconsolidated + batch_size - 1) // batch_size
+
+        def on_batch(batch_num, batch_result):
+            if total_batches > 1:
+                console.print(
+                    f"  [dim]Batch {batch_num}/{total_batches}:[/dim] "
+                    f"{batch_result.episodes_processed} episodes → "
+                    f"{batch_result.concepts_created} created, "
+                    f"{batch_result.concepts_updated} updated"
+                )
+
+        async def _consolidate():
+            return await memory.consolidate(force=True, on_batch_complete=on_batch)
+
         result = run_async(_consolidate())
+    finally:
+        lock.release()
 
     console.print(f"\n[green]✓ Consolidation complete[/green]")
     console.print(f"  Episodes processed: {result.episodes_processed}")
@@ -304,38 +333,31 @@ def reconsolidate(ctx):
         episode_count = store.reset_episode_flags()
     console.print(f"  [green]✓[/green] Reset {episode_count} episodes")
 
-    # Step 4: Run consolidation in batches
-    console.print(f"\n[cyan]Running consolidation on {episode_count} episodes in batches...[/cyan]")
+    # Step 4: Run consolidation (loops through all batches internally)
+    console.print(f"\n[cyan]Running consolidation on {episode_count} episodes...[/cyan]")
 
-    total_created = 0
-    total_updated = 0
-    total_contradictions = 0
-    batch_num = 0
+    batch_size = memory.consolidator.batch_size
+    total_batches = (episode_count + batch_size - 1) // batch_size
+
+    def on_batch(batch_num, batch_result):
+        if total_batches > 1:
+            console.print(
+                f"  [dim]Batch {batch_num}/{total_batches}:[/dim] "
+                f"{batch_result.episodes_processed} episodes → "
+                f"{batch_result.concepts_created} created, "
+                f"{batch_result.concepts_updated} updated"
+            )
 
     async def _consolidate():
-        return await memory.consolidate(force=True)
+        return await memory.consolidate(force=True, on_batch_complete=on_batch)
 
-    while True:
-        batch_num += 1
-        remaining = store.count_unconsolidated_episodes()
-        if remaining == 0:
-            break
-
-        console.print(f"\n  [cyan]Batch {batch_num}[/cyan] ({remaining} episodes remaining)")
-        with console.status(f"[bold cyan]Processing batch {batch_num}..."):
-            result = run_async(_consolidate())
-
-        total_created += result.concepts_created
-        total_updated += result.concepts_updated
-        total_contradictions += result.contradictions_found
-
-        console.print(f"    Created: {result.concepts_created}, Updated: {result.concepts_updated}")
+    result = run_async(_consolidate())
 
     console.print(f"\n[green]✓ Reconsolidation complete[/green]")
-    console.print(f"  Total concepts created: {total_created}")
-    console.print(f"  Total concepts updated: {total_updated}")
-    if total_contradictions:
-        console.print(f"  [yellow]Contradictions found: {total_contradictions}[/yellow]")
+    console.print(f"  Total concepts created: {result.concepts_created}")
+    console.print(f"  Total concepts updated: {result.concepts_updated}")
+    if result.contradictions_found:
+        console.print(f"  [yellow]Contradictions found: {result.contradictions_found}[/yellow]")
 
 
 @main.command("end-session")
@@ -669,6 +691,91 @@ def stats(ctx):
 """,
         title="Memory Stats",
         border_style="cyan"
+    ))
+
+
+@main.command()
+@click.pass_context
+def status(ctx):
+    """Show consolidation and ingestion processing status.
+
+    Quick view of what's currently happening: running workers,
+    pending episodes, queued ingest chunks.
+    """
+    from remind.background import (
+        is_consolidation_running,
+        is_ingest_running,
+        get_ingest_queue_dir,
+    )
+
+    db_path = ctx.obj["db"]
+    memory = get_memory(db_path, ctx.obj["llm"], ctx.obj["embedding"])
+    stats_data = memory.get_stats()
+
+    # Consolidation status
+    consolidating = is_consolidation_running(db_path)
+    pending = stats_data.get("unconsolidated_episodes", 0)
+    unextracted = stats_data.get("unextracted_episodes", 0)
+    threshold = stats_data.get("consolidation_threshold", 10)
+    last = stats_data.get("last_consolidation") or "never"
+
+    # Ingest status
+    ingesting = is_ingest_running(db_path)
+    queue_dir = get_ingest_queue_dir(db_path)
+    queued_chunks = sorted(queue_dir.glob("*.json")) if queue_dir.is_dir() else []
+    queued_count = len(queued_chunks)
+
+    # Build output
+    lines = []
+
+    # Workers
+    if consolidating:
+        lines.append("[bold green]● Consolidation[/bold green]  [green]running[/green]")
+    else:
+        lines.append("[bold dim]○ Consolidation[/bold dim]  [dim]idle[/dim]")
+
+    if ingesting:
+        lines.append("[bold green]● Ingest worker[/bold green]  [green]running[/green]")
+    else:
+        lines.append("[bold dim]○ Ingest worker[/bold dim]  [dim]idle[/dim]")
+
+    lines.append("")
+
+    # Episodes
+    lines.append(f"[cyan]Pending consolidation:[/cyan]  {pending}")
+    lines.append(f"[cyan]Pending extraction:[/cyan]    {unextracted}")
+    lines.append(f"[cyan]Threshold:[/cyan]             {threshold}")
+    if pending >= threshold:
+        lines.append("[yellow]→ Ready to consolidate[/yellow]")
+    lines.append(f"[cyan]Last consolidation:[/cyan]    {last}")
+
+    lines.append("")
+
+    # Ingest queue
+    lines.append(f"[cyan]Queued ingest chunks:[/cyan]  {queued_count}")
+    if queued_chunks:
+        total_chars = 0
+        for p in queued_chunks:
+            try:
+                data = json.loads(p.read_text())
+                total_chars += len(data.get("chunk", ""))
+            except Exception:
+                pass
+        if total_chars:
+            lines.append(f"[cyan]Queued text:[/cyan]           ~{total_chars:,} chars")
+
+    lines.append("")
+
+    # Totals
+    lines.append(f"[cyan]Total episodes:[/cyan]        {stats_data.get('episodes', 0)}")
+    lines.append(f"[cyan]Total concepts:[/cyan]        {stats_data.get('concepts', 0)}")
+    lines.append(f"[cyan]Total entities:[/cyan]        {stats_data.get('entities', 0)}")
+
+    console.print(Panel(
+        "\n".join(lines),
+        title="Processing Status",
+        subtitle=f"[dim]{db_path}[/dim]",
+        border_style="cyan",
     ))
 
 

@@ -8,7 +8,7 @@ It provides a simple interface for:
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 from pathlib import Path
 import asyncio
 import logging
@@ -265,7 +265,11 @@ class MemoryInterface:
         
         return self.retriever.format_for_llm(activated)
     
-    async def consolidate(self, force: bool = False) -> ConsolidationResult:
+    async def consolidate(
+        self,
+        force: bool = False,
+        on_batch_complete: Optional[Callable[[int, ConsolidationResult], None]] = None,
+    ) -> ConsolidationResult:
         """
         Run memory consolidation manually.
         
@@ -279,11 +283,16 @@ class MemoryInterface:
         
         Args:
             force: If True, consolidate even with few episodes (< 3)
+            on_batch_complete: Optional callback(batch_num, batch_result) called
+                after each batch completes, for progress reporting.
             
         Returns:
             ConsolidationResult with statistics
         """
-        result = await self.consolidator.consolidate(force=force)
+        result = await self.consolidator.consolidate(
+            force=force,
+            on_batch_complete=on_batch_complete,
+        )
         
         if result.episodes_processed > 0:
             self._last_consolidation = datetime.now()
