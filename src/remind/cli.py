@@ -731,6 +731,8 @@ def status(ctx):
     # Workers
     if consolidating:
         lines.append("[bold green]● Consolidation[/bold green]  [green]running[/green]")
+    elif ingesting:
+        lines.append("[bold green]● Consolidation[/bold green]  [green]running[/green] [dim](via ingest)[/dim]")
     else:
         lines.append("[bold dim]○ Consolidation[/bold dim]  [dim]idle[/dim]")
 
