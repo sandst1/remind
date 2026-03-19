@@ -45,8 +45,10 @@ The `db` parameter is a simple name that resolves to `~/.remind/{name}.db`. Each
 
 | Tool | Purpose |
 |------|---------|
-| `remember` | Store experiences (observation, decision, question, preference, spec, plan, task) |
-| `recall` | Retrieve relevant memories via spreading activation |
+| `remember` | Store experiences (observation, decision, question, preference, meta, spec, plan, task, outcome, fact) |
+| `recall` | Retrieve relevant memories via spreading activation or entity lookup |
+| `ingest` | Stream raw text for automatic density scoring and episode extraction |
+| `flush_ingest` | Force-flush the ingestion buffer |
 | `consolidate` | Process episodes into concepts |
 | `inspect` | View concepts or episodes |
 | `entities` | List entities with mention counts |

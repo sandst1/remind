@@ -2,6 +2,29 @@
 
 All notable changes to Remind.
 
+## [0.6.1] - 2026-03-19
+
+### Added
+- **Auto-ingest pipeline** — `ingest()` and `flush_ingest()` for automatic memory curation. Buffers raw text, scores information density via LLM, and distills memory-worthy episodes automatically. Available via CLI, MCP, and Python API.
+- **Fact episodes** — New `fact` episode type for specific factual assertions (config values, names, dates, technical details). Consolidation preserves fact details verbatim rather than generalizing them away.
+- **Outcome episodes** — New `outcome` episode type for action-result pairs with structured metadata (`strategy`, `result`, `prediction_error`). Consolidation extracts causal strategy patterns.
+- **Entity name matching in retrieval** — Queries now match against entity names directly (fast, no embedding needed), complementing semantic search.
+- **Minimum activation floor** — Retrieval drops concepts below a configurable `min_activation` threshold (default: 0.15), reducing low-relevance noise.
+- **Entity deduplication** — Entity extraction deduplicates by name across types to prevent duplicates like `family:Capulet` and `character:Capulet`.
+- **`status` CLI command** — Shows processing status: running workers, pending episodes, queued ingest chunks.
+- **Per-provider ingest model** — Configure a separate (cheaper/faster) model for triage without affecting consolidation quality.
+- **Debug file logging** — Enable `logging_enabled` in config to get full LLM prompt/response logs in `remind.log` next to the database.
+- **Background ingest worker** — CLI `ingest` command queues work and spawns a background worker by default. Use `--foreground` for synchronous processing.
+- **Batch consolidation progress** — `consolidate` and `reconsolidate` commands show per-batch progress for large runs.
+- **Hybrid recall episodes** — Retrieval now returns source episodes with type labels and entity context alongside concepts.
+
+### Changed
+- Default recall `k` reduced from 5 to 3 for more focused results
+- `recall` no longer requires a query when `--entity` is provided
+- `end-session` now flushes the ingestion buffer before consolidating
+- Consolidation loops through all batches internally instead of requiring external batch loop
+- Foreground consolidation acquires a file lock to prevent concurrent runs
+
 ## [0.6.0] - 2026-03-09
 
 ### Added

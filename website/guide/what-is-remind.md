@@ -69,7 +69,7 @@ Both paths use the same underlying Remind system — same consolidation, same re
                       ▼                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      MEMORY INTERFACE                           │
-│                   remember() / recall()                         │
+│              remember() / ingest() / recall()                   │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
         ┌─────────────┼─────────────┐

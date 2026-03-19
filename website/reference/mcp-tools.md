@@ -14,7 +14,7 @@ remember(content="Use Redis for caching", episode_type="decision", entities="too
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content` | string | Yes | The experience to store |
-| `episode_type` | string | No | `observation` (default), `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome` |
+| `episode_type` | string | No | `observation` (default), `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome`, `fact` |
 | `entities` | string | No | Comma-separated entity tags (`type:name`) |
 
 ## ingest
@@ -50,12 +50,17 @@ Retrieve relevant memories.
 ```
 recall(query="authentication issues")
 recall(query="auth", entity="file:src/auth.ts")
+recall(entity="file:src/auth.ts")
 ```
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `query` | string | Yes | Search query |
-| `entity` | string | No | Scope to entity |
+| `query` | string | No | Search query (required for semantic search, not needed for entity-only lookup) |
+| `k` | integer | No | Number of concepts to return (default: 3) |
+| `context` | string | No | Additional context to improve retrieval |
+| `entity` | string | No | Scope to entity (can be used alone without a query) |
+
+At least one of `query` or `entity` must be provided.
 
 ## consolidate
 

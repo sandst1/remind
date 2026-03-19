@@ -15,6 +15,7 @@ Episodes are raw experiences — specific interactions, observations, or decisio
 | `plan` | A sequenced intention | "Auth plan: 1) bcrypt 2) login route 3) JWT middleware" |
 | `task` | A discrete unit of work with status tracking | "Implement bcrypt password hashing utility" |
 | `outcome` | Result of an action or strategy | "Grep search for 'auth' missed verify_credentials due to naming" |
+| `fact` | Specific factual assertion to preserve verbatim | "Redis cache TTL is 300 seconds for auth tokens" |
 
 ## Lifecycle
 
@@ -79,6 +80,20 @@ Episodes can be tagged with entities to build a navigable knowledge graph. Entit
 | `subject` | `subject:login-flow` |
 
 Entities are also extracted automatically during consolidation — you don't always need to tag them manually.
+
+## Fact episodes
+
+Fact episodes capture specific factual assertions — concrete values, configuration details, names, dates, and technical specifics that should be preserved verbatim through consolidation rather than generalized away.
+
+```bash
+remind remember "Redis cache TTL is 300 seconds for auth tokens" -t fact -e tool:redis,concept:auth
+remind remember "Production database runs on port 5432" -t fact
+remind remember "API rate limit is 100 requests/second per tenant" -t fact
+```
+
+Facts differ from observations: an observation like "Redis seems fast" may generalize during consolidation, but a fact like "Redis TTL is 300s" is preserved exactly in concept summaries.
+
+Auto-ingest (`ingest()`) also detects facts automatically from raw conversation data (config values, version numbers, concrete technical details).
 
 ## Outcome episodes
 

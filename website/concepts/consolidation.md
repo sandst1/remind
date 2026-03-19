@@ -13,7 +13,7 @@ Remind does the same thing. Raw episodes are replayed through an LLM, which iden
 ### Phase 1: Extraction
 
 For each unconsolidated episode:
-- **Type classification** — Is this an observation, decision, question, spec, plan, or task?
+- **Type classification** — Is this an observation, decision, question, spec, plan, task, outcome, or fact?
 - **Entity extraction** — What files, people, tools, and concepts are mentioned?
 - **Relationship extraction** — When multiple entities appear in the same episode, their relationships are inferred (e.g., "Alice manages Bob" → `person:alice → manages → person:bob`)
 

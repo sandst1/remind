@@ -17,7 +17,7 @@ remind remember "content" -t spec -e module:auth -m '{"status":"approved"}'
 
 | Flag | Description |
 |------|-------------|
-| `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome` |
+| `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome`, `fact` |
 | `-e, --entity` | Entity tag(s) in `type:name` format. Repeat for multiple. |
 | `-m, --metadata` | JSON metadata string |
 
@@ -34,6 +34,7 @@ cat transcript.txt | remind ingest --source transcript
 | Flag | Description |
 |------|-------------|
 | `-s, --source` | Source label for metadata (default: `conversation`) |
+| `-f, --foreground` | Run triage and consolidation in foreground (blocking). By default, processing is spawned in a background worker. |
 
 Accepts text as an argument or via stdin (for piping).
 
@@ -52,13 +53,14 @@ Retrieve relevant memories via spreading activation.
 ```bash
 remind recall "query"
 remind recall "query" --entity file:src/auth.ts    # Entity-scoped
+remind recall --entity file:src/auth.ts            # Entity-only (no query needed)
 remind recall "query" -k 10                        # More results
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--entity` | Scope retrieval to an entity |
-| `-k` | Number of results (default: 5) |
+| `--entity` | Scope retrieval to an entity (can be used without a query) |
+| `-k` | Number of results (default: 3) |
 
 ### consolidate
 
@@ -94,6 +96,14 @@ Memory statistics: episode count, concept count, entity count, decay status.
 
 ```bash
 remind stats
+```
+
+### status
+
+Show processing status: running workers, pending episodes, queued ingest chunks.
+
+```bash
+remind status
 ```
 
 ### search

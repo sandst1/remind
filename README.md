@@ -111,6 +111,7 @@ Core
 Inspection
   inspect      List or detail concepts; use --episodes for episodes
   stats        Memory statistics and decay info
+  status       Processing status (workers, queues, pending)
   search       Keyword/tag search across concepts
   entities     List entities or show a specific entity
   mentions     All episodes mentioning an entity

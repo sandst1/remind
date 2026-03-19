@@ -36,11 +36,16 @@ Consider how human memory works. You don't search for "that restaurant" by scann
 
 Spreading activation retrieves concepts you didn't directly query for but are meaningfully connected. Asking about "auth" might activate "rate limiting" (which is part of the auth system) even though "rate limiting" has no embedding similarity to "auth."
 
+## Entity name matching
+
+In addition to embedding similarity, retrieval performs **entity name matching** on the query. Words in your query are matched against entity names and IDs — if the query mentions "redis", concepts linked to the `tool:redis` entity are activated directly. This provides a fast, embedding-free signal that complements the semantic search.
+
 ## Parameters
 
 The retrieval algorithm has a few key parameters:
 
-- **k** — Number of concepts to return (default varies by context)
+- **k** — Maximum number of concepts to return (default: 3)
+- **min_activation** — Minimum activation score to include in results (default: 0.15). Concepts below this floor are dropped even if there's budget remaining. This prevents low-relevance noise from reaching the context.
 - **Initial activation threshold** — Minimum embedding similarity to activate a concept
 - **Spread decay** — How much activation reduces per hop (default: 0.5 per hop)
 - **Spread depth** — Number of hops to propagate (default: 2)
@@ -56,17 +61,20 @@ Each concept has a `decay_factor` (0.0–1.0) that multiplies its activation sco
 ```bash [CLI]
 remind recall "authentication approach"
 remind recall "auth" --entity module:auth    # Entity-scoped
+remind recall --entity module:auth           # Entity-only (no query needed)
 remind recall "performance" -k 10            # More results
 ```
 
 ```python [Python]
 context = await memory.recall("authentication approach")
 context = await memory.recall("auth", entity="module:auth")
+context = await memory.recall(entity="module:auth")       # Entity-only
 ```
 
 ```text [MCP]
 recall(query="authentication approach")
 recall(query="auth", entity="module:auth")
+recall(entity="module:auth")
 ```
 
 :::
