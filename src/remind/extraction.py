@@ -13,7 +13,7 @@ from typing import Optional
 
 from remind.models import (
     Episode, Entity, EntityType, EntityRelation, EpisodeType,
-    ExtractionResult,
+    ExtractionResult, normalize_entity_name,
 )
 from remind.store import MemoryStore
 from remind.providers.base import LLMProvider
@@ -324,6 +324,14 @@ class EntityExtractor:
         # Filter to only entities with unrelated pairs
         filtered_entities = [e for e in entity_ids if e in entities_with_unrelated]
 
+        # Build a normalized-to-original lookup so we can match LLM output
+        # (which gets normalized) back to the actual entity IDs
+        normalized_to_original = {}
+        for eid in filtered_entities:
+            etype, ename = Entity.parse_id(eid)
+            normalized = Entity.make_id(etype, normalize_entity_name(ename))
+            normalized_to_original[normalized] = eid
+
         # Truncate long content
         content = episode.content
         if len(content) > MAX_CONTENT_LENGTH:
@@ -364,18 +372,20 @@ class EntityExtractor:
                 # Validate that source and target are in the filtered entities
                 # and this pair doesn't already have a relation
                 if source and target and relationship:
-                    # Normalize source and target IDs to match entity ID format
-                    from remind.models import Entity, normalize_entity_name
                     source_type, source_name = Entity.parse_id(source)
                     target_type, target_name = Entity.parse_id(target)
                     normalized_source = Entity.make_id(source_type, normalize_entity_name(source_name))
                     normalized_target = Entity.make_id(target_type, normalize_entity_name(target_name))
 
-                    if normalized_source in filtered_entities and normalized_target in filtered_entities:
-                        if (normalized_source, normalized_target) not in related_pairs:
+                    # Map normalized IDs back to original entity IDs
+                    original_source = normalized_to_original.get(normalized_source)
+                    original_target = normalized_to_original.get(normalized_target)
+
+                    if original_source and original_target:
+                        if (original_source, original_target) not in related_pairs:
                             relations.append(EntityRelation(
-                                source_id=normalized_source,
-                                target_id=normalized_target,
+                                source_id=original_source,
+                                target_id=original_target,
                                 relation_type=relationship,
                                 strength=rel.get("strength", 0.5),
                                 context=rel.get("context"),

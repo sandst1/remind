@@ -16,7 +16,7 @@ import json
 
 from remind.models import (
     Episode, Concept, ConsolidationResult, 
-    Entity, EpisodeType, TaskStatus, Relation, RelationType,
+    Entity, EntityType, EpisodeType, TaskStatus, Relation, RelationType,
 )
 from remind.store import MemoryStore, SQLiteMemoryStore
 from remind.providers.base import LLMProvider, EmbeddingProvider
@@ -139,7 +139,31 @@ class MemoryInterface:
         # Episode buffer for tracking (this session only)
         self._episode_buffer: list[str] = []
         self._last_consolidation: Optional[datetime] = None
-    
+
+    def _resolve_entity_id(self, raw_entity_id: str) -> str:
+        """Resolve a raw entity ID to a canonical one, deduplicating by name.
+
+        If an entity with the same display name already exists (regardless of
+        type prefix), returns the existing entity's ID so that mentions
+        accumulate on a single entity rather than creating duplicates like
+        ``family:Capulet`` and ``character:Capulet``.
+
+        If no match is found, creates a new entity and returns its ID.
+        """
+        type_str, name = Entity.parse_id(raw_entity_id)
+        existing = self.store.find_entity_by_name(name)
+        if existing:
+            return existing.id
+
+        if not self.store.get_entity(raw_entity_id):
+            try:
+                etype = EntityType(type_str)
+            except ValueError:
+                etype = EntityType.OTHER
+            entity = Entity(id=raw_entity_id, type=etype, display_name=name)
+            self.store.add_entity(entity)
+        return raw_entity_id
+
     def remember(
         self,
         content: str,
@@ -180,28 +204,21 @@ class MemoryInterface:
             # Note: Don't set entities_extracted here - type can be set independently
         
         if entities:
-            episode.entity_ids = entities
             episode.entities_extracted = True
-            # Note: relations_extracted stays False so consolidation can extract relationships
         
         # Store the episode
         episode_id = self.store.add_episode(episode)
         self._episode_buffer.append(episode_id)
         
-        # Store explicitly provided entities
+        # Resolve and store explicitly provided entities (dedup by name)
         if entities:
-            for entity_id in entities:
-                # Ensure entity exists
-                if not self.store.get_entity(entity_id):
-                    type_str, name = Entity.parse_id(entity_id)
-                    from remind.models import EntityType
-                    try:
-                        etype = EntityType(type_str)
-                    except ValueError:
-                        etype = EntityType.OTHER
-                    entity = Entity(id=entity_id, type=etype, display_name=name)
-                    self.store.add_entity(entity)
-                self.store.add_mention(episode_id, entity_id)
+            resolved_ids = []
+            for raw_id in entities:
+                canonical_id = self._resolve_entity_id(raw_id)
+                resolved_ids.append(canonical_id)
+                self.store.add_mention(episode_id, canonical_id)
+            episode.entity_ids = resolved_ids
+            self.store.update_episode(episode)
         
         logger.debug(f"Remembered episode {episode_id}: {content[:50]}...")
         
@@ -662,21 +679,14 @@ class MemoryInterface:
             episode.episode_type = episode_type
 
         if entities is not None:
-            episode.entity_ids = entities
             episode.entities_extracted = True
-            # Sync mentions table to match the new entity list
             self.store.delete_mentions_for_episode(episode_id)
-            for entity_id in entities:
-                if not self.store.get_entity(entity_id):
-                    type_str, name = Entity.parse_id(entity_id)
-                    from remind.models import EntityType
-                    try:
-                        etype = EntityType(type_str)
-                    except ValueError:
-                        etype = EntityType.OTHER
-                    entity = Entity(id=entity_id, type=etype, display_name=name)
-                    self.store.add_entity(entity)
-                self.store.add_mention(episode_id, entity_id)
+            resolved_ids = []
+            for raw_id in entities:
+                canonical_id = self._resolve_entity_id(raw_id)
+                resolved_ids.append(canonical_id)
+                self.store.add_mention(episode_id, canonical_id)
+            episode.entity_ids = resolved_ids
 
         if metadata is not None:
             episode.metadata = {**(episode.metadata or {}), **metadata}
