@@ -382,8 +382,10 @@ class Consolidator:
             logger.warning(f"Contradiction found: {contradiction}")
         
         # Mark episodes as consolidated
+        now = datetime.now()
         for episode in episodes:
             episode.consolidated = True
+            episode.updated_at = now
             self.store.update_episode(episode)
         
         logger.info(

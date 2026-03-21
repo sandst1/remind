@@ -328,7 +328,8 @@ class Episode:
     """
     
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    timestamp: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: Optional[datetime] = None
 
     # Short title for the episode (5-10 words)
     title: Optional[str] = None
@@ -366,11 +367,26 @@ class Episode:
     # Soft delete support
     deleted_at: Optional[datetime] = None
 
+    def __post_init__(self):
+        if self.updated_at is None:
+            self.updated_at = self.created_at
+
+    @property
+    def timestamp(self) -> datetime:
+        """Backward-compatible alias — returns updated_at (last activity)."""
+        return self.updated_at
+
+    @timestamp.setter
+    def timestamp(self, value: datetime) -> None:
+        self.updated_at = value
+
     def to_dict(self) -> dict:
         """Serialize to dictionary for storage."""
         return {
             "id": self.id,
-            "timestamp": self.timestamp.isoformat(),
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "timestamp": self.updated_at.isoformat(),
             "title": self.title,
             "content": self.content,
             "episode_type": self.episode_type.value,
@@ -395,10 +411,25 @@ class Episode:
                 episode_type = EpisodeType(data["episode_type"])
             except ValueError:
                 episode_type = EpisodeType.OBSERVATION
-        
+
+        # created_at: prefer explicit key, fall back to legacy timestamp
+        if data.get("created_at"):
+            created_at = datetime.fromisoformat(data["created_at"])
+        elif data.get("timestamp"):
+            created_at = datetime.fromisoformat(data["timestamp"])
+        else:
+            created_at = datetime.now()
+
+        # updated_at: prefer explicit key, fall back to created_at
+        if data.get("updated_at"):
+            updated_at = datetime.fromisoformat(data["updated_at"])
+        else:
+            updated_at = created_at
+
         return cls(
             id=data["id"],
-            timestamp=datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(),
+            created_at=created_at,
+            updated_at=updated_at,
             title=data.get("title"),
             content=data.get("content", ""),
             episode_type=episode_type,

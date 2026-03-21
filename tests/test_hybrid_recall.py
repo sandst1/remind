@@ -125,8 +125,8 @@ class TestEpisodeScoring:
             consolidated=True,
         )
         now = datetime.now()
-        ep_new = Episode(**base, timestamp=now)
-        ep_old = Episode(**base, timestamp=now - timedelta(days=60))
+        ep_new = Episode(**base, created_at=now, updated_at=now)
+        ep_old = Episode(**base, created_at=now - timedelta(days=60), updated_at=now - timedelta(days=60))
         entities = {"tool:redis"}
 
         score_new = MemoryRetriever._score_episode(ep_new, entities, now)

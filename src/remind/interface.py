@@ -703,6 +703,7 @@ class MemoryInterface:
         if metadata is not None:
             episode.metadata = {**(episode.metadata or {}), **metadata}
 
+        episode.updated_at = datetime.now()
         self.store.update_episode(episode)
         return episode
 
@@ -972,6 +973,7 @@ class MemoryInterface:
             meta.pop("blocked_reason", None)
 
         episode.metadata = meta
+        episode.updated_at = datetime.now()
         self.store.update_episode(episode)
         return episode
 

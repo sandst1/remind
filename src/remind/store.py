@@ -97,6 +97,20 @@ class MemoryStore(ABC):
         """Get related concepts with their relations."""
         ...
     
+    @abstractmethod
+    def get_incoming_relations(
+        self,
+        concept_id: str,
+        relation_type: RelationType,
+    ) -> list[tuple[Concept, Relation]]:
+        """Get concepts that have a relation pointing *to* this concept.
+
+        Returns (source_concept, relation) pairs where relation.target_id
+        equals *concept_id* and relation.type equals *relation_type*.
+        Soft-deleted source concepts are excluded.
+        """
+        ...
+
     # Episode operations
     @abstractmethod
     def add_episode(self, episode: Episode) -> str:
@@ -927,6 +941,47 @@ class SQLiteMemoryStore(MemoryStore):
                     conn, target_id, relation_types, remaining_depth - 1, visited, results
                 )
     
+    def get_incoming_relations(
+        self,
+        concept_id: str,
+        relation_type: RelationType,
+    ) -> list[tuple[Concept, Relation]]:
+        """Get concepts that have a relation pointing *to* this concept."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT source_id, type, strength, context FROM relations WHERE target_id = ? AND type = ?",
+                (concept_id, relation_type.value),
+            ).fetchall()
+
+            results: list[tuple[Concept, Relation]] = []
+            for row in rows:
+                source_id = row["source_id"]
+                concept_row = conn.execute(
+                    """SELECT data, embedding FROM concepts
+                       WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL""",
+                    (source_id,),
+                ).fetchone()
+                if not concept_row:
+                    continue
+
+                data = json.loads(concept_row["data"])
+                if concept_row["embedding"]:
+                    data["embedding"] = np.frombuffer(concept_row["embedding"], dtype=np.float32).tolist()
+
+                concept = Concept.from_dict(data)
+                relation = Relation(
+                    type=RelationType(row["type"]),
+                    target_id=concept_id,
+                    strength=row["strength"],
+                    context=row["context"],
+                )
+                results.append((concept, relation))
+
+            return results
+        finally:
+            conn.close()
+
     # Episode operations
     
     def add_episode(self, episode: Episode) -> str:

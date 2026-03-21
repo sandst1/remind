@@ -9,6 +9,7 @@ Uses LLM to extract structured information from raw episodic memories:
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Optional
 
 from remind.models import (
@@ -264,6 +265,7 @@ class EntityExtractor:
 
         # Update episode with deduplicated entity IDs
         episode.entity_ids = final_entity_ids
+        episode.updated_at = datetime.now()
         self.store.update_episode(episode)
 
         # Store entity relationships
@@ -418,6 +420,7 @@ class EntityExtractor:
 
         # Mark episode as having relations extracted
         episode.relations_extracted = True
+        episode.updated_at = datetime.now()
         self.store.update_episode(episode)
 
         logger.debug(

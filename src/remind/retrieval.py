@@ -609,11 +609,12 @@ class MemoryRetriever:
         for ac in activated:
             c = ac.concept
 
-            # Header with ID, title (if present), and confidence
+            # Header with ID, title (if present), confidence, and last update
+            updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
             if c.title:
-                header = f"[{c.id}] {c.title} (confidence: {c.confidence:.2f}"
+                header = f"[{c.id}] {c.title} (confidence: {c.confidence:.2f}, last updated: {updated}"
             else:
-                header = f"[{c.id}] (confidence: {c.confidence:.2f}"
+                header = f"[{c.id}] (confidence: {c.confidence:.2f}, last updated: {updated}"
             if ac.source == "spread":
                 header += f", via association"
             elif ac.source == "entity_name":
@@ -630,14 +631,40 @@ class MemoryRetriever:
             if c.exceptions:
                 lines.append(f"  → Exceptions: {', '.join(c.exceptions)}")
 
-            # Key relations
+            # Contradictions (always shown, uncapped)
+            outbound_contradictions = [
+                rel for rel in c.relations if rel.type == RelationType.CONTRADICTS
+            ]
+            inbound_contradictions = self.store.get_incoming_relations(
+                c.id, RelationType.CONTRADICTS
+            )
+            if outbound_contradictions or inbound_contradictions:
+                lines.append("  Contradictions:")
+                for rel in outbound_contradictions:
+                    target = self.store.get_concept(rel.target_id)
+                    if target:
+                        label = f"  → contradicts [{target.id}]: {target.summary}"
+                        if rel.context:
+                            label += f" (context: {rel.context})"
+                        lines.append(label)
+                for source_concept, rel in inbound_contradictions:
+                    if source_concept.id == c.id:
+                        continue
+                    label = f"  → [{source_concept.id}] contradicts this: {source_concept.summary}"
+                    if rel.context:
+                        label += f" (context: {rel.context})"
+                    lines.append(label)
+            else:
+                lines.append("  Contradictions: (none)")
+
+            # Other relations (contradicts excluded from budget)
             if include_relations and c.relations:
                 shown = 0
                 for rel in c.relations:
+                    if rel.type == RelationType.CONTRADICTS:
+                        continue
                     if shown >= max_relations:
                         break
-
-                    # Get target concept summary
                     target = self.store.get_concept(rel.target_id)
                     if target:
                         rel_str = f"  → {rel.type.value}: {target.summary}"
@@ -663,7 +690,8 @@ class MemoryRetriever:
                 lines.append("")
                 lines.append("  Source episodes:")
                 for episode in source_eps:
-                    lines.append(f"    • [{episode.episode_type.value}] {episode.content}")
+                    ep_updated = episode.updated_at.strftime("%Y-%m-%d %H:%M")
+                    lines.append(f"    • [{episode.episode_type.value}, {ep_updated}] {episode.content}")
 
             lines.append("")  # Blank line between concepts
 
@@ -690,7 +718,8 @@ class MemoryRetriever:
                         continue
                     lines.append(f"  [{type_name.upper()}S]")
                     for ep in by_type[type_name]:
-                        lines.append(f"    • {ep.content}")
+                        ep_updated = ep.updated_at.strftime("%Y-%m-%d %H:%M")
+                        lines.append(f"    • [{ep_updated}] {ep.content}")
                 lines.append("")
 
         return "\n".join(lines)
@@ -738,14 +767,16 @@ class MemoryRetriever:
                 lines.append(f"[{type_name.upper()}S]")
 
                 for ep in type_episodes:
-                    lines.append(f"  • {ep.content}")
+                    ep_updated = ep.updated_at.strftime("%Y-%m-%d %H:%M")
+                    lines.append(f"  • [{ep_updated}] {ep.content}")
 
                 lines.append("")
         else:
             # Simple chronological list
             for ep in episodes:
                 type_label = f"[{ep.episode_type.value[:3]}]"
-                lines.append(f"  {type_label} {ep.content}")
+                ep_updated = ep.updated_at.strftime("%Y-%m-%d %H:%M")
+                lines.append(f"  {type_label} [{ep_updated}] {ep.content}")
         
         return "\n".join(lines)
 
