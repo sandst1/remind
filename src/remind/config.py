@@ -23,6 +23,7 @@ CONFIG_FILE = REMIND_DIR / "remind.config.json"
 
 # Default values
 DEFAULT_CONSOLIDATION_THRESHOLD = 5
+DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS = 64
 DEFAULT_LLM_PROVIDER = "anthropic"
 DEFAULT_EMBEDDING_PROVIDER = "openai"
 
@@ -86,6 +87,7 @@ class RemindConfig:
     llm_provider: str = DEFAULT_LLM_PROVIDER
     embedding_provider: str = DEFAULT_EMBEDDING_PROVIDER
     consolidation_threshold: int = DEFAULT_CONSOLIDATION_THRESHOLD
+    consolidation_concepts_per_pass: int = DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS
     auto_consolidate: bool = True
 
     # Provider-specific configs
@@ -141,6 +143,8 @@ def load_config() -> RemindConfig:
                 config.embedding_provider = file_config["embedding_provider"]
             if "consolidation_threshold" in file_config:
                 config.consolidation_threshold = int(file_config["consolidation_threshold"])
+            if "consolidation_concepts_per_pass" in file_config:
+                config.consolidation_concepts_per_pass = int(file_config["consolidation_concepts_per_pass"])
             if "auto_consolidate" in file_config:
                 config.auto_consolidate = bool(file_config["auto_consolidate"])
 
@@ -187,6 +191,11 @@ def load_config() -> RemindConfig:
             logger.warning(f"Invalid CONSOLIDATION_THRESHOLD: {threshold}")
     if auto_consolidate := os.environ.get("AUTO_CONSOLIDATE"):
         config.auto_consolidate = auto_consolidate.lower() in ("true", "1", "yes")
+    if concepts_per_pass := os.environ.get("CONSOLIDATION_CONCEPTS_PER_PASS"):
+        try:
+            config.consolidation_concepts_per_pass = int(concepts_per_pass)
+        except ValueError:
+            logger.warning(f"Invalid CONSOLIDATION_CONCEPTS_PER_PASS: {concepts_per_pass}")
 
     # Override provider settings with environment variables
     # Anthropic

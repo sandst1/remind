@@ -155,12 +155,14 @@ class Consolidator:
         store: MemoryStore,
         batch_size: int = 25,
         min_confidence: float = 0.3,
+        concepts_per_consolidation_pass: int = 64,
     ):
         self.llm = llm
         self.embedding = embedding
         self.store = store
         self.batch_size = batch_size
         self.min_confidence = min_confidence
+        self.concepts_per_consolidation_pass = concepts_per_consolidation_pass
         self.extractor = EntityExtractor(llm, store)
     
     async def consolidate(
@@ -231,9 +233,34 @@ class Consolidator:
         
         return result
 
+    def _partition_concepts(self, concepts: list[dict]) -> list[list[dict]]:
+        """Split concepts into chunks of at most concepts_per_consolidation_pass, sorted by id."""
+        if not concepts:
+            return [[]]
+        sorted_concepts = sorted(concepts, key=lambda c: c.get("id", ""))
+        n = self.concepts_per_consolidation_pass
+        return [sorted_concepts[i:i + n] for i in range(0, len(sorted_concepts), n)]
+
+    def _format_concept_index(self, concepts: list[dict]) -> str:
+        """Format a compact id+title index for concepts not in the current chunk."""
+        if not concepts:
+            return ""
+        lines = []
+        for c in concepts:
+            title = c.get("title") or ""
+            if title:
+                lines.append(f"[{c['id']}] {title}")
+            else:
+                lines.append(f"[{c['id']}]")
+        return "\n".join(lines)
+
     async def _consolidate_batch(self, force: bool = False, batch_num: int = 0) -> Optional[ConsolidationResult]:
         """
         Consolidate a single batch of unconsolidated episodes.
+        
+        When there are more existing concepts than concepts_per_consolidation_pass,
+        runs multiple LLM sub-passes (one per concept chunk) and merges the
+        operations before applying them once.
         
         Returns:
             ConsolidationResult for this batch, or None if no episodes to process.
@@ -270,49 +297,155 @@ class Consolidator:
         batch_label = f" (batch {batch_num + 1})" if batch_num > 0 else ""
         logger.info(f"Consolidating {len(episodes)} episodes{batch_label}")
         
-        # Get existing concepts for context
-        existing_concepts = self.store.get_concepts_summary()
-        
-        # Build the consolidation prompt
-        prompt = CONSOLIDATION_PROMPT_TEMPLATE.format(
-            existing_concepts=self._format_concepts(existing_concepts),
-            episodes=self._format_episodes(episodes),
-        )
-        
-        # Call LLM for consolidation
-        logger.debug(
-            "Consolidation LLM request:\n"
-            f"  provider: {self.llm.name}\n"
-            f"  episodes: {len(episodes)}\n"
-            f"  existing_concepts: {len(existing_concepts)}\n"
-            f"  prompt_length: {len(prompt)}\n"
-            f"  prompt:\n{prompt}"
-        )
+        # Get existing concepts and partition into chunks
+        all_concepts = self.store.get_concepts_summary()
+        concept_chunks = self._partition_concepts(all_concepts)
+        chunk_ids = {c["id"] for chunk in concept_chunks for c in chunk}
 
-        try:
-            operations = await self.llm.complete_json(
-                prompt=prompt,
-                system=CONSOLIDATION_SYSTEM_PROMPT,
-                temperature=0.3,
-                max_tokens=8192,
+        episodes_text = self._format_episodes(episodes)
+
+        # Run one LLM sub-pass per concept chunk, merge results
+        merged_operations = self._empty_operations()
+        num_chunks = len(concept_chunks)
+
+        for chunk_idx, chunk in enumerate(concept_chunks):
+            # Build the "other concepts" index for out-of-chunk ids
+            other_concepts = [c for c in all_concepts if c not in chunk]
+            other_index = self._format_concept_index(other_concepts)
+
+            existing_section = self._format_concepts(chunk)
+            if other_index:
+                existing_section += "\n\n## OTHER KNOWN CONCEPTS (id + title only, for relations)\n\n" + other_index
+
+            prompt = CONSOLIDATION_PROMPT_TEMPLATE.format(
+                existing_concepts=existing_section,
+                episodes=episodes_text,
             )
-        except Exception as e:
-            logger.error(f"LLM consolidation failed: {e}")
-            raise
 
-        logger.debug(f"Consolidation LLM response: {json.dumps(operations, indent=2)}")
-        
+            sub_pass_label = f" (sub-pass {chunk_idx + 1}/{num_chunks})" if num_chunks > 1 else ""
+            logger.debug(
+                f"Consolidation LLM request{sub_pass_label}:\n"
+                f"  provider: {self.llm.name}\n"
+                f"  episodes: {len(episodes)}\n"
+                f"  chunk_concepts: {len(chunk)}\n"
+                f"  total_concepts: {len(all_concepts)}\n"
+                f"  prompt_length: {len(prompt)}\n"
+                f"  prompt:\n{prompt}"
+            )
+
+            try:
+                operations = await self.llm.complete_json(
+                    prompt=prompt,
+                    system=CONSOLIDATION_SYSTEM_PROMPT,
+                    temperature=0.3,
+                    max_tokens=8192,
+                )
+            except Exception as e:
+                logger.error(f"LLM consolidation failed{sub_pass_label}: {e}")
+                raise
+
+            logger.debug(f"Consolidation LLM response{sub_pass_label}: {json.dumps(operations, indent=2)}")
+
+            self._merge_operations(merged_operations, operations, chunk_idx)
+
+        if num_chunks > 1:
+            logger.info(
+                f"Merged {num_chunks} concept-chunk sub-passes: "
+                f"{len(merged_operations['updates'])} updates, "
+                f"{len(merged_operations['new_concepts'])} new concepts, "
+                f"{len(merged_operations['new_relations'])} relations"
+            )
+
         # Log the analysis
-        if operations.get("analysis"):
-            logger.info(f"Consolidation analysis: {operations['analysis']}")
+        if merged_operations.get("analysis"):
+            logger.info(f"Consolidation analysis: {merged_operations['analysis']}")
         
+        # Apply merged operations
+        await self._apply_operations(merged_operations, result)
+        
+        # Mark episodes as consolidated
+        now = datetime.now()
+        for episode in episodes:
+            episode.consolidated = True
+            episode.updated_at = now
+            self.store.update_episode(episode)
+        
+        logger.info(
+            f"Consolidation batch complete: {result.concepts_created} created, "
+            f"{result.concepts_updated} updated, {result.contradictions_found} contradictions"
+        )
+        
+        return result
+
+    @staticmethod
+    def _empty_operations() -> dict:
+        return {
+            "analysis": "",
+            "updates": [],
+            "new_concepts": [],
+            "new_relations": [],
+            "contradictions": [],
+        }
+
+    @staticmethod
+    def _merge_operations(merged: dict, ops: dict, chunk_idx: int) -> None:
+        """Merge a single sub-pass's operations into the accumulator, namespacing temp ids."""
+        # Join analysis strings
+        analysis = ops.get("analysis", "")
+        if analysis:
+            if merged["analysis"]:
+                merged["analysis"] += "\n" + analysis
+            else:
+                merged["analysis"] = analysis
+
+        prefix = f"NEW__c{chunk_idx}__"
+
+        def rewrite_temp_id(id_str: str) -> str:
+            if id_str and id_str.startswith("NEW_"):
+                return prefix + id_str[4:]  # NEW_0 -> NEW__c0__0
+            return id_str
+
+        def rewrite_relations(rels: list[dict]) -> list[dict]:
+            out = []
+            for r in rels:
+                r = dict(r)
+                if "target_id" in r:
+                    r["target_id"] = rewrite_temp_id(r["target_id"])
+                if "source_id" in r:
+                    r["source_id"] = rewrite_temp_id(r["source_id"])
+                out.append(r)
+            return out
+
+        # Updates — rewrite relation target ids within add_relations
+        for update in ops.get("updates", []):
+            update = dict(update)
+            if "add_relations" in update:
+                update["add_relations"] = rewrite_relations(update["add_relations"])
+            merged["updates"].append(update)
+
+        # New concepts — rewrite temp_id and inline relation ids
+        for nc in ops.get("new_concepts", []):
+            nc = dict(nc)
+            if "temp_id" in nc:
+                nc["temp_id"] = rewrite_temp_id(nc["temp_id"])
+            if "relations" in nc:
+                nc["relations"] = rewrite_relations(nc["relations"])
+            merged["new_concepts"].append(nc)
+
+        # New relations — rewrite both ends
+        merged["new_relations"].extend(rewrite_relations(ops.get("new_relations", [])))
+
+        # Contradictions — pass through
+        merged["contradictions"].extend(ops.get("contradictions", []))
+
+    async def _apply_operations(self, operations: dict, result: ConsolidationResult) -> None:
+        """Apply merged consolidation operations to the store."""
         # Collect all deferred relations to process after id_mapping is built
         deferred_relations = []
 
         # Apply updates to existing concepts (without relations)
         for update in operations.get("updates", []):
             try:
-                # Extract relations for deferred processing
                 update_relations = update.pop("add_relations", [])
                 concept_id = update["concept_id"]
                 deferred_relations.extend([
@@ -331,7 +464,6 @@ class Consolidator:
         for i, new_concept_data in enumerate(operations.get("new_concepts", [])):
             try:
                 temp_id = new_concept_data.get("temp_id", f"NEW_{i}")
-                # Extract relations for deferred processing
                 relations = new_concept_data.pop("relations", [])
                 deferred_relations.extend([
                     {**rel, "_source_temp_id": temp_id} for rel in relations
@@ -344,7 +476,6 @@ class Consolidator:
             except Exception as e:
                 logger.warning(f"Failed to create concept: {e}")
 
-        # Helper to resolve temp IDs to real IDs
         def resolve_id(id_str: str) -> str:
             if id_str and id_str.startswith("NEW_"):
                 return id_mapping.get(id_str, id_str)
@@ -353,7 +484,6 @@ class Consolidator:
         # Process all deferred relations (from updates and new concepts)
         for rel in deferred_relations:
             try:
-                # Determine source: either from _source_id (update) or _source_temp_id (new concept)
                 if "_source_id" in rel:
                     source_id = rel.pop("_source_id")
                 else:
@@ -380,20 +510,6 @@ class Consolidator:
             result.contradictions_found += 1
             result.contradiction_details.append(contradiction)
             logger.warning(f"Contradiction found: {contradiction}")
-        
-        # Mark episodes as consolidated
-        now = datetime.now()
-        for episode in episodes:
-            episode.consolidated = True
-            episode.updated_at = now
-            self.store.update_episode(episode)
-        
-        logger.info(
-            f"Consolidation batch complete: {result.concepts_created} created, "
-            f"{result.concepts_updated} updated, {result.contradictions_found} contradictions"
-        )
-        
-        return result
     
     async def _run_extraction_phase(self) -> dict:
         """

@@ -8,6 +8,7 @@ from remind.models import (
     Concept, Episode, EpisodeType, Relation, RelationType,
     ConsolidationResult,
 )
+from tests.conftest import make_consolidation_response
 
 
 class TestConsolidator:
@@ -675,3 +676,248 @@ class TestAnalyzeContradictions:
         call = mock_llm.get_call_history()[0]
         assert "when writing Python" in call["prompt"]
         assert "except for scripts" in call["prompt"]
+
+
+class TestConceptChunking:
+    """Tests for batched concept chunking during consolidation."""
+
+    @pytest.fixture
+    def consolidator(self, mock_llm, mock_embedding, memory_store):
+        return Consolidator(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=memory_store,
+            concepts_per_consolidation_pass=3,
+        )
+
+    def test_partition_concepts_empty(self, consolidator):
+        result = consolidator._partition_concepts([])
+        assert result == [[]]
+
+    def test_partition_concepts_under_limit(self, consolidator):
+        concepts = [
+            {"id": "b", "summary": "B"},
+            {"id": "a", "summary": "A"},
+        ]
+        result = consolidator._partition_concepts(concepts)
+        assert len(result) == 1
+        assert [c["id"] for c in result[0]] == ["a", "b"]
+
+    def test_partition_concepts_exact_limit(self, consolidator):
+        concepts = [{"id": f"c{i}", "summary": f"S{i}"} for i in range(3)]
+        result = consolidator._partition_concepts(concepts)
+        assert len(result) == 1
+        assert len(result[0]) == 3
+
+    def test_partition_concepts_multiple_chunks(self, consolidator):
+        concepts = [{"id": f"c{i:02d}", "summary": f"S{i}"} for i in range(7)]
+        result = consolidator._partition_concepts(concepts)
+        assert len(result) == 3
+        assert len(result[0]) == 3
+        assert len(result[1]) == 3
+        assert len(result[2]) == 1
+        # Sorted by id
+        all_ids = [c["id"] for chunk in result for c in chunk]
+        assert all_ids == sorted(all_ids)
+
+    def test_partition_concepts_stable_sort(self, consolidator):
+        concepts = [
+            {"id": "z", "summary": "Z"},
+            {"id": "a", "summary": "A"},
+            {"id": "m", "summary": "M"},
+            {"id": "b", "summary": "B"},
+        ]
+        result = consolidator._partition_concepts(concepts)
+        assert len(result) == 2
+        assert [c["id"] for c in result[0]] == ["a", "b", "m"]
+        assert [c["id"] for c in result[1]] == ["z"]
+
+    def test_format_concept_index_empty(self, consolidator):
+        assert consolidator._format_concept_index([]) == ""
+
+    def test_format_concept_index_with_titles(self, consolidator):
+        concepts = [
+            {"id": "c1", "title": "First concept"},
+            {"id": "c2", "title": None},
+            {"id": "c3", "title": "Third"},
+        ]
+        result = consolidator._format_concept_index(concepts)
+        assert "[c1] First concept" in result
+        assert "[c2]" in result
+        assert "[c3] Third" in result
+
+    @pytest.mark.asyncio
+    async def test_single_chunk_single_llm_call(
+        self, consolidator, memory_store, mock_llm, mock_embedding
+    ):
+        """When concepts fit in one chunk, only one LLM call is made."""
+        # 2 concepts, limit is 3 -> single chunk
+        for i in range(2):
+            memory_store.add_concept(Concept(
+                id=f"existing_{i}",
+                summary=f"Concept {i}",
+                embedding=[0.1] * 128,
+            ))
+        for i in range(3):
+            memory_store.add_episode(Episode(content=f"Ep {i}", entities_extracted=True))
+
+        mock_llm.set_complete_json_response(make_consolidation_response(
+            analysis="Single-chunk pass",
+            new_concepts=[{
+                "temp_id": "NEW_0",
+                "summary": "Brand new concept",
+                "confidence": 0.7,
+                "tags": [],
+                "relations": [],
+            }],
+        ))
+
+        result = await consolidator.consolidate()
+
+        json_calls = [c for c in mock_llm.get_call_history() if c["method"] == "complete_json"]
+        assert len(json_calls) == 1
+        assert result.concepts_created == 1
+
+    @pytest.mark.asyncio
+    async def test_multi_chunk_multiple_llm_calls(
+        self, consolidator, memory_store, mock_llm, mock_embedding
+    ):
+        """When concepts exceed limit, multiple LLM calls are made and results merged."""
+        # 5 concepts, limit is 3 -> 2 chunks (3 + 2)
+        for i in range(5):
+            memory_store.add_concept(Concept(
+                id=f"c{i:02d}",
+                summary=f"Existing concept {i}",
+                embedding=[0.1] * 128,
+            ))
+        for i in range(3):
+            memory_store.add_episode(Episode(content=f"Ep {i}", entities_extracted=True))
+
+        mock_llm.set_complete_json_responses([
+            make_consolidation_response(
+                analysis="Chunk 0 analysis",
+                updates=[{
+                    "concept_id": "c00",
+                    "confidence_delta": 0.1,
+                }],
+                new_concepts=[{
+                    "temp_id": "NEW_0",
+                    "summary": "New from chunk 0",
+                    "confidence": 0.7,
+                    "tags": [],
+                    "relations": [],
+                }],
+            ),
+            make_consolidation_response(
+                analysis="Chunk 1 analysis",
+                new_concepts=[{
+                    "temp_id": "NEW_0",
+                    "summary": "New from chunk 1",
+                    "confidence": 0.6,
+                    "tags": [],
+                    "relations": [],
+                }],
+                contradictions=[{
+                    "concept_id": "c03",
+                    "evidence": "Episode contradicts it",
+                    "resolution": None,
+                }],
+            ),
+        ])
+
+        result = await consolidator.consolidate()
+
+        json_calls = [c for c in mock_llm.get_call_history() if c["method"] == "complete_json"]
+        assert len(json_calls) == 2
+        assert result.concepts_created == 2
+        assert result.concepts_updated == 1
+        assert result.contradictions_found == 1
+
+        all_concepts = memory_store.get_all_concepts()
+        new_summaries = {c.summary for c in all_concepts if not c.id.startswith("c0")}
+        assert "New from chunk 0" in new_summaries
+        assert "New from chunk 1" in new_summaries
+
+    @pytest.mark.asyncio
+    async def test_multi_chunk_temp_id_namespacing(
+        self, consolidator, memory_store, mock_llm, mock_embedding
+    ):
+        """Temp IDs from different chunks don't collide after namespacing."""
+        for i in range(5):
+            memory_store.add_concept(Concept(
+                id=f"c{i:02d}",
+                summary=f"Concept {i}",
+                embedding=[0.1] * 128,
+            ))
+        for i in range(3):
+            memory_store.add_episode(Episode(content=f"Ep {i}", entities_extracted=True))
+
+        # Both chunks emit NEW_0 -> should become NEW__c0__0 and NEW__c1__0
+        mock_llm.set_complete_json_responses([
+            make_consolidation_response(
+                new_concepts=[{
+                    "temp_id": "NEW_0",
+                    "summary": "Chunk0 concept",
+                    "confidence": 0.7,
+                    "tags": [],
+                    "relations": [],
+                }],
+                new_relations=[{
+                    "source_id": "NEW_0",
+                    "target_id": "c00",
+                    "type": "specializes",
+                    "strength": 0.8,
+                }],
+            ),
+            make_consolidation_response(
+                new_concepts=[{
+                    "temp_id": "NEW_0",
+                    "summary": "Chunk1 concept",
+                    "confidence": 0.6,
+                    "tags": [],
+                    "relations": [],
+                }],
+            ),
+        ])
+
+        result = await consolidator.consolidate()
+
+        assert result.concepts_created == 2
+        all_concepts = memory_store.get_all_concepts()
+        new_concepts = [c for c in all_concepts if "Chunk" in c.summary]
+        assert len(new_concepts) == 2
+        # The first concept should have a relation to c00
+        chunk0_concept = next(c for c in new_concepts if "Chunk0" in c.summary)
+        assert len(chunk0_concept.relations) == 1
+        assert chunk0_concept.relations[0].target_id == "c00"
+
+    @pytest.mark.asyncio
+    async def test_multi_chunk_includes_other_concepts_index(
+        self, consolidator, memory_store, mock_llm, mock_embedding
+    ):
+        """Each sub-pass prompt contains an index of concepts from other chunks."""
+        for i in range(5):
+            memory_store.add_concept(Concept(
+                id=f"c{i:02d}",
+                title=f"Title {i}",
+                summary=f"Concept {i}",
+                embedding=[0.1] * 128,
+            ))
+        for i in range(3):
+            memory_store.add_episode(Episode(content=f"Ep {i}", entities_extracted=True))
+
+        mock_llm.set_complete_json_response(make_consolidation_response())
+
+        await consolidator.consolidate()
+
+        json_calls = [c for c in mock_llm.get_call_history() if c["method"] == "complete_json"]
+        assert len(json_calls) == 2
+
+        # First chunk (c00, c01, c02) should have c03, c04 in "OTHER" index
+        assert "OTHER KNOWN CONCEPTS" in json_calls[0]["prompt"]
+        assert "[c03]" in json_calls[0]["prompt"]
+        assert "[c04]" in json_calls[0]["prompt"]
+
+        # Second chunk (c03, c04) should have c00, c01, c02 in "OTHER" index
+        assert "OTHER KNOWN CONCEPTS" in json_calls[1]["prompt"]
+        assert "[c00]" in json_calls[1]["prompt"]

@@ -82,6 +82,7 @@ class MemoryInterface:
         db_path: str = "memory.db",
         # Consolidation settings
         consolidation_threshold: int = 5,  # episodes before auto-consolidation
+        consolidation_concepts_per_pass: int = 64,
         auto_consolidate: bool = True,
         # Retrieval settings
         default_recall_k: int = 3,
@@ -103,6 +104,7 @@ class MemoryInterface:
             llm=llm,
             embedding=embedding,
             store=self.store,
+            concepts_per_consolidation_pass=consolidation_concepts_per_pass,
         )
         
         self.retriever = MemoryRetriever(
@@ -1094,6 +1096,8 @@ def create_memory(
     # Apply config defaults for kwargs if not provided
     if "consolidation_threshold" not in kwargs:
         kwargs["consolidation_threshold"] = config.consolidation_threshold
+    if "consolidation_concepts_per_pass" not in kwargs:
+        kwargs["consolidation_concepts_per_pass"] = config.consolidation_concepts_per_pass
     if "auto_consolidate" not in kwargs:
         kwargs["auto_consolidate"] = config.auto_consolidate
     if "decay_config" not in kwargs:

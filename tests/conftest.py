@@ -28,6 +28,8 @@ class MockLLMProvider(LLMProvider):
     def __init__(self):
         self._complete_response: str = "Mock LLM response"
         self._complete_json_response: dict = {}
+        self._complete_json_responses: list[dict] = []
+        self._complete_json_call_idx: int = 0
         self._call_history: list[dict] = []
 
     def set_complete_response(self, response: str) -> None:
@@ -37,6 +39,12 @@ class MockLLMProvider(LLMProvider):
     def set_complete_json_response(self, response: dict) -> None:
         """Set the response for complete_json() calls."""
         self._complete_json_response = response
+        self._complete_json_responses = []
+
+    def set_complete_json_responses(self, responses: list[dict]) -> None:
+        """Set a sequence of responses for successive complete_json() calls."""
+        self._complete_json_responses = list(responses)
+        self._complete_json_call_idx = 0
 
     def get_call_history(self) -> list[dict]:
         """Get history of all calls made to this mock."""
@@ -76,6 +84,10 @@ class MockLLMProvider(LLMProvider):
             "temperature": temperature,
             "max_tokens": max_tokens,
         })
+        if self._complete_json_responses:
+            idx = min(self._complete_json_call_idx, len(self._complete_json_responses) - 1)
+            self._complete_json_call_idx += 1
+            return self._complete_json_responses[idx]
         return self._complete_json_response
 
     @property
