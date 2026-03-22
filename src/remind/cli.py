@@ -449,6 +449,7 @@ def ingest(ctx, content: Optional[str], source: str, foreground: bool):
         )
         with console.status("[bold cyan]Running triage and consolidation..."):
             episode_ids = run_async(memory.ingest(content, source=source))
+            episode_ids.extend(run_async(memory.flush_ingest()))
 
         if episode_ids:
             console.print(f"[green]✓ Created {len(episode_ids)} episode(s) from ingest[/green]")
