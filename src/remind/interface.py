@@ -240,6 +240,78 @@ class MemoryInterface:
         
         return episode_id
     
+    async def remember_batch(
+        self,
+        items: list[dict],
+        embed: bool = True,
+        embed_batch_size: int = 200,
+    ) -> list[str]:
+        """
+        Batch-remember multiple episodes efficiently.
+
+        Creates all episodes, embeds them in batches via the provider's
+        embed_batch() API, and writes them in a single DB transaction.
+        Much faster than calling remember() in a loop.
+
+        Args:
+            items: List of dicts, each with:
+                - content (str, required)
+                - metadata (dict, optional)
+                - episode_type (EpisodeType, optional)
+                - entities (list[str], optional)
+                - confidence (float, optional, default 1.0)
+            embed: Whether to generate embeddings (default True).
+            embed_batch_size: Max texts per embedding API call (default 200).
+
+        Returns:
+            List of episode IDs in the same order as items.
+        """
+        if not items:
+            return []
+
+        episodes = []
+        for item in items:
+            episode = Episode(
+                content=item["content"],
+                metadata=item.get("metadata") or {},
+                confidence=max(0.0, min(1.0, item.get("confidence", 1.0))),
+            )
+            if item.get("episode_type"):
+                episode.episode_type = item["episode_type"]
+            if item.get("entities"):
+                episode.entities_extracted = True
+            episodes.append(episode)
+
+        if embed and self.embedding:
+            texts = [ep.content for ep in episodes]
+            all_embeddings: list[list[float] | None] = [None] * len(texts)
+
+            for i in range(0, len(texts), embed_batch_size):
+                batch = texts[i:i + embed_batch_size]
+                try:
+                    batch_embeddings = await self.embedding.embed_batch(batch)
+                    for j, emb in enumerate(batch_embeddings):
+                        all_embeddings[i + j] = emb
+                except Exception as e:
+                    logger.warning(f"Failed to embed batch {i//embed_batch_size}: {e}")
+
+            for episode, emb in zip(episodes, all_embeddings):
+                if emb is not None:
+                    episode.embedding = emb
+
+        episode_ids = self.store.add_episodes_batch(episodes)
+        self._episode_buffer.extend(episode_ids)
+
+        for episode, item in zip(episodes, items):
+            entities = item.get("entities")
+            if entities:
+                for raw_id in entities:
+                    canonical_id = self._resolve_entity_id(raw_id)
+                    self.store.add_mention(episode.id, canonical_id)
+
+        logger.debug(f"Batch-remembered {len(episode_ids)} episodes")
+        return episode_ids
+
     async def recall(
         self,
         query: Optional[str] = None,

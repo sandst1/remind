@@ -123,6 +123,15 @@ class MemoryStore(ABC):
         ...
     
     @abstractmethod
+    def add_episodes_batch(self, episodes: list[Episode]) -> list[str]:
+        """Add multiple episodes in a single transaction.
+
+        Returns list of episode IDs. More efficient than calling add_episode()
+        in a loop because it uses a single connection and transaction.
+        """
+        ...
+
+    @abstractmethod
     def get_episode(self, id: str) -> Optional[Episode]:
         """Get an episode by ID."""
         ...
@@ -1057,6 +1066,39 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
     
+    def add_episodes_batch(self, episodes: list[Episode]) -> list[str]:
+        """Add multiple episodes in a single transaction."""
+        if not episodes:
+            return []
+        conn = self._get_conn()
+        try:
+            ids = []
+            for episode in episodes:
+                data = episode.to_dict()
+                embedding_blob = None
+                if episode.embedding:
+                    embedding_blob = np.array(episode.embedding, dtype=np.float32).tobytes()
+                conn.execute(
+                    """
+                    INSERT INTO episodes (id, title, content, data, consolidated, timestamp, embedding)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        episode.id,
+                        episode.title,
+                        episode.content,
+                        json.dumps(data),
+                        episode.consolidated,
+                        episode.timestamp.isoformat(),
+                        embedding_blob,
+                    )
+                )
+                ids.append(episode.id)
+            conn.commit()
+            return ids
+        finally:
+            conn.close()
+
     def get_episode(self, id: str) -> Optional[Episode]:
         """Get an episode by ID (excluding soft-deleted)."""
         conn = self._get_conn()

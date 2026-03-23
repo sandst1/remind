@@ -158,6 +158,74 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
         console.print(f"[dim]→ {unconsolidated} episodes pending consolidation[/dim]")
 
 
+@main.command("remember-batch")
+@click.option("--no-embed", is_flag=True, help="Skip embedding the episodes (faster, no API call)")
+@click.option("--batch-size", default=200, help="Max episodes per embedding API call (default: 200)")
+@click.pass_context
+def remember_batch(ctx, no_embed: bool, batch_size: int):
+    """Batch-remember episodes from stdin (JSONL).
+
+    Each line is a JSON object with at least a "content" field.
+    Optional fields: metadata (object), type (string), entities (list),
+    confidence (float).
+
+    Much faster than repeated `remind remember` calls because it batches
+    embedding API calls and writes to the database in a single transaction.
+
+    Examples:
+        echo '{"content":"User prefers dark mode"}' | remind remember-batch
+        cat episodes.jsonl | remind remember-batch
+        cat episodes.jsonl | remind remember-batch --no-embed
+    """
+    from remind.models import EpisodeType
+
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    items = []
+    for line_num, line in enumerate(sys.stdin, 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]Line {line_num}: invalid JSON: {e}[/red]", err=True)
+            continue
+
+        if "content" not in obj:
+            console.print(f"[red]Line {line_num}: missing 'content' field[/red]", err=True)
+            continue
+
+        item = {"content": obj["content"]}
+        if "metadata" in obj:
+            item["metadata"] = obj["metadata"]
+        if "type" in obj:
+            try:
+                item["episode_type"] = EpisodeType(obj["type"])
+            except ValueError:
+                pass
+        if "entities" in obj:
+            item["entities"] = obj["entities"]
+        if "confidence" in obj:
+            item["confidence"] = obj["confidence"]
+        items.append(item)
+
+    if not items:
+        console.print("[yellow]No episodes to remember (empty input)[/yellow]")
+        return
+
+    async def _batch():
+        return await memory.remember_batch(
+            items,
+            embed=not no_embed,
+            embed_batch_size=batch_size,
+        )
+
+    console.print(f"[cyan]Remembering {len(items)} episodes (batch)...[/cyan]")
+    episode_ids = run_async(_batch())
+    console.print(f"[green]✓[/green] Remembered {len(episode_ids)} episodes")
+
+
 @main.command()
 @click.argument("query", required=False, default=None)
 @click.option("-k", default=3, help="Number of concepts to retrieve")
