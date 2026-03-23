@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Episode embeddings: `remember` now embeds episode content by default for direct vector search during recall. Use `--no-embed` to skip embedding (faster, no API call).
+- Direct episode recall via `recall --episode-k N` (CLI) or `episode_k` parameter (Python/MCP). Retrieves episodes by embedding similarity alongside concept-based spreading activation. Default: 5. Set to 0 to disable.
+- `remind embed-episodes` CLI command to backfill embeddings for episodes created before episode embedding was enabled
+- Contradiction display in recall output: each concept now shows inbound and outbound `contradicts` relations with context
+- Batched contradiction detection during consolidation, controlled by `consolidation_concepts_per_pass` config (default: 64)
+
+### Changed
+- Azure OpenAI provider upgraded to OpenAI v1 API; `api_version` config removed, `/openai/v1` appended to base URL automatically
+- Default `episode_k` set to 5 for direct episode recall
+
+### Fixed
+- Ingest buffer handling in foreground mode
+- Async processing fixes in background worker
+- Contradiction retrieval improvements (batched comparison against existing concepts)
+
 ## [0.7.0] - 2026-03-19
 
 ### Added

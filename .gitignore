@@ -1,61 +1,53 @@
-.DS_Store
 
+!web/src/lib/
 # Environment
+# IDE
+# Python
+# Testing
+# Virtual environments
+# Web UI
+# mypy
+# ruff
+*$py.class
+*.egg
+*.egg-info/
+*.py[cod]
+*.so
+*.swo
+*.swp
+*~
+.DS_Store
+.Python
+.coverage
+.eggs/
 .env
 .env.local
-
-# Python
+.idea/
+.installed.cfg
+.mypy_cache/
+.nav/
+.nox/
+.opencode/
+.pypirc
+.pytest_cache/
+.ruff_cache/
+.tox/
+.venv/
+.vscode/
+ENV/
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
 build/
 develop-eggs/
 dist/
 downloads/
 eggs/
-.eggs/
+htmlcov/
 lib/
-!web/src/lib/
 lib64/
 parts/
 sdist/
 var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-.pypirc
-
-# Virtual environments
 venv/
-.venv/
-ENV/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-
-# mypy
-.mypy_cache/
-
-# ruff
-.ruff_cache/
-
-# Web UI
-web/node_modules/
 web/dist/
-
-.opencode/
-.nav/
+web/node_modules/
+wheels/

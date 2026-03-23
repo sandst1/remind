@@ -915,10 +915,10 @@ def create_mcp_server():
 
         Args:
             query: What to search for in memory (required for semantic search)
-            k: Number of concepts to retrieve (default: 5)
+            k: Number of concepts to retrieve (default: 3)
             context: Optional additional context to improve retrieval
             entity: Optional entity ID to retrieve by (e.g., "file:src/auth.ts")
-            episode_k: Number of episodes to retrieve via direct vector search (default: 5)
+            episode_k: Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable.
         
         Returns:
             Formatted memory context for injection into prompts

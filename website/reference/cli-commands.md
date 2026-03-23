@@ -20,6 +20,7 @@ remind remember "content" -t spec -e module:auth -m '{"status":"approved"}'
 | `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome`, `fact` |
 | `-e, --entity` | Entity tag(s) in `type:name` format. Repeat for multiple. |
 | `-m, --metadata` | JSON metadata string |
+| `--no-embed` | Skip embedding the episode (faster, no API call). Useful for bulk imports. |
 
 ### ingest
 
@@ -55,12 +56,15 @@ remind recall "query"
 remind recall "query" --entity file:src/auth.ts    # Entity-scoped
 remind recall --entity file:src/auth.ts            # Entity-only (no query needed)
 remind recall "query" -k 10                        # More results
+remind recall "query" --episode-k 10               # More direct episode matches
+remind recall "query" --episode-k 0                # Concepts only, no episode search
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--entity` | Scope retrieval to an entity (can be used without a query) |
-| `-k` | Number of results (default: 3) |
+| `-k` | Number of concepts to return (default: 3) |
+| `--episode-k, -ek` | Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable. |
 
 ### consolidate
 
@@ -173,6 +177,21 @@ remind purge-episode <id>
 remind purge-concept <id>
 remind purge-all                      # All soft-deleted items
 ```
+
+## Embeddings
+
+### embed-episodes
+
+Backfill embeddings for episodes that don't have them yet. Useful after upgrading from a version that didn't embed episodes, or after bulk-importing with `--no-embed`.
+
+```bash
+remind embed-episodes                    # Default batch size (50)
+remind embed-episodes --batch-size 100   # Larger batches
+```
+
+| Flag | Description |
+|------|-------------|
+| `--batch-size` | Number of episodes to embed per batch (default: 50) |
 
 ## Export / Import
 

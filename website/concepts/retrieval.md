@@ -40,11 +40,24 @@ Spreading activation retrieves concepts you didn't directly query for but are me
 
 In addition to embedding similarity, retrieval performs **entity name matching** on the query. Words in your query are matched against entity names and IDs — if the query mentions "redis", concepts linked to the `tool:redis` entity are activated directly. This provides a fast, embedding-free signal that complements the semantic search.
 
+## Direct episode search
+
+In addition to concept-based spreading activation, recall can search **episodes directly** by embedding similarity. When `episode_k` is set (default: 5), the query embedding is compared against episode embeddings to find fine-grained matches that may not yet be consolidated into concepts.
+
+Direct episode results appear first in the recall output under a **RELEVANT EPISODES** heading, followed by the concept-based **RELEVANT MEMORY** section.
+
+Use `--episode-k 0` (CLI) or `episode_k=0` (Python/MCP) to disable direct episode search and use only concept-level retrieval.
+
+## Contradiction display
+
+Each concept in recall output now shows **inbound and outbound contradictions** — concepts that have a `contradicts` relation to or from the current concept. This surfaces conflicting knowledge directly in the retrieval context, so the consumer can see tensions without needing to inspect relations manually.
+
 ## Parameters
 
 The retrieval algorithm has a few key parameters:
 
 - **k** — Maximum number of concepts to return (default: 3)
+- **episode_k** — Number of episodes to retrieve via direct embedding search (default: 5). Set to 0 to disable.
 - **min_activation** — Minimum activation score to include in results (default: 0.15). Concepts below this floor are dropped even if there's budget remaining. This prevents low-relevance noise from reaching the context.
 - **Initial activation threshold** — Minimum embedding similarity to activate a concept
 - **Spread decay** — How much activation reduces per hop (default: 0.5 per hop)
@@ -63,18 +76,24 @@ remind recall "authentication approach"
 remind recall "auth" --entity module:auth    # Entity-scoped
 remind recall --entity module:auth           # Entity-only (no query needed)
 remind recall "performance" -k 10            # More results
+remind recall "auth" --episode-k 10          # More direct episode matches
+remind recall "auth" --episode-k 0           # Concepts only, no episodes
 ```
 
 ```python [Python]
 context = await memory.recall("authentication approach")
 context = await memory.recall("auth", entity="module:auth")
 context = await memory.recall(entity="module:auth")       # Entity-only
+context = await memory.recall("auth", episode_k=10)       # More episode matches
+context = await memory.recall("auth", episode_k=0)        # Concepts only
 ```
 
 ```text [MCP]
 recall(query="authentication approach")
 recall(query="auth", entity="module:auth")
 recall(entity="module:auth")
+recall(query="auth", episode_k=10)
+recall(query="auth", episode_k=0)
 ```
 
 :::

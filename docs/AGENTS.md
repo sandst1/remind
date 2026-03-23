@@ -8,8 +8,8 @@ External memory layer that persists across sessions and generalizes experiences 
 
 | Tool | Purpose |
 |------|---------|
-| `remember(content, [episode_type], [entities])` | Store experience (fast, no LLM) |
-| `recall(query, [entity])` | Retrieve relevant memories |
+| `remember(content, [episode_type], [entities])` | Store experience (embeds by default, no LLM) |
+| `recall(query, [entity], [episode_k])` | Retrieve relevant memories (concepts + direct episodes) |
 | `ingest(content, [source])` | Auto-ingest raw text with density scoring |
 | `flush_ingest()` | Force-flush ingestion buffer |
 | `consolidate([force])` | Extract entities + process episodes → concepts |
@@ -61,9 +61,13 @@ Forces processing of whatever text is in the ingestion buffer, regardless of thr
 ```
 recall(query="authentication issues")           # Semantic search
 recall(query="auth", entity="file:src/auth.ts") # Entity-specific
+recall(query="auth", episode_k=10)              # More direct episode matches
+recall(query="auth", episode_k=0)               # Concepts only, no episode search
 ```
 
-Recall returns matching **concepts** (generalized knowledge) with their source episodes. Each concept shows related entities and source episodes with type labels (fact, observation, decision, etc.), preserving concrete details alongside generalizations.
+Recall returns two layers of results:
+- **RELEVANT EPISODES** — Direct episode matches via embedding similarity (controlled by `episode_k`, default: 5, set to 0 to disable)
+- **RELEVANT MEMORY** — Concept matches via spreading activation, each showing source episodes, entity context, and any contradicting concepts
 
 ## consolidate
 

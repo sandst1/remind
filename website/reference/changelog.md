@@ -2,6 +2,24 @@
 
 All notable changes to Remind.
 
+## [Unreleased]
+
+### Added
+- **Episode embeddings** — `remember` now embeds episode content by default for direct vector search during recall. Use `--no-embed` to skip (faster, no API call).
+- **Direct episode recall** — `recall --episode-k N` (CLI) or `episode_k` parameter (Python/MCP) retrieves episodes by embedding similarity alongside concept-based spreading activation. Default: 5. Set to 0 to disable.
+- **`embed-episodes` command** — Backfill embeddings for episodes created before episode embedding was enabled.
+- **Contradiction display** — Recall output now shows inbound and outbound `contradicts` relations per concept, with context.
+- **Batched contradiction detection** — Consolidation compares new material against existing concepts in configurable batches (`consolidation_concepts_per_pass`, default: 64).
+
+### Changed
+- Azure OpenAI provider upgraded to OpenAI v1 API; `api_version` config removed, `/openai/v1` appended to base URL automatically
+- Default `episode_k` set to 5 for direct episode recall
+
+### Fixed
+- Ingest buffer handling in foreground mode
+- Async processing fixes in background worker
+- Contradiction retrieval improvements (batched comparison against existing concepts)
+
 ## [0.7.0] - 2026-03-19
 
 ### Added

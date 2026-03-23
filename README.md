@@ -84,7 +84,7 @@ remind ui
 
 - **Generalization** — Episodes are consolidated into concepts with confidence, conditions, and exceptions
 - **Auto-ingest** — Stream raw conversation text; Remind scores information density and distills memory-worthy episodes automatically
-- **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph
+- **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph, with direct episode vector search for fine-grained matches
 - **Entity graph** — Files, functions, people, tools and other entities are extracted and linked to episodes and concepts
 - **Outcome tracking** — Record action-result pairs; consolidation extracts causal strategy patterns
 - **Task management** — Track work items (todo → in\_progress → done / blocked) with priorities and dependencies
@@ -100,8 +100,8 @@ remind ui
 
 ```
 Core
-  remember     Add an episode (-t type, -e entity, -m metadata)
-  recall       Semantic or entity-based memory retrieval
+  remember     Add an episode (-t type, -e entity, -m metadata, --no-embed)
+  recall       Semantic or entity-based memory retrieval (-k, --episode-k)
   ingest       Auto-ingest raw text with density scoring
   flush-ingest Force-flush the ingestion buffer
   consolidate  Run consolidation manually (--background, --force)
@@ -148,6 +148,9 @@ Soft delete / restore
 
   deleted          List all soft-deleted items
   purge-all        Permanently delete all soft-deleted items
+
+Embeddings
+  embed-episodes  Backfill embeddings for older episodes (--batch-size)
 
 Import / Export
   export       Export memory to JSON

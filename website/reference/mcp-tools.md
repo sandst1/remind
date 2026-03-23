@@ -59,6 +59,7 @@ recall(entity="file:src/auth.ts")
 | `k` | integer | No | Number of concepts to return (default: 3) |
 | `context` | string | No | Additional context to improve retrieval |
 | `entity` | string | No | Scope to entity (can be used alone without a query) |
+| `episode_k` | integer | No | Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable. |
 
 At least one of `query` or `entity` must be provided.
 
