@@ -5,7 +5,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
@@ -182,6 +182,7 @@ class TestRunIngestWorker:
 
             mock_memory = MagicMock()
             mock_memory._process_ingest_chunk = fake_process
+            mock_memory.aclose = AsyncMock()
             mock_create.return_value = mock_memory
 
             logger = MagicMock()
@@ -234,7 +235,9 @@ class TestRunIngestWorker:
             queue_dir.mkdir()
             mock_queue_dir.return_value = queue_dir
 
-            mock_create.return_value = MagicMock()
+            mock_memory = MagicMock()
+            mock_memory.aclose = AsyncMock()
+            mock_create.return_value = mock_memory
 
             logger = MagicMock()
             run_ingest_worker(self._make_args(), logger)

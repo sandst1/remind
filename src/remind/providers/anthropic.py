@@ -90,6 +90,11 @@ class AnthropicLLM(LLMProvider):
         
         return json.loads(text)
     
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+
     @property
     def name(self) -> str:
         return f"anthropic/{self.model}"

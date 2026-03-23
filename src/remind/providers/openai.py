@@ -101,6 +101,11 @@ class OpenAILLM(LLMProvider):
         
         return json.loads(text)
     
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+
     @property
     def name(self) -> str:
         return f"openai/{self.model}"
@@ -205,6 +210,11 @@ class OpenAIEmbedding(EmbeddingProvider):
         sorted_embeddings = sorted(response.data, key=lambda x: x.index)
         return [e.embedding for e in sorted_embeddings]
     
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+
     @property
     def dimensions(self) -> int:
         return self._dimensions

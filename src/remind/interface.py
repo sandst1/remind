@@ -244,7 +244,7 @@ class MemoryInterface:
         self,
         items: list[dict],
         embed: bool = True,
-        embed_batch_size: int = 200,
+        embed_batch_size: int = 100,
     ) -> list[str]:
         """
         Batch-remember multiple episodes efficiently.
@@ -261,7 +261,7 @@ class MemoryInterface:
                 - entities (list[str], optional)
                 - confidence (float, optional, default 1.0)
             embed: Whether to generate embeddings (default True).
-            embed_batch_size: Max texts per embedding API call (default 200).
+            embed_batch_size: Max texts per embedding API call (default 100).
 
         Returns:
             List of episode IDs in the same order as items.
@@ -1199,6 +1199,13 @@ class MemoryInterface:
     
     # Context manager support
     
+    async def aclose(self) -> None:
+        """Close underlying provider HTTP clients to avoid event-loop-closed errors."""
+        await self.llm.aclose()
+        await self.embedding.aclose()
+        if self._triager and self._triager.llm is not self.llm:
+            await self._triager.llm.aclose()
+
     async def __aenter__(self):
         return self
     
@@ -1207,6 +1214,7 @@ class MemoryInterface:
         if self.pending_episodes_count > 0:
             logger.info("Context exit: consolidating pending episodes")
             await self.end_session()
+        await self.aclose()
 
 
 def create_memory(

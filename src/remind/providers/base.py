@@ -18,6 +18,10 @@ class LLMProvider(ABC):
     and error handling specific to their backend.
     """
     
+    async def aclose(self) -> None:
+        """Close underlying HTTP clients. Override in subclasses that hold persistent connections."""
+        pass
+
     @abstractmethod
     async def complete(
         self,
@@ -115,6 +119,10 @@ class EmbeddingProvider(ABC):
     and normalization specific to their backend.
     """
     
+    async def aclose(self) -> None:
+        """Close underlying HTTP clients. Override in subclasses that hold persistent connections."""
+        pass
+
     @abstractmethod
     async def embed(self, text: str) -> list[float]:
         """

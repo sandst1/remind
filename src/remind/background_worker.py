@@ -81,7 +81,10 @@ def run_consolidation(args, logger):
         )
 
         async def _consolidate():
-            return await memory.consolidate(force=False)
+            try:
+                return await memory.consolidate(force=False)
+            finally:
+                await memory.aclose()
 
         result = asyncio.run(_consolidate())
 
@@ -129,7 +132,10 @@ def run_ingest(args, logger):
         )
 
         async def _ingest():
-            return await memory._process_ingest_chunk(chunk, source)
+            try:
+                return await memory._process_ingest_chunk(chunk, source)
+            finally:
+                await memory.aclose()
 
         episode_ids = asyncio.run(_ingest())
 
@@ -191,40 +197,44 @@ def run_ingest_worker(args, logger):
         )
 
         queue_dir = get_ingest_queue_dir(args.db)
-        total_episodes = 0
-        chunks_processed = 0
 
-        while True:
-            item = _next_queued_chunk(queue_dir)
-            if item is None:
-                # Grace period: wait briefly for late arrivals, then check once more
-                time.sleep(INGEST_WORKER_GRACE_SECONDS)
-                item = _next_queued_chunk(queue_dir)
-                if item is None:
-                    break
-
-            _, chunk, source = item
-            logger.info(
-                f"Processing queued chunk ({len(chunk)} chars, source={source})"
-            )
+        async def _drain_queue():
+            total_episodes = 0
+            chunks_processed = 0
 
             try:
-                episode_ids = asyncio.run(
-                    memory._process_ingest_chunk(chunk, source)
-                )
-                total_episodes += len(episode_ids)
-                chunks_processed += 1
-                logger.info(
-                    f"Chunk done: {len(episode_ids)} episodes "
-                    f"(total: {chunks_processed} chunks, {total_episodes} episodes)"
-                )
-            except Exception as e:
-                logger.exception(f"Failed to process queued chunk: {e}")
+                while True:
+                    item = _next_queued_chunk(queue_dir)
+                    if item is None:
+                        await asyncio.sleep(INGEST_WORKER_GRACE_SECONDS)
+                        item = _next_queued_chunk(queue_dir)
+                        if item is None:
+                            break
 
-        logger.info(
-            f"Ingest worker finished for {args.db}: "
-            f"{chunks_processed} chunks, {total_episodes} episodes"
-        )
+                    _, chunk, source = item
+                    logger.info(
+                        f"Processing queued chunk ({len(chunk)} chars, source={source})"
+                    )
+
+                    try:
+                        episode_ids = await memory._process_ingest_chunk(chunk, source)
+                        total_episodes += len(episode_ids)
+                        chunks_processed += 1
+                        logger.info(
+                            f"Chunk done: {len(episode_ids)} episodes "
+                            f"(total: {chunks_processed} chunks, {total_episodes} episodes)"
+                        )
+                    except Exception as e:
+                        logger.exception(f"Failed to process queued chunk: {e}")
+            finally:
+                await memory.aclose()
+
+            logger.info(
+                f"Ingest worker finished for {args.db}: "
+                f"{chunks_processed} chunks, {total_episodes} episodes"
+            )
+
+        asyncio.run(_drain_queue())
 
     except Exception as e:
         logger.exception(f"Ingest worker failed for {args.db}: {e}")
