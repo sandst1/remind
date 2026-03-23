@@ -161,7 +161,7 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
 @main.command()
 @click.argument("query", required=False, default=None)
 @click.option("-k", default=3, help="Number of concepts to retrieve")
-@click.option("--episode-k", "-ek", default=0, help="Number of episodes to retrieve via direct vector search")
+@click.option("--episode-k", "-ek", default=5, help="Number of episodes to retrieve via direct vector search")
 @click.option("--context", "-c", help="Additional context for search")
 @click.option("--entity", "-e", help="Retrieve by entity ID instead of semantic search")
 @click.option("--raw", is_flag=True, help="Show raw concept data")

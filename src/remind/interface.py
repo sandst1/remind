@@ -86,6 +86,7 @@ class MemoryInterface:
         auto_consolidate: bool = True,
         # Retrieval settings
         default_recall_k: int = 3,
+        default_episode_k: int = 5,
         spread_hops: int = 2,
         # Decay settings
         decay_config=None,
@@ -132,6 +133,7 @@ class MemoryInterface:
         self.consolidation_threshold = consolidation_threshold
         self.auto_consolidate = auto_consolidate
         self.default_recall_k = default_recall_k
+        self.default_episode_k = default_episode_k
         
         # Decay settings
         self.decay_config = decay_config or DecayConfig()
@@ -257,7 +259,7 @@ class MemoryInterface:
             entity: If provided, retrieve by entity instead of semantic search
             raw: If True, return raw objects instead of formatted string
             episode_k: Number of episodes to retrieve via direct vector search.
-                       Defaults to 0 (disabled). Set >0 to include top matching episodes.
+                       Defaults to self.default_episode_k (5). Set to 0 to disable.
             
         Returns:
             Formatted memory string for LLM injection, or raw objects if raw=True.
@@ -268,7 +270,7 @@ class MemoryInterface:
             raise ValueError("Either query or entity must be provided")
         
         k = k or self.default_recall_k
-        episode_k = episode_k or 0
+        episode_k = episode_k if episode_k is not None else self.default_episode_k
         
         # Increment recall count and persist when decay is enabled
         self._recall_count += 1

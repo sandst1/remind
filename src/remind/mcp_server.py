@@ -160,10 +160,11 @@ async def tool_recall(
     k: int = 3,
     context: Optional[str] = None,
     entity: Optional[str] = None,
+    episode_k: Optional[int] = None,
 ) -> str:
     """Retrieve relevant memories for a query."""
     memory = await get_memory()
-    return await memory.recall(query=query, k=k, context=context, entity=entity)
+    return await memory.recall(query=query, k=k, context=context, entity=entity, episode_k=episode_k)
 
 
 async def tool_consolidate(force: bool = False) -> str:
@@ -901,26 +902,28 @@ def create_mcp_server():
         k: int = 3,
         context: Optional[str] = None,
         entity: Optional[str] = None,
+        episode_k: Optional[int] = None,
     ) -> str:
         """Retrieve relevant memories for a query.
-        
+
         Two modes:
         1. Semantic search (default): Uses embeddings with spreading activation
         2. Entity-based: Retrieves all memories about a specific entity
-        
+
         Provide query for semantic search, or entity for entity-based lookup.
         At least one of query or entity must be provided.
-        
+
         Args:
             query: What to search for in memory (required for semantic search)
             k: Number of concepts to retrieve (default: 5)
             context: Optional additional context to improve retrieval
             entity: Optional entity ID to retrieve by (e.g., "file:src/auth.ts")
+            episode_k: Number of episodes to retrieve via direct vector search (default: 5)
         
         Returns:
             Formatted memory context for injection into prompts
         """
-        return await tool_recall(query, k, context, entity)
+        return await tool_recall(query, k, context, entity, episode_k=episode_k)
     
     @mcp.tool()
     async def consolidate(force: bool = False) -> str:
