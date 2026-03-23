@@ -62,8 +62,9 @@ class TestMemoryInterfaceTasks:
             auto_consolidate=False,
         )
 
-    def test_remember_spec(self, memory):
-        ep_id = memory.remember(
+    @pytest.mark.asyncio
+    async def test_remember_spec(self, memory):
+        ep_id = await memory.remember(
             "POST /auth/login must return JWT",
             episode_type=EpisodeType.SPEC,
             entities=["module:auth"],
@@ -71,8 +72,9 @@ class TestMemoryInterfaceTasks:
         episode = memory.store.get_episode(ep_id)
         assert episode.episode_type == EpisodeType.SPEC
 
-    def test_remember_plan(self, memory):
-        ep_id = memory.remember(
+    @pytest.mark.asyncio
+    async def test_remember_plan(self, memory):
+        ep_id = await memory.remember(
             "Auth plan: 1) bcrypt 2) login route 3) JWT",
             episode_type=EpisodeType.PLAN,
             entities=["module:auth"],
@@ -80,8 +82,9 @@ class TestMemoryInterfaceTasks:
         episode = memory.store.get_episode(ep_id)
         assert episode.episode_type == EpisodeType.PLAN
 
-    def test_remember_task(self, memory):
-        ep_id = memory.remember(
+    @pytest.mark.asyncio
+    async def test_remember_task(self, memory):
+        ep_id = await memory.remember(
             "Implement bcrypt hashing",
             episode_type=EpisodeType.TASK,
             metadata={"status": "todo", "priority": "p0"},
@@ -100,10 +103,11 @@ class TestMemoryInterfaceTasks:
         tasks = memory.get_tasks()
         assert tasks == []
 
-    def test_get_tasks_returns_only_tasks(self, memory):
-        memory.remember("Observation", episode_type=EpisodeType.OBSERVATION)
-        memory.remember("Decision", episode_type=EpisodeType.DECISION)
-        memory.remember(
+    @pytest.mark.asyncio
+    async def test_get_tasks_returns_only_tasks(self, memory):
+        await memory.remember("Observation", episode_type=EpisodeType.OBSERVATION)
+        await memory.remember("Decision", episode_type=EpisodeType.DECISION)
+        await memory.remember(
             "A task",
             episode_type=EpisodeType.TASK,
             metadata={"status": "todo"},
@@ -112,12 +116,13 @@ class TestMemoryInterfaceTasks:
         assert len(tasks) == 1
         assert tasks[0].episode_type == EpisodeType.TASK
 
-    def test_get_tasks_filter_by_status(self, memory):
-        memory.remember("Todo task", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_get_tasks_filter_by_status(self, memory):
+        await memory.remember("Todo task", episode_type=EpisodeType.TASK,
                         metadata={"status": "todo"})
-        memory.remember("Done task", episode_type=EpisodeType.TASK,
+        await memory.remember("Done task", episode_type=EpisodeType.TASK,
                         metadata={"status": "done"})
-        memory.remember("In progress", episode_type=EpisodeType.TASK,
+        await memory.remember("In progress", episode_type=EpisodeType.TASK,
                         metadata={"status": "in_progress"})
 
         todo = memory.get_tasks(status="todo")
@@ -127,30 +132,33 @@ class TestMemoryInterfaceTasks:
         done = memory.get_tasks(status="done")
         assert len(done) == 1
 
-    def test_get_tasks_filter_by_entity(self, memory):
-        memory.remember("Auth task", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_get_tasks_filter_by_entity(self, memory):
+        await memory.remember("Auth task", episode_type=EpisodeType.TASK,
                         metadata={"status": "todo"}, entities=["module:auth"])
-        memory.remember("Billing task", episode_type=EpisodeType.TASK,
+        await memory.remember("Billing task", episode_type=EpisodeType.TASK,
                         metadata={"status": "todo"}, entities=["module:billing"])
 
         auth_tasks = memory.get_tasks(entity_id="module:auth")
         assert len(auth_tasks) == 1
         assert "module:auth" in auth_tasks[0].entity_ids
 
-    def test_get_tasks_filter_by_plan(self, memory):
-        plan_id = memory.remember("The plan", episode_type=EpisodeType.PLAN)
-        memory.remember("Task for plan", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_get_tasks_filter_by_plan(self, memory):
+        plan_id = await memory.remember("The plan", episode_type=EpisodeType.PLAN)
+        await memory.remember("Task for plan", episode_type=EpisodeType.TASK,
                         metadata={"status": "todo", "plan_id": plan_id})
-        memory.remember("Unrelated task", episode_type=EpisodeType.TASK,
+        await memory.remember("Unrelated task", episode_type=EpisodeType.TASK,
                         metadata={"status": "todo"})
 
         plan_tasks = memory.get_tasks(plan_id=plan_id)
         assert len(plan_tasks) == 1
         assert plan_tasks[0].metadata["plan_id"] == plan_id
 
-    def test_get_tasks_respects_limit(self, memory):
+    @pytest.mark.asyncio
+    async def test_get_tasks_respects_limit(self, memory):
         for i in range(10):
-            memory.remember(f"Task {i}", episode_type=EpisodeType.TASK,
+            await memory.remember(f"Task {i}", episode_type=EpisodeType.TASK,
                             metadata={"status": "todo"})
 
         tasks = memory.get_tasks(limit=3)
@@ -160,8 +168,9 @@ class TestMemoryInterfaceTasks:
     # update_task_status() tests
     # =========================================================================
 
-    def test_update_task_status_todo_to_in_progress(self, memory):
-        ep_id = memory.remember("Task", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_update_task_status_todo_to_in_progress(self, memory):
+        ep_id = await memory.remember("Task", episode_type=EpisodeType.TASK,
                                 metadata={"status": "todo"})
 
         updated = memory.update_task_status(ep_id, "in_progress")
@@ -170,8 +179,9 @@ class TestMemoryInterfaceTasks:
         assert updated.metadata["status"] == "in_progress"
         assert "started_at" in updated.metadata
 
-    def test_update_task_status_to_done(self, memory):
-        ep_id = memory.remember("Task", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_update_task_status_to_done(self, memory):
+        ep_id = await memory.remember("Task", episode_type=EpisodeType.TASK,
                                 metadata={"status": "in_progress"})
 
         updated = memory.update_task_status(ep_id, "done")
@@ -179,8 +189,9 @@ class TestMemoryInterfaceTasks:
         assert updated.metadata["status"] == "done"
         assert "completed_at" in updated.metadata
 
-    def test_update_task_status_to_blocked_with_reason(self, memory):
-        ep_id = memory.remember("Task", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_update_task_status_to_blocked_with_reason(self, memory):
+        ep_id = await memory.remember("Task", episode_type=EpisodeType.TASK,
                                 metadata={"status": "todo"})
 
         updated = memory.update_task_status(ep_id, "blocked",
@@ -189,8 +200,9 @@ class TestMemoryInterfaceTasks:
         assert updated.metadata["status"] == "blocked"
         assert updated.metadata["blocked_reason"] == "waiting on API key"
 
-    def test_update_task_status_unblock_clears_reason(self, memory):
-        ep_id = memory.remember("Task", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_update_task_status_unblock_clears_reason(self, memory):
+        ep_id = await memory.remember("Task", episode_type=EpisodeType.TASK,
                                 metadata={"status": "blocked",
                                           "blocked_reason": "some reason"})
 
@@ -199,9 +211,10 @@ class TestMemoryInterfaceTasks:
         assert updated.metadata["status"] == "todo"
         assert "blocked_reason" not in updated.metadata
 
-    def test_update_task_status_persists(self, memory):
+    @pytest.mark.asyncio
+    async def test_update_task_status_persists(self, memory):
         """Verify status change is persisted to store."""
-        ep_id = memory.remember("Task", episode_type=EpisodeType.TASK,
+        ep_id = await memory.remember("Task", episode_type=EpisodeType.TASK,
                                 metadata={"status": "todo"})
 
         memory.update_task_status(ep_id, "in_progress")
@@ -214,19 +227,22 @@ class TestMemoryInterfaceTasks:
         result = memory.update_task_status("nonexistent", "done")
         assert result is None
 
-    def test_update_task_status_non_task_returns_none(self, memory):
-        ep_id = memory.remember("Not a task", episode_type=EpisodeType.OBSERVATION)
+    @pytest.mark.asyncio
+    async def test_update_task_status_non_task_returns_none(self, memory):
+        ep_id = await memory.remember("Not a task", episode_type=EpisodeType.OBSERVATION)
         result = memory.update_task_status(ep_id, "done")
         assert result is None
 
-    def test_update_task_status_invalid_status_returns_none(self, memory):
-        ep_id = memory.remember("Task", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_update_task_status_invalid_status_returns_none(self, memory):
+        ep_id = await memory.remember("Task", episode_type=EpisodeType.TASK,
                                 metadata={"status": "todo"})
         result = memory.update_task_status(ep_id, "invalid_status")
         assert result is None
 
-    def test_update_task_status_done_to_todo_reopens(self, memory):
-        ep_id = memory.remember("Task", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_update_task_status_done_to_todo_reopens(self, memory):
+        ep_id = await memory.remember("Task", episode_type=EpisodeType.TASK,
                                 metadata={"status": "done"})
 
         updated = memory.update_task_status(ep_id, "todo")
@@ -237,25 +253,28 @@ class TestMemoryInterfaceTasks:
     # get_episodes_by_type() for new types
     # =========================================================================
 
-    def test_get_episodes_by_type_spec(self, memory):
-        memory.remember("Spec 1", episode_type=EpisodeType.SPEC)
-        memory.remember("Spec 2", episode_type=EpisodeType.SPEC)
-        memory.remember("Not a spec", episode_type=EpisodeType.OBSERVATION)
+    @pytest.mark.asyncio
+    async def test_get_episodes_by_type_spec(self, memory):
+        await memory.remember("Spec 1", episode_type=EpisodeType.SPEC)
+        await memory.remember("Spec 2", episode_type=EpisodeType.SPEC)
+        await memory.remember("Not a spec", episode_type=EpisodeType.OBSERVATION)
 
         specs = memory.get_episodes_by_type(EpisodeType.SPEC)
         assert len(specs) == 2
 
-    def test_get_episodes_by_type_plan(self, memory):
-        memory.remember("Plan 1", episode_type=EpisodeType.PLAN)
-        memory.remember("Not a plan", episode_type=EpisodeType.DECISION)
+    @pytest.mark.asyncio
+    async def test_get_episodes_by_type_plan(self, memory):
+        await memory.remember("Plan 1", episode_type=EpisodeType.PLAN)
+        await memory.remember("Not a plan", episode_type=EpisodeType.DECISION)
 
         plans = memory.get_episodes_by_type(EpisodeType.PLAN)
         assert len(plans) == 1
 
-    def test_get_episodes_by_type_task(self, memory):
-        memory.remember("Task 1", episode_type=EpisodeType.TASK,
+    @pytest.mark.asyncio
+    async def test_get_episodes_by_type_task(self, memory):
+        await memory.remember("Task 1", episode_type=EpisodeType.TASK,
                         metadata={"status": "todo"})
-        memory.remember("Task 2", episode_type=EpisodeType.TASK,
+        await memory.remember("Task 2", episode_type=EpisodeType.TASK,
                         metadata={"status": "done"})
 
         tasks = memory.get_episodes_by_type(EpisodeType.TASK)
@@ -280,14 +299,14 @@ class TestConsolidationTaskFilter:
     ):
         """Active tasks (todo/in_progress/blocked) should not be consolidated."""
         # Add a regular episode (with entities so extraction is skipped)
-        memory.remember("Regular observation", entities=["subject:test"])
+        await memory.remember("Regular observation", entities=["subject:test"])
 
         # Add active tasks with entities so extraction doesn't reclassify them
-        memory.remember("Todo task", episode_type=EpisodeType.TASK,
+        await memory.remember("Todo task", episode_type=EpisodeType.TASK,
                         metadata={"status": "todo"}, entities=["subject:tasks"])
-        memory.remember("In progress task", episode_type=EpisodeType.TASK,
+        await memory.remember("In progress task", episode_type=EpisodeType.TASK,
                         metadata={"status": "in_progress"}, entities=["subject:tasks"])
-        memory.remember("Blocked task", episode_type=EpisodeType.TASK,
+        await memory.remember("Blocked task", episode_type=EpisodeType.TASK,
                         metadata={"status": "blocked"}, entities=["subject:tasks"])
 
         mock_llm.set_complete_json_response({
@@ -308,9 +327,9 @@ class TestConsolidationTaskFilter:
         self, memory, mock_llm, mock_embedding
     ):
         """Completed tasks should be consolidated normally."""
-        memory.remember("Done task", episode_type=EpisodeType.TASK,
+        await memory.remember("Done task", episode_type=EpisodeType.TASK,
                         metadata={"status": "done"}, entities=["subject:tasks"])
-        memory.remember("Regular observation", entities=["subject:test"])
+        await memory.remember("Regular observation", entities=["subject:test"])
 
         mock_llm.set_complete_json_response({
             "analysis": "Test",
@@ -330,11 +349,11 @@ class TestConsolidationTaskFilter:
         self, memory, mock_llm, mock_embedding
     ):
         """Specs and plans should consolidate normally (unlike active tasks)."""
-        memory.remember("A spec requirement", episode_type=EpisodeType.SPEC,
+        await memory.remember("A spec requirement", episode_type=EpisodeType.SPEC,
                         entities=["module:auth"])
-        memory.remember("A plan", episode_type=EpisodeType.PLAN,
+        await memory.remember("A plan", episode_type=EpisodeType.PLAN,
                         entities=["module:auth"])
-        memory.remember("An observation", entities=["subject:test"])
+        await memory.remember("An observation", entities=["subject:test"])
 
         mock_llm.set_complete_json_response({
             "analysis": "Test",
@@ -353,9 +372,9 @@ class TestConsolidationTaskFilter:
         self, memory, mock_llm, mock_embedding
     ):
         """If only active tasks exist, nothing should consolidate."""
-        memory.remember("Task 1", episode_type=EpisodeType.TASK,
+        await memory.remember("Task 1", episode_type=EpisodeType.TASK,
                         metadata={"status": "todo"}, entities=["subject:tasks"])
-        memory.remember("Task 2", episode_type=EpisodeType.TASK,
+        await memory.remember("Task 2", episode_type=EpisodeType.TASK,
                         metadata={"status": "in_progress"}, entities=["subject:tasks"])
 
         mock_llm.set_complete_json_response({
@@ -383,9 +402,10 @@ class TestTaskMetadataIntegrity:
             auto_consolidate=False,
         )
 
-    def test_task_with_full_metadata(self, memory):
+    @pytest.mark.asyncio
+    async def test_task_with_full_metadata(self, memory):
         """Test task with all metadata fields."""
-        ep_id = memory.remember(
+        ep_id = await memory.remember(
             "Complex task",
             episode_type=EpisodeType.TASK,
             metadata={
@@ -406,9 +426,10 @@ class TestTaskMetadataIntegrity:
         assert meta["spec_ids"] == ["spec-1", "spec-2"]
         assert meta["depends_on"] == ["task-a", "task-b"]
 
-    def test_task_without_explicit_status_defaults(self, memory):
+    @pytest.mark.asyncio
+    async def test_task_without_explicit_status_defaults(self, memory):
         """Task created without status metadata gets default from get_tasks filter."""
-        ep_id = memory.remember(
+        ep_id = await memory.remember(
             "Task with no status",
             episode_type=EpisodeType.TASK,
             metadata={},
@@ -423,9 +444,10 @@ class TestTaskMetadataIntegrity:
         # It has no "status" key, so it won't match the filter
         assert len(tasks) == 0
 
-    def test_status_transition_preserves_other_metadata(self, memory):
+    @pytest.mark.asyncio
+    async def test_status_transition_preserves_other_metadata(self, memory):
         """Status transitions should preserve priority, plan_id, etc."""
-        ep_id = memory.remember(
+        ep_id = await memory.remember(
             "Task",
             episode_type=EpisodeType.TASK,
             metadata={
@@ -442,9 +464,10 @@ class TestTaskMetadataIntegrity:
         assert updated.metadata["status"] == "in_progress"
         assert "started_at" in updated.metadata
 
-    def test_multiple_status_transitions(self, memory):
+    @pytest.mark.asyncio
+    async def test_multiple_status_transitions(self, memory):
         """Test full lifecycle: todo -> in_progress -> blocked -> todo -> in_progress -> done."""
-        ep_id = memory.remember(
+        ep_id = await memory.remember(
             "Lifecycle task",
             episode_type=EpisodeType.TASK,
             metadata={"status": "todo"},

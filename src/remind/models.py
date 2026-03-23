@@ -364,6 +364,9 @@ class Episode:
     # Optional metadata
     metadata: dict = field(default_factory=dict)
 
+    # For retrieval (stored as BLOB, not in JSON data)
+    embedding: Optional[list[float]] = None
+
     # Soft delete support
     deleted_at: Optional[datetime] = None
 

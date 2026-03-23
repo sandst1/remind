@@ -365,6 +365,34 @@ class MemoryRetriever:
         scored.sort(key=lambda x: x[1], reverse=True)
         return [c for c, _ in scored[:k]]
     
+    async def retrieve_episodes_by_embedding(
+        self,
+        query: str,
+        k: int = 5,
+    ) -> list[ScoredEpisode]:
+        """
+        Retrieve episodes by direct embedding similarity search.
+
+        Complements concept-based retrieval by finding episodes whose
+        content is semantically close to the query, regardless of whether
+        they were consolidated into concepts.
+
+        Args:
+            query: The query text to search for.
+            k: Maximum number of episodes to return.
+
+        Returns:
+            Scored episodes sorted by similarity, highest first.
+        """
+        query_embedding = await self.embedding.embed(query)
+        matches = self.store.find_episodes_by_embedding(query_embedding, k=k)
+
+        results = []
+        for episode, similarity in matches:
+            results.append(ScoredEpisode(episode=episode, score=similarity))
+
+        return results
+
     async def retrieve_by_entity(
         self,
         entity_id: str,
@@ -582,6 +610,7 @@ class MemoryRetriever:
         include_episodes: bool = True,
         matched_entities: Optional[list[Entity]] = None,
         max_entity_episodes: int = 10,
+        direct_episodes: Optional[list["ScoredEpisode"]] = None,
     ) -> str:
         """
         Format retrieved concepts and episodes for injection into an LLM prompt.
@@ -596,15 +625,28 @@ class MemoryRetriever:
             matched_entities: Entities matched by name from the query. If provided,
                 appends entity context sections after concepts.
             max_entity_episodes: Max episodes to show per matched entity.
+            direct_episodes: Episodes matched by direct embedding search.
+                If provided, rendered before concepts.
         """
         # Use stashed entities from last retrieve() if not explicitly provided
         if matched_entities is None:
             matched_entities = getattr(self, "_last_matched_entities", None) or []
 
-        if not activated and not matched_entities:
+        if not activated and not matched_entities and not direct_episodes:
             return "(No relevant memories found)"
 
-        lines = ["RELEVANT MEMORY:\n"]
+        lines = []
+
+        # Direct episode matches (shown first for highest relevance)
+        if direct_episodes:
+            lines.append("RELEVANT EPISODES:\n")
+            for se in direct_episodes:
+                ep = se.episode
+                ep_date = ep.updated_at.strftime("%Y-%m-%d %H:%M")
+                lines.append(f"  • [{ep.episode_type.value}, {ep_date}] {ep.content}")
+            lines.append("")
+
+        lines.append("RELEVANT MEMORY:\n")
 
         for ac in activated:
             c = ac.concept

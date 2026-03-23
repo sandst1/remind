@@ -27,9 +27,9 @@ class TestEndToEndWorkflows:
     ):
         """Test the full remember -> consolidate -> recall workflow."""
         # Step 1: Remember multiple episodes
-        memory.remember("User prefers Python for backend development")
-        memory.remember("User mentioned they work on distributed systems")
-        memory.remember("User values code readability")
+        await memory.remember("User prefers Python for backend development")
+        await memory.remember("User mentioned they work on distributed systems")
+        await memory.remember("User values code readability")
 
         assert memory.pending_episodes_count == 3
 
@@ -77,9 +77,9 @@ class TestEndToEndWorkflows:
             db_path=temp_db_path,
         )
 
-        memory1.remember("User likes FastAPI")
-        memory1.remember("User prefers async patterns")
-        memory1.remember("User works with PostgreSQL")
+        await memory1.remember("User likes FastAPI")
+        await memory1.remember("User prefers async patterns")
+        await memory1.remember("User works with PostgreSQL")
 
         mock_llm.set_complete_json_response({
             "analysis": "Web development preferences",
@@ -111,7 +111,7 @@ class TestEndToEndWorkflows:
         assert "FastAPI" in concepts[0].summary
 
         # Add more episodes
-        memory2.remember("User started using Redis for caching")
+        await memory2.remember("User started using Redis for caching")
 
         # Recall should find existing concepts
         mock_embedding.set_embedding("web development", concepts[0].embedding)
@@ -122,17 +122,17 @@ class TestEndToEndWorkflows:
     async def test_entity_tracking_workflow(self, memory, mock_llm, mock_embedding):
         """Test entity-centric workflow."""
         # Remember episodes with explicit entities
-        memory.remember(
+        await memory.remember(
             "Fixed authentication bug in auth.ts",
             entities=["file:src/auth.ts"],
             episode_type=EpisodeType.DECISION,
         )
-        memory.remember(
+        await memory.remember(
             "Added rate limiting to auth.ts",
             entities=["file:src/auth.ts"],
             episode_type=EpisodeType.DECISION,
         )
-        memory.remember(
+        await memory.remember(
             "Discussed auth changes with Alice",
             entities=["file:src/auth.ts", "person:alice"],
             episode_type=EpisodeType.OBSERVATION,
@@ -155,9 +155,9 @@ class TestEndToEndWorkflows:
     ):
         """Test how concepts evolve through updates."""
         # Initial consolidation creates a concept
-        memory.remember("User prefers spaces for indentation")
-        memory.remember("User mentioned using 2-space indent")
-        memory.remember("User configured editor for spaces")
+        await memory.remember("User prefers spaces for indentation")
+        await memory.remember("User mentioned using 2-space indent")
+        await memory.remember("User configured editor for spaces")
 
         mock_llm.set_complete_json_response({
             "analysis": "User has indentation preferences",
@@ -180,9 +180,9 @@ class TestEndToEndWorkflows:
         initial_confidence = initial_concept.confidence
 
         # More episodes reinforce the concept
-        memory.remember("User changed project settings to use spaces")
-        memory.remember("User advocated for spaces in team meeting")
-        memory.remember("User created linter rule for spaces")
+        await memory.remember("User changed project settings to use spaces")
+        await memory.remember("User advocated for spaces in team meeting")
+        await memory.remember("User created linter rule for spaces")
 
         mock_llm.set_complete_json_response({
             "analysis": "Further evidence of spacing preference",
@@ -214,9 +214,9 @@ class TestEndToEndWorkflows:
     ):
         """Test detection of contradicting information."""
         # Create initial concept
-        memory.remember("User dislikes JavaScript")
-        memory.remember("User avoids frontend work")
-        memory.remember("User criticizes JS ecosystem")
+        await memory.remember("User dislikes JavaScript")
+        await memory.remember("User avoids frontend work")
+        await memory.remember("User criticizes JS ecosystem")
 
         mock_llm.set_complete_json_response({
             "analysis": "User dislikes JavaScript",
@@ -237,9 +237,9 @@ class TestEndToEndWorkflows:
         existing_concept = memory.get_all_concepts()[0]
 
         # Add contradicting episodes
-        memory.remember("User started learning React")
-        memory.remember("User enjoyed building a React app")
-        memory.remember("User praised TypeScript")
+        await memory.remember("User started learning React")
+        await memory.remember("User enjoyed building a React app")
+        await memory.remember("User praised TypeScript")
 
         mock_llm.set_complete_json_response({
             "analysis": "Contradicting information about JavaScript",
@@ -263,11 +263,11 @@ class TestEndToEndWorkflows:
     @pytest.mark.asyncio
     async def test_episode_type_filtering_workflow(self, memory):
         """Test filtering by episode type."""
-        memory.remember("Decided to use Redis", episode_type=EpisodeType.DECISION)
-        memory.remember("Decided to use PostgreSQL", episode_type=EpisodeType.DECISION)
-        memory.remember("Should we use GraphQL?", episode_type=EpisodeType.QUESTION)
-        memory.remember("Noticed high latency", episode_type=EpisodeType.OBSERVATION)
-        memory.remember("Prefers REST over GraphQL", episode_type=EpisodeType.PREFERENCE)
+        await memory.remember("Decided to use Redis", episode_type=EpisodeType.DECISION)
+        await memory.remember("Decided to use PostgreSQL", episode_type=EpisodeType.DECISION)
+        await memory.remember("Should we use GraphQL?", episode_type=EpisodeType.QUESTION)
+        await memory.remember("Noticed high latency", episode_type=EpisodeType.OBSERVATION)
+        await memory.remember("Prefers REST over GraphQL", episode_type=EpisodeType.PREFERENCE)
 
         decisions = memory.get_episodes_by_type(EpisodeType.DECISION)
         questions = memory.get_episodes_by_type(EpisodeType.QUESTION)
@@ -283,8 +283,8 @@ class TestEndToEndWorkflows:
     async def test_import_export_round_trip(self, memory, mock_llm, tmp_path):
         """Test export and import preserves data."""
         # Create some data
-        memory.remember("Episode 1", episode_type=EpisodeType.DECISION)
-        memory.remember("Episode 2", entities=["file:test.py"])
+        await memory.remember("Episode 1", episode_type=EpisodeType.DECISION)
+        await memory.remember("Episode 2", entities=["file:test.py"])
 
         mock_llm.set_complete_json_response({
             "analysis": "Test",
@@ -338,9 +338,9 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_llm_failure_during_consolidation(self, memory, mock_llm):
         """Test handling of LLM failures."""
-        memory.remember("Episode 1")
-        memory.remember("Episode 2")
-        memory.remember("Episode 3")
+        await memory.remember("Episode 1")
+        await memory.remember("Episode 2")
+        await memory.remember("Episode 3")
 
         # Make LLM raise an exception
         async def raise_error(*args, **kwargs):
@@ -370,9 +370,9 @@ class TestErrorHandling:
         self, memory, mock_llm, mock_embedding
     ):
         """Test handling of updates to nonexistent concepts."""
-        memory.remember("Episode 1")
-        memory.remember("Episode 2")
-        memory.remember("Episode 3")
+        await memory.remember("Episode 1")
+        await memory.remember("Episode 2")
+        await memory.remember("Episode 3")
 
         # Response references nonexistent concept
         mock_llm.set_complete_json_response({
@@ -405,7 +405,7 @@ class TestErrorHandling:
         memory.store.add_concept(c2)
 
         for i in range(3):
-            memory.remember(f"Ep {i}")
+            await memory.remember(f"Ep {i}")
 
         mock_llm.set_complete_json_response({
             "analysis": "Test",
@@ -480,7 +480,7 @@ class TestConcurrentOperations:
         async def recall_and_remember():
             recall_task = asyncio.create_task(memory.recall("test"))
             # Remember during recall
-            memory.remember("New episode")
+            await memory.remember("New episode")
             return await recall_task
 
         result = await recall_and_remember()
@@ -500,17 +500,19 @@ class TestEdgeCases:
             store=memory_store,
         )
 
-    def test_remember_empty_content(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_empty_content(self, memory):
         """Test remembering empty content."""
-        episode_id = memory.remember("")
+        episode_id = await memory.remember("")
 
         episode = memory.store.get_episode(episode_id)
         assert episode.content == ""
 
-    def test_remember_very_long_content(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_very_long_content(self, memory):
         """Test remembering very long content."""
         long_content = "x" * 10000
-        episode_id = memory.remember(long_content)
+        episode_id = await memory.remember(long_content)
 
         episode = memory.store.get_episode(episode_id)
         assert episode.content == long_content
@@ -525,18 +527,20 @@ class TestEdgeCases:
         result = await memory.recall("")
         assert isinstance(result, str)
 
-    def test_remember_special_characters(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_special_characters(self, memory):
         """Test remembering content with special characters."""
         content = "User prefers <html> & 'quotes' \"double\" \n\ttabs"
-        episode_id = memory.remember(content)
+        episode_id = await memory.remember(content)
 
         episode = memory.store.get_episode(episode_id)
         assert episode.content == content
 
-    def test_remember_unicode_content(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_unicode_content(self, memory):
         """Test remembering unicode content."""
         content = "User likes Python 🐍 and emoji 😀"
-        episode_id = memory.remember(content)
+        episode_id = await memory.remember(content)
 
         episode = memory.store.get_episode(episode_id)
         assert episode.content == content

@@ -36,7 +36,7 @@ class MemoryInterface:
     
     Key Design:
     -----------
-    - `remember()` is fast and synchronous - just stores episodes, no LLM calls
+    - `remember()` is async - stores episodes and embeds them by default
     - `consolidate()` does all LLM work in two phases:
       1. Extract entities/types from unextracted episodes
       2. Generalize episodes into concepts (the "sleep" process)
@@ -169,19 +169,20 @@ class MemoryInterface:
             self.store.add_entity(entity)
         return normalized_id
 
-    def remember(
+    async def remember(
         self,
         content: str,
         metadata: Optional[dict] = None,
         episode_type: Optional[EpisodeType] = None,
         entities: Optional[list[str]] = None,
         confidence: float = 1.0,
+        embed: bool = True,
     ) -> str:
         """
         Log an experience/interaction to be consolidated later.
 
-        This is a fast operation - no LLM calls. Entity extraction and
-        type classification happen during consolidate().
+        Embeds the episode content by default for vector search during recall.
+        Entity extraction and type classification happen during consolidate().
 
         Args:
             content: The interaction or experience to remember
@@ -192,6 +193,8 @@ class MemoryInterface:
                       If not provided, will be auto-detected during consolidation.
             confidence: How certain this information is (0.0-1.0, default 1.0).
                         Lower values indicate uncertainty or weak signals.
+            embed: Whether to generate an embedding for the episode (default True).
+                   Set to False when batch-importing and planning to backfill later.
 
         Returns:
             The episode ID
@@ -206,10 +209,16 @@ class MemoryInterface:
         # Apply explicit type/entities if provided
         if episode_type:
             episode.episode_type = episode_type
-            # Note: Don't set entities_extracted here - type can be set independently
         
         if entities:
             episode.entities_extracted = True
+
+        # Embed the episode content
+        if embed and self.embedding:
+            try:
+                episode.embedding = await self.embedding.embed(content)
+            except Exception as e:
+                logger.warning(f"Failed to embed episode: {e}")
         
         # Store the episode
         episode_id = self.store.add_episode(episode)
@@ -236,6 +245,7 @@ class MemoryInterface:
         context: Optional[str] = None,
         entity: Optional[str] = None,
         raw: bool = False,
+        episode_k: Optional[int] = None,
     ) -> str | list[ActivatedConcept] | list[Episode]:
         """
         Retrieve relevant memory for a query.
@@ -246,6 +256,8 @@ class MemoryInterface:
             context: Additional context for the search
             entity: If provided, retrieve by entity instead of semantic search
             raw: If True, return raw objects instead of formatted string
+            episode_k: Number of episodes to retrieve via direct vector search.
+                       Defaults to 0 (disabled). Set >0 to include top matching episodes.
             
         Returns:
             Formatted memory string for LLM injection, or raw objects if raw=True.
@@ -256,6 +268,7 @@ class MemoryInterface:
             raise ValueError("Either query or entity must be provided")
         
         k = k or self.default_recall_k
+        episode_k = episode_k or 0
         
         # Increment recall count and persist when decay is enabled
         self._recall_count += 1
@@ -280,6 +293,13 @@ class MemoryInterface:
             k=k,
             context=context,
         )
+
+        # Direct episode vector search
+        direct_episodes = None
+        if episode_k > 0:
+            direct_episodes = await self.retriever.retrieve_episodes_by_embedding(
+                query=query, k=episode_k
+            )
         
         # Rejuvenation: reset decay for recalled concepts (only for concept-based)
         if activated and self.decay_config.enabled:
@@ -292,7 +312,7 @@ class MemoryInterface:
         if raw:
             return activated
         
-        return self.retriever.format_for_llm(activated)
+        return self.retriever.format_for_llm(activated, direct_episodes=direct_episodes)
     
     async def consolidate(
         self,
@@ -329,6 +349,63 @@ class MemoryInterface:
         
         return result
     
+    async def embed_episodes(self, batch_size: int = 50) -> int:
+        """
+        Backfill embeddings for episodes that don't have them yet.
+
+        Useful for vectorizing episodes in existing databases that were
+        created before episode embedding was enabled.
+
+        Args:
+            batch_size: Number of episodes to embed per batch.
+
+        Returns:
+            Number of episodes embedded.
+        """
+        if not self.embedding:
+            logger.warning("No embedding provider configured, cannot embed episodes")
+            return 0
+
+        conn = self.store._get_conn() if hasattr(self.store, '_get_conn') else None
+        if not conn:
+            logger.warning("embed_episodes requires SQLiteMemoryStore")
+            return 0
+
+        try:
+            rows = conn.execute(
+                """
+                SELECT id, content FROM episodes
+                WHERE embedding IS NULL
+                AND json_extract(data, '$.deleted_at') IS NULL
+                ORDER BY timestamp ASC
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+
+        if not rows:
+            return 0
+
+        total_embedded = 0
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i:i + batch_size]
+            texts = [row["content"] for row in batch]
+            try:
+                embeddings = await self.embedding.embed_batch(texts)
+            except Exception as e:
+                logger.error(f"Failed to embed batch: {e}")
+                continue
+
+            for row, emb in zip(batch, embeddings):
+                episode = self.store.get_episode(row["id"])
+                if episode:
+                    episode.embedding = emb
+                    self.store.update_episode(episode)
+                    total_embedded += 1
+
+        logger.info(f"Embedded {total_embedded} episodes")
+        return total_embedded
+
     async def end_session(self) -> ConsolidationResult:
         """
         Hook for ending a session/conversation.
@@ -527,7 +604,7 @@ class MemoryInterface:
             metadata["source"] = source
             metadata["triage_density"] = triage_result.density
 
-            episode_id = self.remember(
+            episode_id = await self.remember(
                 content=ep.content,
                 metadata=metadata,
                 episode_type=ep_type,

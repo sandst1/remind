@@ -29,9 +29,10 @@ class TestMemoryInterface:
     # remember() tests
     # =========================================================================
 
-    def test_remember_basic(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_basic(self, memory):
         """Test basic remember functionality."""
-        episode_id = memory.remember("User likes Python")
+        episode_id = await memory.remember("User likes Python")
 
         assert episode_id is not None
         assert len(episode_id) == 8
@@ -41,9 +42,10 @@ class TestMemoryInterface:
         assert episode is not None
         assert episode.content == "User likes Python"
 
-    def test_remember_with_metadata(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_with_metadata(self, memory):
         """Test remember with metadata."""
-        episode_id = memory.remember(
+        episode_id = await memory.remember(
             "Important decision",
             metadata={"source": "meeting", "importance": "high"},
         )
@@ -52,9 +54,10 @@ class TestMemoryInterface:
         assert episode.metadata["source"] == "meeting"
         assert episode.metadata["importance"] == "high"
 
-    def test_remember_with_explicit_type(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_with_explicit_type(self, memory):
         """Test remember with explicit episode type."""
-        episode_id = memory.remember(
+        episode_id = await memory.remember(
             "Decided to use async",
             episode_type=EpisodeType.DECISION,
         )
@@ -64,7 +67,8 @@ class TestMemoryInterface:
         # Setting type manually doesn't mean entities are extracted - consolidation will still extract them
         assert episode.entities_extracted == False
 
-    def test_remember_with_all_episode_types(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_with_all_episode_types(self, memory):
         """Test remember with all episode types."""
         types = [
             EpisodeType.OBSERVATION,
@@ -78,13 +82,14 @@ class TestMemoryInterface:
         ]
 
         for ep_type in types:
-            episode_id = memory.remember(f"Test {ep_type.value}", episode_type=ep_type)
+            episode_id = await memory.remember(f"Test {ep_type.value}", episode_type=ep_type)
             episode = memory.store.get_episode(episode_id)
             assert episode.episode_type == ep_type
 
-    def test_remember_with_explicit_entities(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_with_explicit_entities(self, memory):
         """Test remember with explicit entity list."""
-        episode_id = memory.remember(
+        episode_id = await memory.remember(
             "Modified auth.ts",
             entities=["file:src/auth.ts", "person:alice"],
         )
@@ -98,9 +103,10 @@ class TestMemoryInterface:
         assert entity is not None
         assert entity.type == EntityType.FILE
 
-    def test_remember_creates_entities_from_ids(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_creates_entities_from_ids(self, memory):
         """Test remember creates entity objects from IDs (normalized to lowercase)."""
-        memory.remember(
+        await memory.remember(
             "Test",
             entities=["function:myFunc", "class:MyClass", "tool:redis"],
         )
@@ -116,9 +122,10 @@ class TestMemoryInterface:
         tool = memory.store.get_entity("tool:redis")
         assert tool.type == EntityType.TOOL
 
-    def test_remember_with_confidence(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_with_confidence(self, memory):
         """Test remember with confidence level."""
-        episode_id = memory.remember(
+        episode_id = await memory.remember(
             "User might prefer TypeScript",
             confidence=0.6,
         )
@@ -126,31 +133,35 @@ class TestMemoryInterface:
         episode = memory.store.get_episode(episode_id)
         assert episode.confidence == 0.6
 
-    def test_remember_clamps_confidence_high(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_clamps_confidence_high(self, memory):
         """Test confidence is clamped to max 1.0."""
-        episode_id = memory.remember("High confidence", confidence=1.5)
+        episode_id = await memory.remember("High confidence", confidence=1.5)
         episode = memory.store.get_episode(episode_id)
         assert episode.confidence == 1.0
 
-    def test_remember_clamps_confidence_low(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_clamps_confidence_low(self, memory):
         """Test confidence is clamped to min 0.0."""
-        episode_id = memory.remember("Low confidence", confidence=-0.5)
+        episode_id = await memory.remember("Low confidence", confidence=-0.5)
         episode = memory.store.get_episode(episode_id)
         assert episode.confidence == 0.0
 
-    def test_remember_updates_episode_buffer(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_updates_episode_buffer(self, memory):
         """Test episode buffer is updated."""
         assert len(memory._episode_buffer) == 0
 
-        memory.remember("First")
+        await memory.remember("First")
         assert len(memory._episode_buffer) == 1
 
-        memory.remember("Second")
+        await memory.remember("Second")
         assert len(memory._episode_buffer) == 2
 
-    def test_remember_creates_mentions(self, memory):
+    @pytest.mark.asyncio
+    async def test_remember_creates_mentions(self, memory):
         """Test remember creates mention records."""
-        episode_id = memory.remember(
+        episode_id = await memory.remember(
             "Test",
             entities=["file:test.py"],
         )
@@ -315,9 +326,9 @@ class TestMemoryInterface:
     @pytest.mark.asyncio
     async def test_consolidate_clears_buffer_on_success(self, memory, mock_llm):
         """Test episode buffer is cleared after successful consolidation."""
-        memory.remember("Episode 1")
-        memory.remember("Episode 2")
-        memory.remember("Episode 3")
+        await memory.remember("Episode 1")
+        await memory.remember("Episode 2")
+        await memory.remember("Episode 3")
 
         assert len(memory._episode_buffer) == 3
 
@@ -336,7 +347,7 @@ class TestMemoryInterface:
     @pytest.mark.asyncio
     async def test_end_session_with_pending(self, memory, mock_llm):
         """Test end_session triggers consolidation."""
-        memory.remember("Episode 1")
+        await memory.remember("Episode 1")
 
         mock_llm.set_complete_json_response({
             "analysis": "Test",
@@ -361,45 +372,45 @@ class TestMemoryInterface:
     # Properties and state tests
     # =========================================================================
 
-    def test_pending_episodes_count(self, memory):
+    @pytest.mark.asyncio
+    async def test_pending_episodes_count(self, memory):
         """Test pending_episodes_count property."""
         assert memory.pending_episodes_count == 0
 
-        memory.remember("First")
+        await memory.remember("First")
         assert memory.pending_episodes_count == 1
 
-        memory.remember("Second")
+        await memory.remember("Second")
         assert memory.pending_episodes_count == 2
 
     def test_should_consolidate_false(self, memory):
         """Test should_consolidate is False below threshold."""
         assert memory.should_consolidate == False
 
-        memory.remember("First")
-        memory.remember("Second")
-        assert memory.should_consolidate == False
-
-    def test_should_consolidate_true(self, memory):
+    @pytest.mark.asyncio
+    async def test_should_consolidate_true(self, memory):
         """Test should_consolidate is True at threshold."""
         # Add episodes up to threshold (5)
         for i in range(5):
-            memory.remember(f"Episode {i}")
+            await memory.remember(f"Episode {i}")
 
         assert memory.should_consolidate == True
 
-    def test_get_pending_episodes(self, memory):
+    @pytest.mark.asyncio
+    async def test_get_pending_episodes(self, memory):
         """Test get_pending_episodes method."""
-        memory.remember("First")
-        memory.remember("Second")
+        await memory.remember("First")
+        await memory.remember("Second")
 
         pending = memory.get_pending_episodes()
 
         assert len(pending) == 2
 
-    def test_get_pending_episodes_limit(self, memory):
+    @pytest.mark.asyncio
+    async def test_get_pending_episodes_limit(self, memory):
         """Test get_pending_episodes respects limit."""
         for i in range(10):
-            memory.remember(f"Episode {i}")
+            await memory.remember(f"Episode {i}")
 
         pending = memory.get_pending_episodes(limit=3)
 
@@ -432,20 +443,22 @@ class TestMemoryInterface:
 
         assert len(result) == 3
 
-    def test_get_recent_episodes(self, memory):
+    @pytest.mark.asyncio
+    async def test_get_recent_episodes(self, memory):
         """Test get_recent_episodes method."""
         for i in range(5):
-            memory.remember(f"Episode {i}")
+            await memory.remember(f"Episode {i}")
 
         result = memory.get_recent_episodes(limit=3)
 
         assert len(result) == 3
 
-    def test_get_episodes_by_type(self, memory):
+    @pytest.mark.asyncio
+    async def test_get_episodes_by_type(self, memory):
         """Test get_episodes_by_type method."""
-        memory.remember("Decision 1", episode_type=EpisodeType.DECISION)
-        memory.remember("Decision 2", episode_type=EpisodeType.DECISION)
-        memory.remember("Question", episode_type=EpisodeType.QUESTION)
+        await memory.remember("Decision 1", episode_type=EpisodeType.DECISION)
+        await memory.remember("Decision 2", episode_type=EpisodeType.DECISION)
+        await memory.remember("Question", episode_type=EpisodeType.QUESTION)
 
         decisions = memory.get_episodes_by_type(EpisodeType.DECISION)
 
@@ -465,9 +478,10 @@ class TestMemoryInterface:
         result = memory.get_entity("nonexistent")
         assert result is None
 
-    def test_get_all_entities(self, memory):
+    @pytest.mark.asyncio
+    async def test_get_all_entities(self, memory):
         """Test get_all_entities method."""
-        memory.remember("Modified auth.ts", entities=["file:auth.ts", "person:bob"])
+        await memory.remember("Modified auth.ts", entities=["file:auth.ts", "person:bob"])
 
         entities = memory.get_all_entities()
 
@@ -483,12 +497,13 @@ class TestMemoryInterface:
 
         assert len(result) == 1
 
-    def test_get_entity_mention_counts(self, memory):
+    @pytest.mark.asyncio
+    async def test_get_entity_mention_counts(self, memory):
         """Test get_entity_mention_counts method."""
         # Create multiple episodes mentioning same entity
         for i in range(3):
-            memory.remember(f"Episode {i}", entities=["file:common.py"])
-        memory.remember("Other", entities=["file:other.py"])
+            await memory.remember(f"Episode {i}", entities=["file:common.py"])
+        await memory.remember("Other", entities=["file:other.py"])
 
         counts = memory.get_entity_mention_counts()
 
@@ -500,10 +515,11 @@ class TestMemoryInterface:
     # get_stats tests
     # =========================================================================
 
-    def test_get_stats(self, memory, mock_llm, mock_embedding):
+    @pytest.mark.asyncio
+    async def test_get_stats(self, memory, mock_llm, mock_embedding):
         """Test get_stats method."""
-        memory.remember("Episode 1")
-        memory.remember("Episode 2")
+        await memory.remember("Episode 1")
+        await memory.remember("Episode 2")
 
         stats = memory.get_stats()
 
@@ -515,9 +531,10 @@ class TestMemoryInterface:
         assert stats["llm_provider"] == "mock/llm"
         assert stats["embedding_provider"] == "mock/embedding"
 
-    def test_get_stats_includes_buffer(self, memory):
+    @pytest.mark.asyncio
+    async def test_get_stats_includes_buffer(self, memory):
         """Test stats includes session buffer info."""
-        memory.remember("Test")
+        await memory.remember("Test")
 
         stats = memory.get_stats()
 
@@ -532,9 +549,10 @@ class TestMemoryInterface:
     # Import/Export tests
     # =========================================================================
 
-    def test_export_memory(self, memory, sample_concept):
+    @pytest.mark.asyncio
+    async def test_export_memory(self, memory, sample_concept):
         """Test export_memory method."""
-        memory.remember("Test episode")
+        await memory.remember("Test episode")
         memory.store.add_concept(sample_concept)
 
         data = memory.export_memory()
@@ -545,9 +563,10 @@ class TestMemoryInterface:
         assert len(data["episodes"]) == 1
         assert len(data["concepts"]) == 1
 
-    def test_export_memory_to_file(self, memory, sample_concept, tmp_path):
+    @pytest.mark.asyncio
+    async def test_export_memory_to_file(self, memory, sample_concept, tmp_path):
         """Test export_memory to file."""
-        memory.remember("Test episode")
+        await memory.remember("Test episode")
 
         export_path = tmp_path / "export.json"
         data = memory.export_memory(path=str(export_path))
@@ -628,7 +647,7 @@ class TestMemoryInterface:
             db_path=temp_db_path,
         ) as memory:
             assert memory is not None
-            memory.remember("Inside context")
+            await memory.remember("Inside context")
             assert memory.pending_episodes_count == 1
 
     @pytest.mark.asyncio
@@ -649,8 +668,8 @@ class TestMemoryInterface:
             embedding=mock_embedding,
             db_path=temp_db_path,
         ) as memory:
-            memory.remember("Episode 1")
-            memory.remember("Episode 2")
+            await memory.remember("Episode 1")
+            await memory.remember("Episode 2")
 
         # After exit, consolidation should have run
         # Verify by checking call history

@@ -478,7 +478,8 @@ class TestOutcomeEpisodeType:
     def test_outcome_from_string(self):
         assert EpisodeType("outcome") == EpisodeType.OUTCOME
 
-    def test_remember_outcome(self, mock_llm, mock_embedding, memory_store):
+    @pytest.mark.asyncio
+    async def test_remember_outcome(self, mock_llm, mock_embedding, memory_store):
         memory = MemoryInterface(
             llm=mock_llm,
             embedding=mock_embedding,
@@ -486,7 +487,7 @@ class TestOutcomeEpisodeType:
             auto_consolidate=False,
         )
 
-        episode_id = memory.remember(
+        episode_id = await memory.remember(
             "Grep search missed the function because of naming",
             episode_type=EpisodeType.OUTCOME,
             metadata={

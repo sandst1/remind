@@ -85,6 +85,11 @@ class MemoryStore(ABC):
     def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
         """Find concepts by embedding similarity. Returns (concept, similarity) pairs."""
         ...
+
+    @abstractmethod
+    def find_episodes_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple["Episode", float]]:
+        """Find episodes by embedding similarity. Returns (episode, similarity) pairs."""
+        ...
     
     # Graph traversal
     @abstractmethod
@@ -594,6 +599,15 @@ class SQLiteMemoryStore(MemoryStore):
             conn.commit()
             logger.info("Migration: Added source_episode_ids column to entity_relations table")
 
+        # Migration: Add embedding column to episodes table if it doesn't exist
+        ep_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(episodes)").fetchall()
+        }
+        if "embedding" not in ep_cols:
+            conn.execute("ALTER TABLE episodes ADD COLUMN embedding BLOB")
+            conn.commit()
+            logger.info("Migration: Added embedding column to episodes table")
+
         # Log migration status
         try:
             entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
@@ -858,7 +872,37 @@ class SQLiteMemoryStore(MemoryStore):
             return results[:k]
         finally:
             conn.close()
-    
+
+    def find_episodes_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Episode, float]]:
+        """Find episodes by embedding similarity (excluding soft-deleted)."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT data, embedding FROM episodes
+                WHERE embedding IS NOT NULL
+                AND json_extract(data, '$.deleted_at') IS NULL
+                """
+            ).fetchall()
+
+            results = []
+            for row in rows:
+                if not row["embedding"]:
+                    continue
+
+                stored_embedding = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
+                similarity = cosine_similarity(embedding, stored_embedding)
+
+                episode = Episode.from_dict(json.loads(row["data"]))
+                episode.embedding = stored_embedding
+
+                results.append((episode, similarity))
+
+            results.sort(key=lambda x: x[1], reverse=True)
+            return results[:k]
+        finally:
+            conn.close()
+
     # Graph traversal
     
     def get_related(
@@ -989,11 +1033,14 @@ class SQLiteMemoryStore(MemoryStore):
         conn = self._get_conn()
         try:
             data = episode.to_dict()
+            embedding_blob = None
+            if episode.embedding:
+                embedding_blob = np.array(episode.embedding, dtype=np.float32).tobytes()
 
             conn.execute(
                 """
-                INSERT INTO episodes (id, title, content, data, consolidated, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO episodes (id, title, content, data, consolidated, timestamp, embedding)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     episode.id,
@@ -1002,6 +1049,7 @@ class SQLiteMemoryStore(MemoryStore):
                     json.dumps(data),
                     episode.consolidated,
                     episode.timestamp.isoformat(),
+                    embedding_blob,
                 )
             )
             conn.commit()
@@ -1015,14 +1063,17 @@ class SQLiteMemoryStore(MemoryStore):
         try:
             row = conn.execute(
                 """
-                SELECT data FROM episodes
+                SELECT data, embedding FROM episodes
                 WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL
                 """,
                 (id,)
             ).fetchone()
             if not row:
                 return None
-            return Episode.from_dict(json.loads(row["data"]))
+            episode = Episode.from_dict(json.loads(row["data"]))
+            if row["embedding"]:
+                episode.embedding = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
+            return episode
         finally:
             conn.close()
 
@@ -1035,13 +1086,19 @@ class SQLiteMemoryStore(MemoryStore):
             placeholders = ",".join("?" for _ in ids)
             rows = conn.execute(
                 f"""
-                SELECT data FROM episodes
+                SELECT data, embedding FROM episodes
                 WHERE id IN ({placeholders})
                 AND json_extract(data, '$.deleted_at') IS NULL
                 """,
                 tuple(ids),
             ).fetchall()
-            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
+            episodes = []
+            for row in rows:
+                ep = Episode.from_dict(json.loads(row["data"]))
+                if row["embedding"]:
+                    ep.embedding = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
+                episodes.append(ep)
+            return episodes
         finally:
             conn.close()
 
@@ -1050,11 +1107,14 @@ class SQLiteMemoryStore(MemoryStore):
         conn = self._get_conn()
         try:
             data = episode.to_dict()
+            embedding_blob = None
+            if episode.embedding:
+                embedding_blob = np.array(episode.embedding, dtype=np.float32).tobytes()
 
             conn.execute(
                 """
                 UPDATE episodes
-                SET title = ?, content = ?, data = ?, consolidated = ?, timestamp = ?
+                SET title = ?, content = ?, data = ?, consolidated = ?, timestamp = ?, embedding = ?
                 WHERE id = ?
                 """,
                 (
@@ -1063,6 +1123,7 @@ class SQLiteMemoryStore(MemoryStore):
                     json.dumps(data),
                     episode.consolidated,
                     episode.timestamp.isoformat(),
+                    embedding_blob,
                     episode.id,
                 )
             )

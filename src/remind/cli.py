@@ -102,13 +102,14 @@ def main(ctx, db: str, llm: str, embedding: str):
               help="Episode type (detected during consolidation if not provided)")
 @click.option("--entity", "-e", "entities", multiple=True, 
               help="Entity IDs (e.g., file:src/auth.ts, person:alice)")
+@click.option("--no-embed", is_flag=True, help="Skip embedding the episode (faster, no API call)")
 @click.pass_context
 def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[str], 
-             entities: tuple):
+             entities: tuple, no_embed: bool):
     """Add an episode to memory.
     
-    This is a fast operation - no LLM calls. Entity extraction and
-    type classification happen during consolidation.
+    Embeds the episode by default for vector search during recall.
+    Entity extraction and type classification happen during consolidation.
     """
     from remind.models import EpisodeType
     
@@ -118,13 +119,16 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
     ep_type = EpisodeType(episode_type) if episode_type else None
     entity_list = list(entities) if entities else None
     
-    # remember() is now sync - no LLM call
-    episode_id = memory.remember(
-        content, 
-        metadata=meta,
-        episode_type=ep_type,
-        entities=entity_list,
-    )
+    async def _remember():
+        return await memory.remember(
+            content, 
+            metadata=meta,
+            episode_type=ep_type,
+            entities=entity_list,
+            embed=not no_embed,
+        )
+
+    episode_id = run_async(_remember())
     
     console.print(f"[green]✓[/green] Remembered as episode [cyan]{episode_id}[/cyan]")
 
@@ -157,18 +161,21 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
 @main.command()
 @click.argument("query", required=False, default=None)
 @click.option("-k", default=3, help="Number of concepts to retrieve")
+@click.option("--episode-k", "-ek", default=0, help="Number of episodes to retrieve via direct vector search")
 @click.option("--context", "-c", help="Additional context for search")
 @click.option("--entity", "-e", help="Retrieve by entity ID instead of semantic search")
 @click.option("--raw", is_flag=True, help="Show raw concept data")
 @click.pass_context
-def recall(ctx, query: Optional[str], k: int, context: Optional[str], entity: Optional[str], raw: bool):
+def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[str], entity: Optional[str], raw: bool):
     """Retrieve relevant concepts for a query.
     
     By default, does semantic search across concepts. 
     Use --entity to retrieve by entity ID instead.
+    Use --episode-k to also include direct episode vector matches.
     
     Examples:
         remind recall "authentication issues"
+        remind recall --episode-k 10 "authentication issues"
         remind recall --entity file:src/auth.ts
         remind recall -e "person:alice"
     """
@@ -178,7 +185,7 @@ def recall(ctx, query: Optional[str], k: int, context: Optional[str], entity: Op
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
     
     async def _recall():
-        return await memory.recall(query, k=k, context=context, entity=entity, raw=raw)
+        return await memory.recall(query, k=k, context=context, entity=entity, raw=raw, episode_k=episode_k)
     
     result = run_async(_recall())
     
@@ -296,6 +303,25 @@ def consolidate(ctx, force: bool, background: bool):
         console.print(f"  [yellow]Contradictions found: {result.contradictions_found}[/yellow]")
         for contradiction in result.contradiction_details:
             console.print(f"    → {contradiction}")
+
+
+@main.command("embed-episodes")
+@click.option("--batch-size", default=50, help="Number of episodes to embed per batch")
+@click.pass_context
+def embed_episodes(ctx, batch_size: int):
+    """Backfill embeddings for episodes that don't have them yet.
+
+    Useful for vectorizing episodes in existing databases created before
+    episode embedding was enabled.
+    """
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    async def _embed():
+        return await memory.embed_episodes(batch_size=batch_size)
+
+    console.print("[cyan]Embedding un-embedded episodes...[/cyan]")
+    count = run_async(_embed())
+    console.print(f"[green]✓[/green] Embedded {count} episodes")
 
 
 @main.command()
@@ -1205,12 +1231,16 @@ def task_add(ctx, content: str, entities: tuple, priority: str, plan: Optional[s
         meta["depends_on"] = list(depends_on)
 
     from remind.models import EpisodeType
-    episode_id = memory.remember(
-        content,
-        metadata=meta,
-        episode_type=EpisodeType.TASK,
-        entities=list(entities) if entities else None,
-    )
+
+    async def _remember():
+        return await memory.remember(
+            content,
+            metadata=meta,
+            episode_type=EpisodeType.TASK,
+            entities=list(entities) if entities else None,
+        )
+
+    episode_id = run_async(_remember())
 
     console.print(f"[green]✓[/green] Created task [cyan]{episode_id}[/cyan]")
     console.print(f"  Priority: [yellow]{priority}[/yellow]")

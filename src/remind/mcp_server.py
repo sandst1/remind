@@ -121,8 +121,7 @@ async def tool_remember(
     if entities:
         entity_list = [e.strip() for e in entities.split(",") if e.strip()]
     
-    # remember() is now sync - no LLM call
-    episode_id = memory.remember(
+    episode_id = await memory.remember(
         content, 
         metadata=meta,
         episode_type=ep_type,
@@ -622,7 +621,7 @@ async def tool_task_add(
     if entities:
         entity_list = [e.strip() for e in entities.split(",") if e.strip()]
 
-    episode_id = memory.remember(
+    episode_id = await memory.remember(
         content,
         metadata=meta,
         episode_type=EpisodeType.TASK,

@@ -987,7 +987,7 @@ async def add_task(request: Request) -> JSONResponse:
         if depends_on:
             metadata["depends_on"] = depends_on
 
-        episode = memory.remember(
+        episode = await memory.remember(
             content=content,
             episode_type=EpisodeType.TASK,
             entities=entities or None,
