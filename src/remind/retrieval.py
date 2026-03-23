@@ -18,6 +18,24 @@ from remind.providers.base import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
+# Metadata keys to suppress in recall output (internal bookkeeping)
+_HIDDEN_METADATA_KEYS = {"source", "triage_density"}
+
+
+def _format_episode_line(ep: "Episode", prefix: str = "    • ") -> str:
+    """Format a single episode as a compact one-liner with metadata."""
+    date = ep.updated_at.strftime("%Y-%m-%d %H:%M")
+    meta = ep.metadata or {}
+
+    meta_parts = []
+    for k, v in meta.items():
+        if k in _HIDDEN_METADATA_KEYS:
+            continue
+        meta_parts.append(f"{k}={v}")
+
+    meta_str = f" ({', '.join(meta_parts)})" if meta_parts else ""
+    return f"{prefix}[{ep.episode_type.value}, {date}]{meta_str} {ep.content}"
+
 
 # Episode type weights for scoring -- higher value = more signal
 _EPISODE_TYPE_WEIGHTS: dict[EpisodeType, float] = {
@@ -641,9 +659,7 @@ class MemoryRetriever:
         if direct_episodes:
             lines.append("RELEVANT EPISODES:\n")
             for se in direct_episodes:
-                ep = se.episode
-                ep_date = ep.updated_at.strftime("%Y-%m-%d %H:%M")
-                lines.append(f"  • [{ep.episode_type.value}, {ep_date}] {ep.content}")
+                lines.append(_format_episode_line(se.episode, prefix="  • "))
             lines.append("")
 
         lines.append("RELEVANT MEMORY:\n")
@@ -732,8 +748,7 @@ class MemoryRetriever:
                 lines.append("")
                 lines.append("  Source episodes:")
                 for episode in source_eps:
-                    ep_updated = episode.updated_at.strftime("%Y-%m-%d %H:%M")
-                    lines.append(f"    • [{episode.episode_type.value}, {ep_updated}] {episode.content}")
+                    lines.append(_format_episode_line(episode))
 
             lines.append("")  # Blank line between concepts
 
@@ -760,8 +775,7 @@ class MemoryRetriever:
                         continue
                     lines.append(f"  [{type_name.upper()}S]")
                     for ep in by_type[type_name]:
-                        ep_updated = ep.updated_at.strftime("%Y-%m-%d %H:%M")
-                        lines.append(f"    • [{ep_updated}] {ep.content}")
+                        lines.append(_format_episode_line(ep))
                 lines.append("")
 
         return "\n".join(lines)
@@ -809,16 +823,13 @@ class MemoryRetriever:
                 lines.append(f"[{type_name.upper()}S]")
 
                 for ep in type_episodes:
-                    ep_updated = ep.updated_at.strftime("%Y-%m-%d %H:%M")
-                    lines.append(f"  • [{ep_updated}] {ep.content}")
+                    lines.append(_format_episode_line(ep, prefix="  • "))
 
                 lines.append("")
         else:
             # Simple chronological list
             for ep in episodes:
-                type_label = f"[{ep.episode_type.value[:3]}]"
-                ep_updated = ep.updated_at.strftime("%Y-%m-%d %H:%M")
-                lines.append(f"  {type_label} [{ep_updated}] {ep.content}")
+                lines.append(_format_episode_line(ep, prefix="  "))
         
         return "\n".join(lines)
 
