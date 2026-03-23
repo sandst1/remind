@@ -4,6 +4,8 @@ All notable changes to Remind.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-23
+
 ### Added
 - **Episode embeddings** — `remember` now embeds episode content by default for direct vector search during recall. Use `--no-embed` to skip (faster, no API call).
 - **Direct episode recall** — `recall --episode-k N` (CLI) or `episode_k` parameter (Python/MCP) retrieves episodes by embedding similarity alongside concept-based spreading activation. Default: 5. Set to 0 to disable.

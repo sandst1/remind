@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-23
+
 ### Added
 - Episode embeddings: `remember` now embeds episode content by default for direct vector search during recall. Use `--no-embed` to skip embedding (faster, no API call).
 - Direct episode recall via `recall --episode-k N` (CLI) or `episode_k` parameter (Python/MCP). Retrieves episodes by embedding similarity alongside concept-based spreading activation. Default: 5. Set to 0 to disable.
