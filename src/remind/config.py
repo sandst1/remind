@@ -54,7 +54,6 @@ class AzureOpenAIConfig:
 
     api_key: Optional[str] = None
     base_url: Optional[str] = None
-    api_version: Optional[str] = None
     deployment_name: Optional[str] = None
     embedding_deployment_name: Optional[str] = None
     embedding_size: int = 1536
@@ -213,8 +212,6 @@ def load_config() -> RemindConfig:
         config.azure_openai.api_key = api_key
     if base_url := os.environ.get("AZURE_OPENAI_API_BASE_URL"):
         config.azure_openai.base_url = base_url
-    if api_version := os.environ.get("AZURE_OPENAI_API_VERSION"):
-        config.azure_openai.api_version = api_version
     if deployment := os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"):
         config.azure_openai.deployment_name = deployment
     if embed_deployment := os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"):

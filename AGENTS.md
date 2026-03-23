@@ -159,8 +159,7 @@ class OpenAIConfig:
 @dataclass
 class AzureOpenAIConfig:
     api_key: Optional[str] = None
-    base_url: Optional[str] = None
-    api_version: Optional[str] = None
+    base_url: Optional[str] = None  # e.g. https://myresource.openai.azure.com (/openai/v1 appended automatically)
     deployment_name: Optional[str] = None
     embedding_deployment_name: Optional[str] = None
     embedding_size: int = 1536

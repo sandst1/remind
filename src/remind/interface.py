@@ -1129,7 +1129,6 @@ def create_memory(
         llm = AzureOpenAILLM(
             api_key=config.azure_openai.api_key,
             base_url=config.azure_openai.base_url,
-            api_version=config.azure_openai.api_version,
             deployment_name=config.azure_openai.deployment_name,
         )
     elif llm_provider == "ollama":
@@ -1150,7 +1149,6 @@ def create_memory(
         embedding = AzureOpenAIEmbedding(
             api_key=config.azure_openai.api_key,
             base_url=config.azure_openai.base_url,
-            api_version=config.azure_openai.api_version,
             deployment_name=config.azure_openai.embedding_deployment_name,
             dimensions=config.azure_openai.embedding_size,
         )
@@ -1169,7 +1167,7 @@ def create_memory(
     elif llm_provider == "openai" and config.openai.ingest_model:
         triage_llm = OpenAILLM(api_key=config.openai.api_key, base_url=config.openai.base_url, model=config.openai.ingest_model)
     elif llm_provider == "azure_openai" and config.azure_openai.ingest_deployment_name:
-        triage_llm = AzureOpenAILLM(api_key=config.azure_openai.api_key, base_url=config.azure_openai.base_url, api_version=config.azure_openai.api_version, deployment_name=config.azure_openai.ingest_deployment_name)
+        triage_llm = AzureOpenAILLM(api_key=config.azure_openai.api_key, base_url=config.azure_openai.base_url, deployment_name=config.azure_openai.ingest_deployment_name)
     elif llm_provider == "ollama" and config.ollama.ingest_model:
         triage_llm = OllamaLLM(model=config.ollama.ingest_model, base_url=config.ollama.url)
 

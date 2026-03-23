@@ -35,7 +35,6 @@ Create `~/.remind/remind.config.json`:
   "azure_openai": {
     "api_key": "...",
     "base_url": "https://your-resource.openai.azure.com",
-    "api_version": "2024-02-15-preview",
     "deployment_name": "gpt-4",
     "embedding_deployment_name": "text-embedding-3-small",
     "embedding_size": 1536,
@@ -96,7 +95,6 @@ EMBEDDING_PROVIDER=openai
 ```bash
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_API_BASE_URL=https://your-resource.openai.azure.com
-AZURE_OPENAI_API_VERSION=2024-02-15-preview
 AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME=text-embedding-3-small
 LLM_PROVIDER=azure_openai
