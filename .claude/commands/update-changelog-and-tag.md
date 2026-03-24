@@ -65,18 +65,24 @@ Format:
 
 Find the `version` field in `pyproject.toml` and update it to the new version string.
 
-## 7. Commit and tag
+## 7. Sync documentation site
+
+1. **`website/reference/changelog.md`** — Mirror the same new version section you added to `CHANGELOG.md` (same date and bullets; keep the site’s existing formatting style, e.g. bold labels on list items if present).
+
+2. **`website/.vitepress/config.ts`** — In `themeConfig.nav`, find the dropdown whose `items` include Changelog and PyPI. Set its `text` to **`vX.Y.Z`** (must match the release tag). This is the version shown in the top-right corner of the docs site.
+
+## 8. Commit and tag
 
 ```bash
-git add CHANGELOG.md pyproject.toml
+git add CHANGELOG.md pyproject.toml website/reference/changelog.md website/.vitepress/config.ts
 git commit -m "chore: release vX.Y.Z"
 git tag vX.Y.Z
 ```
 
-## 8. Report
+## 9. Report
 
 Tell the user:
 - The new version
 - A summary of what was included in the release
 - The git tag that was created
-- Remind them to push with: `git push && git push --tags`
+- Remind them to push with: `git push && git push --tags` (the docs site will pick up the VitePress version after the docs deploy workflow runs, if applicable)

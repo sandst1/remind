@@ -3,7 +3,7 @@
   import { currentDb } from '../lib/stores';
   import { fetchTasks, updateTaskStatus, addTask, updateEpisode, fetchEpisode } from '../lib/api';
   import type { Episode, TaskStatus } from '../lib/types';
-  import { Circle, Play, CheckCircle2, Ban, Plus, ChevronDown, ChevronUp, Pencil, BookOpen, ClipboardList } from 'lucide-svelte';
+  import { Circle, Play, CheckCircle2, Ban, Plus, ChevronDown, ChevronUp, Pencil } from 'lucide-svelte';
 
   let tasks: Episode[] = [];
   let loading = false;
@@ -14,9 +14,30 @@
   let newTaskContent = '';
   let newTaskPriority = 'p1';
   let addingTask = false;
+  let filterPlanId: string = '';
 
   // Map of episode ID -> short label for plans/specs linked to tasks
   let linkedEpisodeLabels: Record<string, string> = {};
+
+  // Distinct plan options derived from loaded tasks
+  $: planOptions = (() => {
+    const seen = new Map<string, string>();
+    for (const t of tasks) {
+      const pid = t.metadata?.plan_id;
+      if (pid && !seen.has(pid)) {
+        seen.set(pid, linkedEpisodeLabels[pid] ?? pid);
+      }
+    }
+    return [...seen.entries()].map(([id, label]) => ({ id, label }));
+  })();
+
+  // Client-side plan filter (must be $: so the board re-renders when the dropdown changes)
+  $: visibleTasks = tasks.filter((t) => {
+    if (!filterPlanId) return true;
+    const pid = t.metadata?.plan_id;
+    if (pid == null || pid === '') return false;
+    return String(pid) === String(filterPlanId);
+  });
 
   const columns: { status: TaskStatus; label: string; icon: any }[] = [
     { status: 'todo', label: 'To Do', icon: Circle },
@@ -53,7 +74,6 @@
     const ids = new Set<string>();
     for (const task of taskList) {
       if (task.metadata?.plan_id) ids.add(task.metadata.plan_id);
-      for (const sid of task.metadata?.spec_ids ?? []) ids.add(sid);
     }
 
     const missing = [...ids].filter(id => !(id in linkedEpisodeLabels));
@@ -72,10 +92,6 @@
       }
     }
     linkedEpisodeLabels = { ...linkedEpisodeLabels, ...newLabels };
-  }
-
-  function tasksByStatus(status: TaskStatus): Episode[] {
-    return tasks.filter(t => (t.metadata?.status || 'todo') === status);
   }
 
   async function handleStatusChange(taskId: string, newStatus: TaskStatus) {
@@ -224,6 +240,14 @@
   <div class="header">
     <h2>Tasks</h2>
     <div class="header-actions">
+      {#if planOptions.length > 0}
+        <select class="filter-select" bind:value={filterPlanId}>
+          <option value="">All plans</option>
+          {#each planOptions as opt}
+            <option value={opt.id}>{opt.label}</option>
+          {/each}
+        </select>
+      {/if}
       <button class="btn-secondary" onclick={toggleDone}>
         {#if showDone}
           <ChevronUp size={14} />
@@ -271,7 +295,9 @@
   {:else}
     <div class="columns">
       {#each columns as col}
-        {@const colTasks = tasksByStatus(col.status)}
+        {@const colTasks = visibleTasks.filter(
+          (t) => (t.metadata?.status || 'todo') === col.status
+        )}
         {#if col.status !== 'done' || showDone}
           <div class="column">
             <div class="column-header">
@@ -325,29 +351,6 @@
                     <div class="task-content-wrap" role="button" tabindex="0" onclick={() => startEdit(task)} onkeydown={(e) => e.key === 'Enter' && startEdit(task)}>
                       <div class="task-content">{task.content}</div>
                       <span class="edit-icon" title="Edit content"><Pencil size={11} /></span>
-                    </div>
-                  {/if}
-                  {#if task.metadata?.plan_id || (task.metadata?.spec_ids?.length ?? 0) > 0}
-                    <div class="task-links">
-                      {#if task.metadata?.plan_id}
-                        <span class="link-badge link-badge-plan" title="Plan: {linkedEpisodeLabels[task.metadata.plan_id] ?? task.metadata.plan_id}">
-                          <BookOpen size={10} />
-                          {linkedEpisodeLabels[task.metadata.plan_id] ?? task.metadata.plan_id}
-                        </span>
-                      {/if}
-                      {#each task.metadata?.spec_ids ?? [] as specId}
-                        <span class="link-badge link-badge-spec" title="Spec: {linkedEpisodeLabels[specId] ?? specId}">
-                          <ClipboardList size={10} />
-                          {linkedEpisodeLabels[specId] ?? specId}
-                        </span>
-                      {/each}
-                    </div>
-                  {/if}
-                  {#if task.entity_ids.length > 0}
-                    <div class="task-entities">
-                      {#each task.entity_ids as entityId}
-                        <span class="entity-tag">{entityId}</span>
-                      {/each}
                     </div>
                   {/if}
                   {#if task.metadata?.blocked_reason}
@@ -548,7 +551,7 @@
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    padding: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
     box-shadow: var(--shadow-sm);
     transition: box-shadow 0.15s ease;
   }
@@ -593,65 +596,20 @@
     -webkit-box-orient: vertical;
   }
 
-  .task-links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: var(--space-sm);
-  }
-
-  .link-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 2px 6px;
-    border-radius: var(--radius-sm);
-    font-size: 10px;
-    font-weight: 500;
-    max-width: 160px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    cursor: default;
-  }
-
-  .link-badge-plan {
-    background: var(--color-blue-bg, #eff6ff);
-    color: var(--color-blue, #2563eb);
-    border: 1px solid color-mix(in srgb, var(--color-blue, #2563eb) 25%, transparent);
-  }
-
-  .link-badge-spec {
-    background: var(--color-purple-bg, #f5f3ff);
-    color: var(--color-purple, #7c3aed);
-    border: 1px solid color-mix(in srgb, var(--color-purple, #7c3aed) 25%, transparent);
-  }
-
-  :global([data-theme="dark"]) .link-badge-plan {
-    background: color-mix(in srgb, var(--color-blue, #2563eb) 15%, transparent);
-    border-color: color-mix(in srgb, var(--color-blue, #2563eb) 30%, transparent);
-  }
-
-  :global([data-theme="dark"]) .link-badge-spec {
-    background: color-mix(in srgb, var(--color-purple, #7c3aed) 15%, transparent);
-    border-color: color-mix(in srgb, var(--color-purple, #7c3aed) 30%, transparent);
-  }
-
-  .task-entities {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: var(--space-sm);
-  }
-
-  .entity-tag {
-    padding: 2px 6px;
-    background: var(--color-bg);
-    border-radius: var(--radius-sm);
-    font-size: 10px;
-    font-family: var(--font-mono);
-    color: var(--color-text-muted);
+  .filter-select {
+    padding: var(--space-sm) var(--space-md);
     border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    max-width: 200px;
+  }
+
+  .filter-select:focus {
+    border-color: var(--color-primary);
+    outline: none;
   }
 
   .blocked-reason {
