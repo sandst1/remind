@@ -568,5 +568,5 @@ class TestRetrieverFormatting:
             "file:test.py", episodes, include_type_breakdown=False
         )
 
-        # Should show type labels inline
-        assert "[obs]" in result or "[dec]" in result
+        # Inline lines use full type names from EpisodeType.value (see _format_episode_line)
+        assert "[observation," in result and "[decision," in result

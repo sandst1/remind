@@ -1983,7 +1983,6 @@ class SQLiteMemoryStore(MemoryStore):
                 ),
                 updated_at = CURRENT_TIMESTAMP
                 WHERE json_extract(data, '$.decay_factor') > 0
-                  AND json_extract(data, '$.access_count') > 0
                   AND (
                     json_extract(data, '$.last_accessed') IS NULL
                     OR julianday('now', 'localtime')

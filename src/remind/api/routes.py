@@ -987,12 +987,19 @@ async def add_task(request: Request) -> JSONResponse:
         if depends_on:
             metadata["depends_on"] = depends_on
 
-        episode = await memory.remember(
+        episode_id = await memory.remember(
             content=content,
             episode_type=EpisodeType.TASK,
             entities=entities or None,
             metadata=metadata,
         )
+
+        episode = memory.store.get_episode(episode_id)
+        if not episode:
+            return JSONResponse(
+                {"error": "Task was created but could not be loaded"},
+                status_code=500,
+            )
 
         return JSONResponse({"success": True, "task": episode.to_dict()}, status_code=201)
     except Exception as e:
