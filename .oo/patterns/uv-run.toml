@@ -1,0 +1,9 @@
+command_match = "\\buv\\s+run\\b"
+
+[success]
+pattern = '(?s).*'
+summary = ""
+
+[failure]
+strategy = "tail"
+lines = 20

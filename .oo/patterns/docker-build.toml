@@ -1,0 +1,9 @@
+command_match = "\\bdocker\\s+build\\b"
+
+[success]
+pattern = 'Successfully built (?P<id>[0-9a-f]+)'
+summary = "built {id}"
+
+[failure]
+strategy = "tail"
+lines = 20

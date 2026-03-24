@@ -1,0 +1,9 @@
+command_match = "\\buv\\s+run\\s+pytest\\b"
+
+[success]
+pattern = '(?P<passed>\d+) passed'
+summary = "{passed} passed"
+
+[failure]
+strategy = "grep"
+grep = "FAILED|ERROR|AssertionError|Coverage failure|error"

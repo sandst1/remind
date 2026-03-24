@@ -377,6 +377,10 @@ uv run remind-mcp --port 8765
 
 With `uv`, you don't need to manually create a virtual environment or install dependencies - it handles everything automatically.
 
+## Shell commands
+IMPORTANT: Prefix all shell commands, including 'uv' ones with `oo`.
+so e.g. 'oo uv run pytest'. 
+
 ## Design Principles
 
 1. **Separation of concerns**: Storage, providers, consolidation, retrieval are independent

@@ -1,0 +1,9 @@
+command_match = "\\bnpm\\s+run\\s+build\\b"
+
+[success]
+pattern = 'built in (?P<time>[\d.]+\w+)'
+summary = "built in {time}"
+
+[failure]
+strategy = "tail"
+lines = 20

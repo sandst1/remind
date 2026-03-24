@@ -1,0 +1,9 @@
+command_match = "\\bdocker\\s+compose\\b"
+
+[success]
+pattern = '(?s).*'
+summary = ""
+
+[failure]
+strategy = "tail"
+lines = 20

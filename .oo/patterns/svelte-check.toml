@@ -1,0 +1,9 @@
+command_match = "\\bsvelte-check\\b"
+
+[success]
+pattern = '(?P<errors>\d+) errors?, (?P<warnings>\d+) warnings?'
+summary = "{errors} errors, {warnings} warnings"
+
+[failure]
+strategy = "grep"
+grep = "Error:|error TS"
