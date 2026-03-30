@@ -9,13 +9,11 @@ Uses LLM to extract structured information from raw episodic memories:
 import json
 import logging
 import re
-from dataclasses import replace
-from datetime import datetime
 from typing import Optional
 
 from remind.models import (
-    Episode, Entity, EntityType, EntityRelation,
-    ExtractionResult, normalize_entity_name,
+    Episode, Entity, EntityType, EntityRelation, EpisodeType,
+    ExtractionResult,
 )
 from remind.store import MemoryStore
 from remind.providers.base import LLMProvider
@@ -24,17 +22,6 @@ logger = logging.getLogger(__name__)
 
 # Maximum characters of episode content to send for extraction
 MAX_CONTENT_LENGTH = 2000
-
-
-def _entity_stub_for_id(entity_id: str) -> Entity:
-    """Minimal entity row so FK-backed stores accept entity_relations endpoints."""
-    type_str, name = Entity.parse_id(entity_id)
-    try:
-        entity_type = EntityType(type_str)
-    except ValueError:
-        entity_type = EntityType.OTHER
-    display = name.replace("_", " ").strip() or entity_id
-    return Entity(id=entity_id, type=entity_type, display_name=display)
 
 
 def try_fix_json(text: str) -> Optional[dict]:
@@ -118,99 +105,24 @@ Only include relationships that are explicitly stated or strongly implied.
 Respond with ONLY valid JSON, no explanations."""
 
 
-_BUILTIN_TYPE_DESCRIPTIONS = {
-    "observation": "noticed/learned",
-    "decision": "choice made",
-    "question": "uncertainty",
-    "meta": "about thinking",
-    "preference": "opinion/value",
-    "spec": 'prescriptive requirement ("X shall/must")',
-    "plan": 'sequenced intention ("we will do X then Y")',
-    "task": "discrete work item",
-    "outcome": "result of action/strategy (success/failure/partial)",
-    "fact": "specific factual assertion (config value, name, date, concrete technical detail)",
-}
+EXTRACTION_PROMPT_TEMPLATE = """Classify and extract from this text:
 
-
-def _build_extraction_prompt(valid_types: list[str]) -> str:
-    type_enum = "|".join(valid_types)
-    desc_parts = []
-    for t in valid_types:
-        if t in _BUILTIN_TYPE_DESCRIPTIONS:
-            desc_parts.append(f"{t}={_BUILTIN_TYPE_DESCRIPTIONS[t]}")
-        else:
-            desc_parts.append(t)
-    type_descriptions = ", ".join(desc_parts)
-
-    return """Classify and extract from this text:
-
-{{content}}
+{content}
 
 Return JSON:
-{{{{
-  "type": "{type_enum}",
+{{
+  "type": "observation|decision|question|meta|preference|spec|plan|task|outcome",
   "title": "Short descriptive title (5-10 words)",
-  "entities": [{{{{"type": "file|function|class|person|subject|tool|project", "id": "type:name", "name": "short name"}}}}],
-  "entity_relationships": [{{{{"source": "type:name", "target": "type:name", "relationship": "verb or description", "strength": 0.7}}}}]
-}}}}
+  "entities": [{{"type": "file|function|class|person|subject|tool|project", "id": "type:name", "name": "short name"}}],
+  "entity_relationships": [{{"source": "type:name", "target": "type:name", "relationship": "verb or description", "strength": 0.7}}]
+}}
 
-Types: {type_descriptions}
+Types: observation=noticed/learned, decision=choice made, question=uncertainty, meta=about thinking, preference=opinion/value, spec=prescriptive requirement ("X shall/must"), plan=sequenced intention ("we will do X then Y"), task=discrete work item, outcome=result of action/strategy (success/failure/partial)
 Title: Concise summary capturing the main insight, decision, or topic (e.g., "User prefers Python for backends", "Bug in auth flow identified")
-Entity examples: {{{{"type":"file","id":"file:auth.ts","name":"auth.ts"}}}}, {{{{"type":"person","id":"person:alice","name":"Alice"}}}}
-Relationship examples: {{{{"source":"person:alice","target":"project:backend","relationship":"maintains","strength":0.8}}}}, {{{{"source":"file:auth.ts","target":"file:utils.ts","relationship":"imports","strength":0.9}}}}
+Entity examples: {{"type":"file","id":"file:auth.ts","name":"auth.ts"}}, {{"type":"person","id":"person:alice","name":"Alice"}}
+Relationship examples: {{"source":"person:alice","target":"project:backend","relationship":"maintains","strength":0.8}}, {{"source":"file:auth.ts","target":"file:utils.ts","relationship":"imports","strength":0.9}}
 
-Keep entity names under 30 chars. Empty arrays if none found. Strength is 0.0-1.0 confidence.""".format(
-        type_enum=type_enum,
-        type_descriptions=type_descriptions,
-    )
-
-
-EXTRACTION_PROMPT_TEMPLATE = _build_extraction_prompt(list(_BUILTIN_TYPE_DESCRIPTIONS.keys()))
-
-
-def _build_batch_extraction_prompt(valid_types: list[str]) -> str:
-    type_enum = "|".join(valid_types)
-    desc_parts = []
-    for t in valid_types:
-        if t in _BUILTIN_TYPE_DESCRIPTIONS:
-            desc_parts.append(f"{t}={_BUILTIN_TYPE_DESCRIPTIONS[t]}")
-        else:
-            desc_parts.append(t)
-    type_descriptions = ", ".join(desc_parts)
-
-    return """Classify and extract from each episode below. Episodes are delimited by [EPISODE_ID] headers.
-
-{{episodes}}
-
-For EACH episode, return its classification and extracted entities.
-
-Return JSON:
-{{{{
-  "results": {{{{
-    "EPISODE_ID": {{{{
-      "type": "{type_enum}",
-      "title": "Short descriptive title (5-10 words)",
-      "entities": [{{{{"type": "file|function|class|person|subject|tool|project", "id": "type:name", "name": "short name"}}}}],
-      "entity_relationships": [{{{{"source": "type:name", "target": "type:name", "relationship": "verb or description", "strength": 0.7}}}}]
-    }}}}
-  }}}}
-}}}}
-
-Types: {type_descriptions}
-Title: Concise summary capturing the main insight, decision, or topic
-Entity examples: {{{{"type":"file","id":"file:auth.ts","name":"auth.ts"}}}}, {{{{"type":"person","id":"person:alice","name":"Alice"}}}}
-Relationship examples: {{{{"source":"person:alice","target":"project:backend","relationship":"maintains","strength":0.8}}}}
-
-Keep entity names under 30 chars. Empty arrays if none found. Strength is 0.0-1.0 confidence.
-You MUST include a result for every episode ID listed above.""".format(
-        type_enum=type_enum,
-        type_descriptions=type_descriptions,
-    )
-
-
-BATCH_EXTRACTION_PROMPT_TEMPLATE = _build_batch_extraction_prompt(
-    list(_BUILTIN_TYPE_DESCRIPTIONS.keys())
-)
+Keep entity names under 30 chars. Empty arrays if none found. Strength is 0.0-1.0 confidence."""
 
 
 # Prompt for extracting relationships from episodes that already have entities extracted
@@ -243,36 +155,10 @@ class EntityExtractor:
         self,
         llm: LLMProvider,
         store: MemoryStore,
-        valid_types: Optional[list[str]] = None,
     ):
         self.llm = llm
         self.store = store
-        if valid_types:
-            self._prompt_template = _build_extraction_prompt(valid_types)
-            self._batch_prompt_template = _build_batch_extraction_prompt(valid_types)
-        else:
-            self._prompt_template = EXTRACTION_PROMPT_TEMPLATE
-            self._batch_prompt_template = BATCH_EXTRACTION_PROMPT_TEMPLATE
-
-    def _ensure_entity_row(self, entity_id: str) -> None:
-        """Insert a row if missing so entity_relations satisfy FK constraints (e.g. PostgreSQL)."""
-        if self.store.get_entity(entity_id):
-            return
-        self.store.add_entity(_entity_stub_for_id(entity_id))
-
-    def _persist_entity_relations(
-        self, relations: list[EntityRelation], id_remap: dict[str, str]
-    ) -> None:
-        """Remap relation endpoints after name-based dedup, then ensure FK targets exist."""
-        for rel in relations:
-            src = id_remap.get(rel.source_id, rel.source_id)
-            tgt = id_remap.get(rel.target_id, rel.target_id)
-            if src != rel.source_id or tgt != rel.target_id:
-                rel = replace(rel, source_id=src, target_id=tgt)
-            self._ensure_entity_row(rel.source_id)
-            self._ensure_entity_row(rel.target_id)
-            self.store.add_entity_relation(rel)
-
+    
     async def extract(self, content: str, episode_id: Optional[str] = None) -> ExtractionResult:
         """
         Extract type, entities, and relationships from episode content.
@@ -288,7 +174,7 @@ class EntityExtractor:
         if len(content) > MAX_CONTENT_LENGTH:
             content = content[:MAX_CONTENT_LENGTH] + "...[truncated]"
 
-        prompt = self._prompt_template.format(content=content)
+        prompt = EXTRACTION_PROMPT_TEMPLATE.format(content=content)
 
         logger.debug(
             "Extraction LLM request:\n"
@@ -329,11 +215,12 @@ class EntityExtractor:
                 pass
 
             logger.warning(f"Extraction failed (JSON): {e}")
-            return ExtractionResult(episode_type="observation", entities=[])
+            return ExtractionResult(episode_type=EpisodeType.OBSERVATION, entities=[])
 
         except Exception as e:
             logger.warning(f"Extraction failed: {e}")
-            return ExtractionResult(episode_type="observation", entities=[])
+            # Return defaults on failure
+            return ExtractionResult(episode_type=EpisodeType.OBSERVATION, entities=[])
     
     async def extract_and_store(self, episode: Episode) -> ExtractionResult:
         """
@@ -355,170 +242,41 @@ class EntityExtractor:
         episode.entities_extracted = True
         episode.relations_extracted = True
 
-        # Merge LLM-extracted entities with any caller-supplied ones
-        prior_ids = list(episode.entity_ids or [])
-        seen: set[str] = set(prior_ids)
-
-        final_entity_ids = list(prior_ids)
-        id_remap: dict[str, str] = {}
+        # Store entities with deduplication, and track final entity IDs
+        final_entity_ids = []
         for entity in result.entities:
+            # Check if an entity with the same name already exists
             existing = self.store.find_entity_by_name(entity.display_name)
             if existing:
+                # Reuse existing entity ID for consistency
                 entity_id = existing.id
+                # Update type to most recent extraction (but keep ID stable)
                 if entity.type != existing.type:
                     existing.type = entity.type
-                    self.store.add_entity(existing)
+                    self.store.add_entity(existing)  # INSERT OR REPLACE updates the type
             else:
+                # New entity - store it
                 self.store.add_entity(entity)
                 entity_id = entity.id
 
-            id_remap[entity.id] = entity_id
-            if entity_id not in seen:
-                seen.add(entity_id)
-                final_entity_ids.append(entity_id)
+            final_entity_ids.append(entity_id)
             self.store.add_mention(episode.id, entity_id)
 
+        # Update episode with deduplicated entity IDs
         episode.entity_ids = final_entity_ids
-        episode.updated_at = datetime.now()
         self.store.update_episode(episode)
 
-        self._persist_entity_relations(result.entity_relations, id_remap)
+        # Store entity relationships
+        for relation in result.entity_relations:
+            self.store.add_entity_relation(relation)
 
         logger.debug(
-            f"Extracted from {episode.id}: type={result.episode_type}, "
+            f"Extracted from {episode.id}: type={result.episode_type.value}, "
             f"entities={[e.id for e in result.entities]}, "
             f"relations={len(result.entity_relations)}"
         )
 
         return result
-
-    async def extract_batch(
-        self,
-        episodes: list[Episode],
-    ) -> dict[str, ExtractionResult]:
-        """Extract type, entities, and relationships from multiple episodes in one LLM call.
-
-        Args:
-            episodes: List of episodes to process
-
-        Returns:
-            Dict mapping episode ID to ExtractionResult. Episodes that failed
-            extraction are omitted from the result.
-        """
-        if not episodes:
-            return {}
-
-        if len(episodes) == 1:
-            result = await self.extract(episodes[0].content, episode_id=episodes[0].id)
-            return {episodes[0].id: result}
-
-        episode_sections = []
-        for ep in episodes:
-            content = ep.content
-            if len(content) > MAX_CONTENT_LENGTH:
-                content = content[:MAX_CONTENT_LENGTH] + "...[truncated]"
-            episode_sections.append(f"[{ep.id}]\n{content}")
-
-        episodes_text = "\n\n".join(episode_sections)
-
-        if hasattr(self, "_batch_prompt_template"):
-            prompt = self._batch_prompt_template.format(episodes=episodes_text)
-        else:
-            prompt = BATCH_EXTRACTION_PROMPT_TEMPLATE.format(episodes=episodes_text)
-
-        max_tokens = 1024 * len(episodes)
-
-        logger.debug(
-            "Batch extraction LLM request:\n"
-            f"  provider: {self.llm.name}\n"
-            f"  episodes: {len(episodes)}\n"
-            f"  prompt_length: {len(prompt)}\n"
-        )
-
-        try:
-            result = await self.llm.complete_json(
-                prompt=prompt,
-                system=EXTRACTION_SYSTEM_PROMPT,
-                temperature=0.1,
-                max_tokens=max_tokens,
-            )
-
-            logger.debug(f"Batch extraction LLM response: {json.dumps(result, indent=2)}")
-
-            results_dict = result.get("results", result)
-            output = {}
-            for ep in episodes:
-                ep_result = results_dict.get(ep.id)
-                if ep_result:
-                    output[ep.id] = ExtractionResult.from_dict(ep_result, episode_id=ep.id)
-
-            return output
-
-        except Exception as e:
-            logger.warning(f"Batch extraction failed ({len(episodes)} episodes): {e}")
-            return {}
-
-    def store_extraction_result(self, episode: Episode, result: ExtractionResult) -> None:
-        """Apply an extraction result to the store (entity dedup, mentions, episode update).
-
-        This is the store-write portion of extract_and_store(), separated out so
-        LLM calls can be parallelized while store writes remain sequential.
-        """
-        episode.episode_type = result.episode_type
-        episode.title = result.title
-        episode.entities_extracted = True
-        episode.relations_extracted = True
-
-        prior_ids = list(episode.entity_ids or [])
-        seen: set[str] = set(prior_ids)
-
-        final_entity_ids = list(prior_ids)
-        id_remap: dict[str, str] = {}
-        for entity in result.entities:
-            existing = self.store.find_entity_by_name(entity.display_name)
-            if existing:
-                entity_id = existing.id
-                if entity.type != existing.type:
-                    existing.type = entity.type
-                    self.store.add_entity(existing)
-            else:
-                self.store.add_entity(entity)
-                entity_id = entity.id
-
-            id_remap[entity.id] = entity_id
-            if entity_id not in seen:
-                seen.add(entity_id)
-                final_entity_ids.append(entity_id)
-            self.store.add_mention(episode.id, entity_id)
-
-        episode.entity_ids = final_entity_ids
-        episode.updated_at = datetime.now()
-        self.store.update_episode(episode)
-
-        self._persist_entity_relations(result.entity_relations, id_remap)
-
-        logger.debug(
-            f"Stored extraction for {episode.id}: type={result.episode_type}, "
-            f"entities={[e.id for e in result.entities]}, "
-            f"relations={len(result.entity_relations)}"
-        )
-
-    def store_relations_result(self, episode: Episode, relations: list[EntityRelation]) -> None:
-        """Apply relation extraction results to the store.
-
-        This is the store-write portion of extract_and_store_relations_only(),
-        separated out so LLM calls can be parallelized while store writes
-        remain sequential.
-        """
-        self._persist_entity_relations(relations, {})
-
-        episode.relations_extracted = True
-        episode.updated_at = datetime.now()
-        self.store.update_episode(episode)
-
-        logger.debug(
-            f"Stored relations for {episode.id}: {len(relations)} relationships"
-        )
 
     async def extract_relations_only(self, episode: Episode) -> list[EntityRelation]:
         """
@@ -566,14 +324,6 @@ class EntityExtractor:
         # Filter to only entities with unrelated pairs
         filtered_entities = [e for e in entity_ids if e in entities_with_unrelated]
 
-        # Build a normalized-to-original lookup so we can match LLM output
-        # (which gets normalized) back to the actual entity IDs
-        normalized_to_original = {}
-        for eid in filtered_entities:
-            etype, ename = Entity.parse_id(eid)
-            normalized = Entity.make_id(etype, normalize_entity_name(ename))
-            normalized_to_original[normalized] = eid
-
         # Truncate long content
         content = episode.content
         if len(content) > MAX_CONTENT_LENGTH:
@@ -614,20 +364,18 @@ class EntityExtractor:
                 # Validate that source and target are in the filtered entities
                 # and this pair doesn't already have a relation
                 if source and target and relationship:
+                    # Normalize source and target IDs to match entity ID format
+                    from remind.models import Entity, normalize_entity_name
                     source_type, source_name = Entity.parse_id(source)
                     target_type, target_name = Entity.parse_id(target)
                     normalized_source = Entity.make_id(source_type, normalize_entity_name(source_name))
                     normalized_target = Entity.make_id(target_type, normalize_entity_name(target_name))
 
-                    # Map normalized IDs back to original entity IDs
-                    original_source = normalized_to_original.get(normalized_source)
-                    original_target = normalized_to_original.get(normalized_target)
-
-                    if original_source and original_target:
-                        if (original_source, original_target) not in related_pairs:
+                    if normalized_source in filtered_entities and normalized_target in filtered_entities:
+                        if (normalized_source, normalized_target) not in related_pairs:
                             relations.append(EntityRelation(
-                                source_id=original_source,
-                                target_id=original_target,
+                                source_id=normalized_source,
+                                target_id=normalized_target,
                                 relation_type=relationship,
                                 strength=rel.get("strength", 0.5),
                                 context=rel.get("context"),
@@ -660,7 +408,6 @@ class EntityExtractor:
 
         # Mark episode as having relations extracted
         episode.relations_extracted = True
-        episode.updated_at = datetime.now()
         self.store.update_episode(episode)
 
         logger.debug(

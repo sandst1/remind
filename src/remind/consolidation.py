@@ -162,7 +162,7 @@ class Consolidator:
         min_confidence: float = 0.3,
         concepts_per_consolidation_pass: int = 64,
         max_workers: int = 1,
-        entity_extraction_batch_size: int = 25,
+        entity_extraction_batch_size: int = 10,
     ):
         self.llm = llm
         self.embedding = embedding
@@ -318,10 +318,17 @@ class Consolidator:
             topic_labels = [t or "(no topic)" for t in episodes_by_topic.keys()]
             logger.info(f"Consolidating {topic_count} topic groups: {', '.join(topic_labels)}")
 
-        for topic_id, topic_episodes in episodes_by_topic.items():
-            topic_result = await self._consolidate_topic_group(
-                topic_id, topic_episodes, batch_num, batch_label
-            )
+        topic_results = await asyncio.gather(
+            *[
+                self._consolidate_topic_group(topic_id, topic_episodes, batch_num, batch_label)
+                for topic_id, topic_episodes in episodes_by_topic.items()
+            ],
+            return_exceptions=True,
+        )
+        for topic_result in topic_results:
+            if isinstance(topic_result, Exception):
+                logger.error(f"Topic group consolidation failed: {topic_result}")
+                continue
             if topic_result:
                 result.concepts_created += topic_result.concepts_created
                 result.concepts_updated += topic_result.concepts_updated

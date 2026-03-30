@@ -81,14 +81,15 @@ Consolidation prioritizes specificity and falsifiability — concepts should be 
 
 ## Performance tuning
 
-Consolidation performance can be tuned with two settings:
+Consolidation performance can be tuned with three settings:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `entity_extraction_batch_size` | `25` | Number of episodes grouped into each extraction LLM call. Higher values mean fewer LLM calls but larger prompts. |
-| `consolidation_workers` | `1` | Maximum number of concurrent LLM calls during consolidation. Set to e.g. `4` to parallelize extraction batches and concept-chunk sub-passes. |
+| `entity_extraction_batch_size` | `10` | Number of episodes grouped into each extraction LLM call. Higher values mean fewer LLM calls but larger prompts and slower individual calls. |
+| `consolidation_batch_size` | `25` | Number of episodes fetched and consolidated per pass. Controls how much context the consolidation LLM sees at once. |
+| `consolidation_llm_concurrency` | `1` | Maximum concurrent LLM calls within a consolidation run. Parallelizes topic groups, extraction sub-batches, and concept-chunk sub-passes (all share this limit). Set to e.g. `4` to speed up runs with many topics. |
 
-With the defaults (batch size 5, workers 1), 20 episodes require 4 sequential extraction calls instead of 20. Set `consolidation_workers` higher to run those 4 calls concurrently.
+With the defaults, 30 episodes split across 3 topics will consolidate those 3 topic groups concurrently when `consolidation_llm_concurrency > 1`. Set it higher to run those calls in parallel.
 
 Only LLM calls are parallelized — all store writes (entity deduplication, concept creation, relation storage) remain sequential to avoid conflicts.
 

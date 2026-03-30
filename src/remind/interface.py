@@ -86,8 +86,9 @@ class MemoryInterface:
         consolidation_threshold: int = 5,  # episodes before auto-consolidation
         consolidation_concepts_per_pass: int = 64,
         auto_consolidate: bool = True,
-        entity_extraction_batch_size: int = 25,
-        consolidation_workers: int = 1,
+        entity_extraction_batch_size: int = 10,
+        consolidation_batch_size: int = 25,
+        consolidation_llm_concurrency: int = 1,
         # Retrieval settings
         default_recall_k: int = 3,
         default_episode_k: int = 5,
@@ -117,7 +118,8 @@ class MemoryInterface:
             embedding=embedding,
             store=self.store,
             concepts_per_consolidation_pass=consolidation_concepts_per_pass,
-            max_workers=consolidation_workers,
+            batch_size=consolidation_batch_size,
+            max_workers=consolidation_llm_concurrency,
             entity_extraction_batch_size=entity_extraction_batch_size,
         )
         
@@ -1369,8 +1371,10 @@ def create_memory(
         kwargs["episode_types"] = config.episode_types
     if "entity_extraction_batch_size" not in kwargs:
         kwargs["entity_extraction_batch_size"] = config.entity_extraction_batch_size
-    if "consolidation_workers" not in kwargs:
-        kwargs["consolidation_workers"] = config.consolidation_workers
+    if "consolidation_batch_size" not in kwargs:
+        kwargs["consolidation_batch_size"] = config.consolidation_batch_size
+    if "consolidation_llm_concurrency" not in kwargs:
+        kwargs["consolidation_llm_concurrency"] = config.consolidation_llm_concurrency
     
     # Import providers
     from remind.providers import (

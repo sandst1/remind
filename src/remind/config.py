@@ -95,8 +95,9 @@ class RemindConfig:
     consolidation_threshold: int = DEFAULT_CONSOLIDATION_THRESHOLD
     consolidation_concepts_per_pass: int = DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS
     auto_consolidate: bool = True
-    entity_extraction_batch_size: int = 25
-    consolidation_workers: int = 1
+    entity_extraction_batch_size: int = 10
+    consolidation_batch_size: int = 25
+    consolidation_llm_concurrency: int = 1
 
     # Provider-specific configs
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
@@ -156,8 +157,12 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         config.auto_consolidate = bool(file_config["auto_consolidate"])
     if "entity_extraction_batch_size" in file_config:
         config.entity_extraction_batch_size = int(file_config["entity_extraction_batch_size"])
-    if "consolidation_workers" in file_config:
-        config.consolidation_workers = int(file_config["consolidation_workers"])
+    if "consolidation_batch_size" in file_config:
+        config.consolidation_batch_size = int(file_config["consolidation_batch_size"])
+    if "consolidation_llm_concurrency" in file_config:
+        config.consolidation_llm_concurrency = int(file_config["consolidation_llm_concurrency"])
+    elif "consolidation_workers" in file_config:
+        config.consolidation_llm_concurrency = int(file_config["consolidation_workers"])
 
     # Provider-specific settings (overlay, not replace)
     _apply_provider_config(config, file_config, "anthropic", AnthropicConfig)
@@ -267,11 +272,16 @@ def _apply_env_vars(config: RemindConfig) -> None:
             config.entity_extraction_batch_size = int(extraction_batch)
         except ValueError:
             logger.warning(f"Invalid ENTITY_EXTRACTION_BATCH_SIZE: {extraction_batch}")
-    if workers := os.environ.get("CONSOLIDATION_WORKERS"):
+    if consolidation_batch := os.environ.get("CONSOLIDATION_BATCH_SIZE"):
         try:
-            config.consolidation_workers = int(workers)
+            config.consolidation_batch_size = int(consolidation_batch)
         except ValueError:
-            logger.warning(f"Invalid CONSOLIDATION_WORKERS: {workers}")
+            logger.warning(f"Invalid CONSOLIDATION_BATCH_SIZE: {consolidation_batch}")
+    if concurrency := os.environ.get("CONSOLIDATION_LLM_CONCURRENCY"):
+        try:
+            config.consolidation_llm_concurrency = int(concurrency)
+        except ValueError:
+            logger.warning(f"Invalid CONSOLIDATION_LLM_CONCURRENCY: {concurrency}")
 
     # Anthropic
     if api_key := os.environ.get("ANTHROPIC_API_KEY"):

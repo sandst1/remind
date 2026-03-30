@@ -124,8 +124,9 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `CONSOLIDATION_THRESHOLD` | `consolidation_threshold` | int | `5` |
 | `CONSOLIDATION_CONCEPTS_PER_PASS` | `consolidation_concepts_per_pass` | int | `64` |
 | `AUTO_CONSOLIDATE` | `auto_consolidate` | bool | `true` |
-| `ENTITY_EXTRACTION_BATCH_SIZE` | `entity_extraction_batch_size` | int | `25` |
-| `CONSOLIDATION_WORKERS` | `consolidation_workers` | int | `1` |
+| `ENTITY_EXTRACTION_BATCH_SIZE` | `entity_extraction_batch_size` | int | `10` |
+| `CONSOLIDATION_BATCH_SIZE` | `consolidation_batch_size` | int | `25` |
+| `CONSOLIDATION_LLM_CONCURRENCY` | `consolidation_llm_concurrency` | int | `1` |
 | `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
 | `INGEST_MIN_DENSITY` | `ingest_min_density` | float | `0.4` |
 | `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
@@ -279,8 +280,9 @@ View decay stats with `remind stats`.
 | `consolidation_threshold` | `5` | Episodes before auto-consolidation triggers |
 | `consolidation_concepts_per_pass` | `64` | Max concepts processed per consolidation pass |
 | `auto_consolidate` | `true` | Whether to auto-consolidate after `remember` |
-| `entity_extraction_batch_size` | `25` | Episodes per entity extraction LLM call (higher = fewer calls) |
-| `consolidation_workers` | `1` | Max parallel LLM calls during consolidation (1 = sequential) |
+| `entity_extraction_batch_size` | `10` | Episodes per entity extraction LLM call |
+| `consolidation_batch_size` | `25` | Episodes fetched and consolidated per pass |
+| `consolidation_llm_concurrency` | `1` | Max concurrent LLM calls within a consolidation run (topic groups, extraction sub-batches, concept-chunk sub-passes all share this limit) |
 
 ## Auto-ingest
 

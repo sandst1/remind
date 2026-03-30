@@ -91,8 +91,9 @@ class TestDefaults:
         assert config.consolidation_threshold == 5
         assert config.consolidation_concepts_per_pass == 64
         assert config.auto_consolidate is True
-        assert config.entity_extraction_batch_size == 25
-        assert config.consolidation_workers == 1
+        assert config.entity_extraction_batch_size == 10
+        assert config.consolidation_batch_size == 25
+        assert config.consolidation_llm_concurrency == 1
         assert config.ingest_buffer_size == 4000
         assert config.ingest_min_density == 0.4
         assert config.logging_enabled is False
@@ -269,11 +270,18 @@ class TestApplyFileConfig:
     def test_applies_consolidation_parallelism_fields(self):
         config = RemindConfig()
         _apply_file_config(config, {
-            "entity_extraction_batch_size": 10,
-            "consolidation_workers": 4,
+            "entity_extraction_batch_size": 5,
+            "consolidation_batch_size": 50,
+            "consolidation_llm_concurrency": 4,
         })
-        assert config.entity_extraction_batch_size == 10
-        assert config.consolidation_workers == 4
+        assert config.entity_extraction_batch_size == 5
+        assert config.consolidation_batch_size == 50
+        assert config.consolidation_llm_concurrency == 4
+
+    def test_applies_consolidation_workers_legacy_key(self):
+        config = RemindConfig()
+        _apply_file_config(config, {"consolidation_workers": 4})
+        assert config.consolidation_llm_concurrency == 4
 
     def test_applies_episode_types(self):
         config = RemindConfig()
@@ -413,15 +421,23 @@ class TestEnvVarOverrides:
 
     def test_entity_extraction_batch_size_invalid(self):
         c = self._config_with_env(ENTITY_EXTRACTION_BATCH_SIZE="abc")
-        assert c.entity_extraction_batch_size == 25  # unchanged default
+        assert c.entity_extraction_batch_size == 10  # unchanged default
 
-    def test_consolidation_workers(self):
-        c = self._config_with_env(CONSOLIDATION_WORKERS="4")
-        assert c.consolidation_workers == 4
+    def test_consolidation_batch_size(self):
+        c = self._config_with_env(CONSOLIDATION_BATCH_SIZE="50")
+        assert c.consolidation_batch_size == 50
 
-    def test_consolidation_workers_invalid(self):
-        c = self._config_with_env(CONSOLIDATION_WORKERS="abc")
-        assert c.consolidation_workers == 1  # unchanged default
+    def test_consolidation_batch_size_invalid(self):
+        c = self._config_with_env(CONSOLIDATION_BATCH_SIZE="abc")
+        assert c.consolidation_batch_size == 25  # unchanged default
+
+    def test_consolidation_llm_concurrency(self):
+        c = self._config_with_env(CONSOLIDATION_LLM_CONCURRENCY="4")
+        assert c.consolidation_llm_concurrency == 4
+
+    def test_consolidation_llm_concurrency_invalid(self):
+        c = self._config_with_env(CONSOLIDATION_LLM_CONCURRENCY="abc")
+        assert c.consolidation_llm_concurrency == 1  # unchanged default
 
     # -- Episode types --
 

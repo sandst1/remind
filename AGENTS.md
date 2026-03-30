@@ -182,8 +182,9 @@ class RemindConfig:
     embedding_provider: str = "openai"
     consolidation_threshold: int = 5
     auto_consolidate: bool = True
-    entity_extraction_batch_size: int = 25
-    consolidation_workers: int = 1
+    entity_extraction_batch_size: int = 10
+    consolidation_batch_size: int = 25
+    consolidation_llm_concurrency: int = 1
     # Database URL (SQLAlchemy format; None = SQLite default)
     db_url: Optional[str] = None
     # Auto-ingest settings
