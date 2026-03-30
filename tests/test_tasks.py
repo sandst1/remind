@@ -304,16 +304,18 @@ class TestConsolidationTaskFilter:
         self, memory, mock_llm, mock_embedding
     ):
         """Active tasks (todo/in_progress/blocked) should not be consolidated."""
-        # Add a regular episode (with entities so extraction is skipped)
-        await memory.remember("Regular observation", entities=["subject:test"])
+        # Pre-extracted episodes so extraction phase is skipped
+        obs = Episode(content="Regular observation", entities_extracted=True)
+        memory.store.add_episode(obs)
 
-        # Add active tasks with entities so extraction doesn't reclassify them
-        await memory.remember("Todo task", episode_type=EpisodeType.TASK,
-                        metadata={"status": "todo"}, entities=["subject:tasks"])
-        await memory.remember("In progress task", episode_type=EpisodeType.TASK,
-                        metadata={"status": "in_progress"}, entities=["subject:tasks"])
-        await memory.remember("Blocked task", episode_type=EpisodeType.TASK,
-                        metadata={"status": "blocked"}, entities=["subject:tasks"])
+        for content, status in [
+            ("Todo task", "todo"),
+            ("In progress task", "in_progress"),
+            ("Blocked task", "blocked"),
+        ]:
+            ep = Episode(content=content, episode_type=EpisodeType.TASK,
+                         metadata={"status": status}, entities_extracted=True)
+            memory.store.add_episode(ep)
 
         mock_llm.set_complete_json_response({
             "analysis": "Test",
@@ -378,10 +380,10 @@ class TestConsolidationTaskFilter:
         self, memory, mock_llm, mock_embedding
     ):
         """If only active tasks exist, nothing should consolidate."""
-        await memory.remember("Task 1", episode_type=EpisodeType.TASK,
-                        metadata={"status": "todo"}, entities=["subject:tasks"])
-        await memory.remember("Task 2", episode_type=EpisodeType.TASK,
-                        metadata={"status": "in_progress"}, entities=["subject:tasks"])
+        for content, status in [("Task 1", "todo"), ("Task 2", "in_progress")]:
+            ep = Episode(content=content, episode_type=EpisodeType.TASK,
+                         metadata={"status": status}, entities_extracted=True)
+            memory.store.add_episode(ep)
 
         mock_llm.set_complete_json_response({
             "analysis": "Test",

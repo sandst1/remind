@@ -355,29 +355,29 @@ class EntityExtractor:
         episode.entities_extracted = True
         episode.relations_extracted = True
 
-        # Store entities with deduplication, and track final entity IDs
-        final_entity_ids = []
+        # Merge LLM-extracted entities with any caller-supplied ones
+        prior_ids = list(episode.entity_ids or [])
+        seen: set[str] = set(prior_ids)
+
+        final_entity_ids = list(prior_ids)
         id_remap: dict[str, str] = {}
         for entity in result.entities:
-            # Check if an entity with the same name already exists
             existing = self.store.find_entity_by_name(entity.display_name)
             if existing:
-                # Reuse existing entity ID for consistency
                 entity_id = existing.id
-                # Update type to most recent extraction (but keep ID stable)
                 if entity.type != existing.type:
                     existing.type = entity.type
-                    self.store.add_entity(existing)  # INSERT OR REPLACE updates the type
+                    self.store.add_entity(existing)
             else:
-                # New entity - store it
                 self.store.add_entity(entity)
                 entity_id = entity.id
 
             id_remap[entity.id] = entity_id
-            final_entity_ids.append(entity_id)
+            if entity_id not in seen:
+                seen.add(entity_id)
+                final_entity_ids.append(entity_id)
             self.store.add_mention(episode.id, entity_id)
 
-        # Update episode with deduplicated entity IDs
         episode.entity_ids = final_entity_ids
         episode.updated_at = datetime.now()
         self.store.update_episode(episode)
@@ -469,7 +469,10 @@ class EntityExtractor:
         episode.entities_extracted = True
         episode.relations_extracted = True
 
-        final_entity_ids = []
+        prior_ids = list(episode.entity_ids or [])
+        seen: set[str] = set(prior_ids)
+
+        final_entity_ids = list(prior_ids)
         id_remap: dict[str, str] = {}
         for entity in result.entities:
             existing = self.store.find_entity_by_name(entity.display_name)
@@ -483,7 +486,9 @@ class EntityExtractor:
                 entity_id = entity.id
 
             id_remap[entity.id] = entity_id
-            final_entity_ids.append(entity_id)
+            if entity_id not in seen:
+                seen.add(entity_id)
+                final_entity_ids.append(entity_id)
             self.store.add_mention(episode.id, entity_id)
 
         episode.entity_ids = final_entity_ids

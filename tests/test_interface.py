@@ -97,6 +97,8 @@ class TestMemoryInterface:
         episode = memory.store.get_episode(episode_id)
         assert "file:src/auth.ts" in episode.entity_ids
         assert "person:alice" in episode.entity_ids
+        assert not episode.entities_extracted, \
+            "Caller entities are hints; extraction still needs to run"
 
         # Verify entities were created
         entity = memory.store.get_entity("file:src/auth.ts")
@@ -121,6 +123,38 @@ class TestMemoryInterface:
 
         tool = memory.store.get_entity("tool:redis")
         assert tool.type == EntityType.TOOL
+
+    @pytest.mark.asyncio
+    async def test_extraction_merges_caller_and_llm_entities(self, memory):
+        """Extraction should union-merge caller-supplied and LLM-discovered entities."""
+        from remind.extraction import EntityExtractor, ExtractionResult
+
+        episode_id = await memory.remember(
+            "Refactored auth.ts to use Redis caching",
+            entities=["file:auth.ts"],
+        )
+        episode = memory.store.get_episode(episode_id)
+        assert episode.entity_ids == ["file:auth.ts"]
+        assert not episode.entities_extracted
+
+        llm_result = ExtractionResult(
+            episode_type="decision",
+            title="Refactored auth with Redis",
+            entities=[
+                Entity(id="tool:redis", type=EntityType.TOOL, display_name="Redis"),
+            ],
+            entity_relations=[],
+        )
+
+        extractor = EntityExtractor(memory.llm, memory.store)
+        extractor.store_extraction_result(episode, llm_result)
+
+        episode = memory.store.get_episode(episode_id)
+        assert episode.entities_extracted
+        assert "file:auth.ts" in episode.entity_ids, "caller entity preserved"
+        assert "tool:redis" in episode.entity_ids, "LLM entity added"
+        assert episode.entity_ids.index("file:auth.ts") < episode.entity_ids.index("tool:redis"), \
+            "caller entities come first"
 
     @pytest.mark.asyncio
     async def test_remember_with_confidence(self, memory):

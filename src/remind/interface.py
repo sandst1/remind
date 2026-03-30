@@ -208,8 +208,9 @@ class MemoryInterface:
             metadata: Optional metadata about the episode
             episode_type: Optional explicit type (observation, decision, question, meta, preference).
                           If not provided, will be auto-detected during consolidation.
-            entities: Optional explicit list of entity IDs (e.g., ["file:src/auth.ts", "person:alice"]).
-                      If not provided, will be auto-detected during consolidation.
+            entities: Optional entity ID hints (e.g., ["file:src/auth.ts", "person:alice"]).
+                      Stored as mentions immediately. Full LLM extraction still runs
+                      during consolidate(), merging any additional entities it finds.
             confidence: How certain this information is (0.0-1.0, default 1.0).
                         Lower values indicate uncertainty or weak signals.
             embed: Whether to generate an embedding for the episode (default True).
@@ -235,9 +236,6 @@ class MemoryInterface:
         if episode_type:
             episode.episode_type = episode_type.value if isinstance(episode_type, EpisodeType) else str(episode_type)
         
-        if entities:
-            episode.entities_extracted = True
-
         # Embed the episode content
         if embed and self.embedding:
             try:
@@ -302,8 +300,6 @@ class MemoryInterface:
             if item.get("episode_type"):
                 et = item["episode_type"]
                 episode.episode_type = et.value if isinstance(et, EpisodeType) else str(et)
-            if item.get("entities"):
-                episode.entities_extracted = True
             episodes.append(episode)
 
         if embed and self.embedding:
@@ -901,7 +897,9 @@ class MemoryInterface:
         Update an existing episode.
 
         Only provided fields are updated; None values preserve existing data.
-        If content is updated, resets consolidation flags so episode will be re-processed.
+        If content is updated, resets consolidation and extraction flags so the
+        episode will be fully re-processed. Explicit entities are stored as
+        mention hints; LLM extraction still runs and merges additional entities.
         Metadata is shallow-merged into existing metadata (not replaced).
 
         Args:
@@ -923,17 +921,17 @@ class MemoryInterface:
             episode.content = content
             self.store.delete_entity_relations_from_episode(episode_id)
             self.store.delete_mentions_for_episode(episode_id)
-            episode.entities_extracted = False if entities is None else True
+            episode.entities_extracted = False
             episode.relations_extracted = False
             episode.consolidated = False
-            episode.entity_ids = [] if entities is None else entities
+            episode.entity_ids = []
 
         if episode_type is not None:
             episode.episode_type = episode_type.value if isinstance(episode_type, EpisodeType) else str(episode_type)
 
         if entities is not None:
-            episode.entities_extracted = True
-            self.store.delete_mentions_for_episode(episode_id)
+            if content is None:
+                self.store.delete_mentions_for_episode(episode_id)
             resolved_ids = []
             for raw_id in entities:
                 canonical_id = self._resolve_entity_id(raw_id)
