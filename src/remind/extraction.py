@@ -9,6 +9,7 @@ Uses LLM to extract structured information from raw episodic memories:
 import json
 import logging
 import re
+from dataclasses import replace
 from datetime import datetime
 from typing import Optional
 
@@ -23,6 +24,17 @@ logger = logging.getLogger(__name__)
 
 # Maximum characters of episode content to send for extraction
 MAX_CONTENT_LENGTH = 2000
+
+
+def _entity_stub_for_id(entity_id: str) -> Entity:
+    """Minimal entity row so FK-backed stores accept entity_relations endpoints."""
+    type_str, name = Entity.parse_id(entity_id)
+    try:
+        entity_type = EntityType(type_str)
+    except ValueError:
+        entity_type = EntityType.OTHER
+    display = name.replace("_", " ").strip() or entity_id
+    return Entity(id=entity_id, type=entity_type, display_name=display)
 
 
 def try_fix_json(text: str) -> Optional[dict]:
@@ -241,7 +253,26 @@ class EntityExtractor:
         else:
             self._prompt_template = EXTRACTION_PROMPT_TEMPLATE
             self._batch_prompt_template = BATCH_EXTRACTION_PROMPT_TEMPLATE
-    
+
+    def _ensure_entity_row(self, entity_id: str) -> None:
+        """Insert a row if missing so entity_relations satisfy FK constraints (e.g. PostgreSQL)."""
+        if self.store.get_entity(entity_id):
+            return
+        self.store.add_entity(_entity_stub_for_id(entity_id))
+
+    def _persist_entity_relations(
+        self, relations: list[EntityRelation], id_remap: dict[str, str]
+    ) -> None:
+        """Remap relation endpoints after name-based dedup, then ensure FK targets exist."""
+        for rel in relations:
+            src = id_remap.get(rel.source_id, rel.source_id)
+            tgt = id_remap.get(rel.target_id, rel.target_id)
+            if src != rel.source_id or tgt != rel.target_id:
+                rel = replace(rel, source_id=src, target_id=tgt)
+            self._ensure_entity_row(rel.source_id)
+            self._ensure_entity_row(rel.target_id)
+            self.store.add_entity_relation(rel)
+
     async def extract(self, content: str, episode_id: Optional[str] = None) -> ExtractionResult:
         """
         Extract type, entities, and relationships from episode content.
@@ -326,6 +357,7 @@ class EntityExtractor:
 
         # Store entities with deduplication, and track final entity IDs
         final_entity_ids = []
+        id_remap: dict[str, str] = {}
         for entity in result.entities:
             # Check if an entity with the same name already exists
             existing = self.store.find_entity_by_name(entity.display_name)
@@ -341,6 +373,7 @@ class EntityExtractor:
                 self.store.add_entity(entity)
                 entity_id = entity.id
 
+            id_remap[entity.id] = entity_id
             final_entity_ids.append(entity_id)
             self.store.add_mention(episode.id, entity_id)
 
@@ -349,9 +382,7 @@ class EntityExtractor:
         episode.updated_at = datetime.now()
         self.store.update_episode(episode)
 
-        # Store entity relationships
-        for relation in result.entity_relations:
-            self.store.add_entity_relation(relation)
+        self._persist_entity_relations(result.entity_relations, id_remap)
 
         logger.debug(
             f"Extracted from {episode.id}: type={result.episode_type}, "
@@ -439,6 +470,7 @@ class EntityExtractor:
         episode.relations_extracted = True
 
         final_entity_ids = []
+        id_remap: dict[str, str] = {}
         for entity in result.entities:
             existing = self.store.find_entity_by_name(entity.display_name)
             if existing:
@@ -450,6 +482,7 @@ class EntityExtractor:
                 self.store.add_entity(entity)
                 entity_id = entity.id
 
+            id_remap[entity.id] = entity_id
             final_entity_ids.append(entity_id)
             self.store.add_mention(episode.id, entity_id)
 
@@ -457,8 +490,7 @@ class EntityExtractor:
         episode.updated_at = datetime.now()
         self.store.update_episode(episode)
 
-        for relation in result.entity_relations:
-            self.store.add_entity_relation(relation)
+        self._persist_entity_relations(result.entity_relations, id_remap)
 
         logger.debug(
             f"Stored extraction for {episode.id}: type={result.episode_type}, "
@@ -473,8 +505,7 @@ class EntityExtractor:
         separated out so LLM calls can be parallelized while store writes
         remain sequential.
         """
-        for relation in relations:
-            self.store.add_entity_relation(relation)
+        self._persist_entity_relations(relations, {})
 
         episode.relations_extracted = True
         episode.updated_at = datetime.now()

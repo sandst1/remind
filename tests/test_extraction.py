@@ -439,6 +439,66 @@ class TestStoreExtractionResult:
         updated = memory_store.get_episode(ep.id)
         assert "file:auth.py" in updated.entity_ids
 
+    def test_entity_relation_creates_missing_endpoints(self, mock_llm, memory_store):
+        """Relations may name entities the LLM omitted from the entities list; FK stores need rows."""
+        from remind.models import EntityRelation
+
+        ep = Episode(content="Political news")
+        memory_store.add_episode(ep)
+
+        result = ExtractionResult(
+            episode_type="observation",
+            entities=[Entity(id="subject:government", type=EntityType.SUBJECT, display_name="Government")],
+            entity_relations=[
+                EntityRelation(
+                    source_id="subject:presidentofrepublic",
+                    target_id="subject:government",
+                    relation_type="declared permanently unable by",
+                    strength=0.9,
+                    source_episode_id=ep.id,
+                )
+            ],
+        )
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        extractor.store_extraction_result(ep, result)
+
+        assert memory_store.get_entity("subject:presidentofrepublic") is not None
+        rels = memory_store.get_entity_relations("subject:government")
+        assert any(r.source_id == "subject:presidentofrepublic" for r in rels)
+
+    def test_entity_relation_remapped_after_name_dedup(self, mock_llm, memory_store):
+        """Relation endpoints use extracted IDs; mentions may dedupe to an existing entity ID."""
+        from remind.models import EntityRelation
+
+        memory_store.add_entity(
+            Entity(id="subject:government", type=EntityType.SUBJECT, display_name="Government")
+        )
+        ep = Episode(content="...")
+        memory_store.add_episode(ep)
+
+        result = ExtractionResult(
+            episode_type="observation",
+            entities=[
+                Entity(id="subject:government_alt", type=EntityType.SUBJECT, display_name="Government")
+            ],
+            entity_relations=[
+                EntityRelation(
+                    source_id="subject:government_alt",
+                    target_id="person:alice",
+                    relation_type="involves",
+                    strength=0.8,
+                    source_episode_id=ep.id,
+                )
+            ],
+        )
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        extractor.store_extraction_result(ep, result)
+
+        rels = memory_store.get_entity_relations("subject:government")
+        assert any(r.target_id == "person:alice" for r in rels)
+
 
 class TestStoreRelationsResult:
     """Tests for store_relations_result."""
