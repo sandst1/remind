@@ -7,9 +7,11 @@
     conceptsError,
     conceptPath,
     currentDb,
+    topics,
+    selectedTopic,
   } from '../lib/stores';
   import { fetchConcepts, fetchConcept, fetchEpisode } from '../lib/api';
-  import type { Concept, Episode, EpisodeType } from '../lib/types';
+  import type { Concept, Episode, EpisodeType, Topic } from '../lib/types';
   import {
     Eye,
     Zap,
@@ -43,7 +45,8 @@
   let expandedEpisodes: Record<string, Episode | null> = {};
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // All concepts fetched; filtering/sorting done client-side
+  $: topicMap = Object.fromEntries(($topics || []).map((t: Topic) => [t.id, t.name]));
+
   let allConcepts: Concept[] = [];
   let loadGen = 0;
 
@@ -86,7 +89,7 @@
       const collected: Concept[] = [];
 
       while (offset < total) {
-        const response = await fetchConcepts({ offset, limit: batchSize });
+        const response = await fetchConcepts({ offset, limit: batchSize, topic: $selectedTopic || undefined });
         if (gen !== loadGen) return;
         total = response.total;
         collected.push(...response.concepts);
@@ -330,6 +333,9 @@
               {/if}
               <div class="concept-summary">{concept.summary}</div>
               <div class="concept-footer">
+                {#if concept.topic_id}
+                  <span class="topic-badge">{topicMap[concept.topic_id] || concept.topic_id}</span>
+                {/if}
                 {#if concept.tags.length > 0}
                   <div class="concept-tags">
                     {#each concept.tags.slice(0, 3) as tag}
@@ -710,6 +716,16 @@
     border-radius: var(--radius-sm);
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
+  }
+
+  .topic-badge {
+    padding: 2px 8px;
+    background: var(--color-accent-bg, rgba(99, 102, 241, 0.1));
+    color: var(--color-accent);
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-full, 9999px);
+    font-size: var(--font-size-xs);
+    font-weight: 500;
   }
 
   .pagination {

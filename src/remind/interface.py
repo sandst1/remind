@@ -17,6 +17,7 @@ import json
 from remind.models import (
     Episode, Concept, ConsolidationResult,
     Entity, EntityType, EpisodeType, TaskStatus, Relation, RelationType,
+    Topic, DEFAULT_TOPIC_ID, slugify,
     normalize_entity_name,
 )
 from remind.store import MemoryStore, SQLAlchemyMemoryStore, SQLiteMemoryStore
@@ -213,18 +214,20 @@ class MemoryInterface:
                         Lower values indicate uncertainty or weak signals.
             embed: Whether to generate an embedding for the episode (default True).
                    Set to False when batch-importing and planning to backfill later.
-            topic: Primary knowledge area (e.g. "architecture", "product", "infra").
+            topic: Topic ID or name. Resolved to an existing topic; if no match,
+                   falls back to the default topic.
             source_type: Origin of this episode (e.g. "agent", "slack", "github", "manual").
 
         Returns:
             The episode ID
         """
-        # Create episode
+        topic_id = self._resolve_topic_id(topic)
+
         episode = Episode(
             content=content,
             metadata=metadata or {},
-            confidence=max(0.0, min(1.0, confidence)),  # Clamp to valid range
-            topic=topic.lower().strip() if topic else None,
+            confidence=max(0.0, min(1.0, confidence)),
+            topic_id=topic_id,
             source_type=source_type.lower().strip() if source_type else None,
         )
         
@@ -354,8 +357,9 @@ class MemoryInterface:
             raw: If True, return raw objects instead of formatted string
             episode_k: Number of episodes to retrieve via direct vector search.
                        Defaults to self.default_episode_k (5). Set to 0 to disable.
-            topic: If set, restrict recall to this topic (cross-topic results
-                   are penalized but not excluded).
+            topic: If set, restrict recall to this topic ID (cross-topic results
+                   are penalized but not excluded). When None and not entity-mode,
+                   results are grouped by topic in the formatted output.
             
         Returns:
             Formatted memory string for LLM injection, or raw objects if raw=True.
@@ -368,7 +372,6 @@ class MemoryInterface:
         k = k or self.default_recall_k
         episode_k = episode_k if episode_k is not None else self.default_episode_k
         
-        # Increment recall count and persist when decay is enabled
         self._recall_count += 1
         if self.decay_config.enabled:
             self._save_recall_count()
@@ -378,7 +381,6 @@ class MemoryInterface:
             type_str, name = Entity.parse_id(entity)
             entity = Entity.make_id(type_str, normalize_entity_name(name))
             episodes = await self.retriever.retrieve_by_entity(entity, limit=k * 4)
-            # Trigger decay every N recalls (consistent with concept-based path)
             if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
                 self._trigger_decay()
             if raw:
@@ -400,18 +402,23 @@ class MemoryInterface:
                 query=query, k=episode_k
             )
         
-        # Rejuvenation: reset decay for recalled concepts (only for concept-based)
         if activated and self.decay_config.enabled:
             self._rejuvenate_concepts(activated)
         
-        # Trigger decay every N recalls
         if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
             self._trigger_decay()
         
         if raw:
             return activated
         
-        return self.retriever.format_for_llm(activated, direct_episodes=direct_episodes)
+        # Build topic name map for formatting
+        topic_names = self._get_topic_names()
+        return self.retriever.format_for_llm(
+            activated,
+            direct_episodes=direct_episodes,
+            group_by_topic=topic is None,
+            topic_names=topic_names,
+        )
     
     async def consolidate(
         self,
@@ -539,7 +546,9 @@ class MemoryInterface:
         logger.info(f"end_session: consolidating {pending} pending episodes")
         return await self.consolidate(force=True)
     
-    async def ingest(self, content: str, source: str = "conversation") -> list[str]:
+    async def ingest(
+        self, content: str, source: str = "conversation", topic: Optional[str] = None,
+    ) -> list[str]:
         """Ingest raw text for automatic memory curation.
 
         Text accumulates in an internal buffer. When the buffer exceeds
@@ -553,11 +562,13 @@ class MemoryInterface:
         Args:
             content: Raw text to ingest (conversation fragments, tool output, etc.)
             source: Source label for metadata (default: "conversation")
+            topic: Optional topic ID for extracted episodes
 
         Returns:
             List of episode IDs created (empty if buffer didn't flush,
             triage dropped everything, or processing is running in background).
         """
+        self._ingest_topic = topic
         chunk = self._ingest_buffer.add(content)
         if chunk is None:
             logger.debug(
@@ -686,6 +697,7 @@ class MemoryInterface:
                 metadata=metadata,
                 episode_type=ep.episode_type or "observation",
                 entities=ep.entities if ep.entities else None,
+                topic=getattr(self, "_ingest_topic", None),
             )
             episode_ids.append(episode_id)
 
@@ -785,17 +797,76 @@ class MemoryInterface:
     
     # Topic operations
 
+    def _resolve_topic_id(self, topic: Optional[str]) -> str:
+        """Resolve a topic argument to a valid topic ID.
+
+        If *topic* matches an existing ID, return it.  Otherwise treat it as
+        a name and try to find a topic with that name.  If still no match,
+        return the default topic ID (creating it if needed).
+        """
+        if topic:
+            topic = topic.strip()
+            existing = self.store.get_topic(topic)
+            if existing:
+                return existing.id
+            # Try matching by name (case-insensitive)
+            for t in self.store.get_all_topics():
+                if t.name.lower() == topic.lower():
+                    return t.id
+        # Fall back to default
+        default = self.store.get_or_create_default_topic()
+        return default.id
+
+    def _get_topic_names(self) -> dict[str, str]:
+        """Return {topic_id: topic_name} map."""
+        return {t.id: t.name for t in self.store.get_all_topics()}
+
+    def create_topic(self, name: str, description: str = "") -> Topic:
+        """Create a new topic."""
+        topic_id = slugify(name)
+        existing = self.store.get_topic(topic_id)
+        if existing:
+            raise ValueError(f"Topic '{topic_id}' already exists")
+        topic = Topic(id=topic_id, name=name, description=description)
+        return self.store.create_topic(topic)
+
+    def get_topic(self, topic_id: str) -> Optional[Topic]:
+        """Get a topic by ID."""
+        return self.store.get_topic(topic_id)
+
     def list_topics(self) -> list[dict]:
         """List all topics with episode/concept counts and latest activity."""
-        return self.store.list_topics()
+        return self.store.get_topic_stats()
 
-    def get_topic_overview(self, topic: str, k: int = 5) -> list[Concept]:
-        """Get top-k concepts for a topic, no query needed.
+    def update_topic(
+        self, topic_id: str, name: Optional[str] = None, description: Optional[str] = None,
+    ) -> Optional[Topic]:
+        """Update an existing topic's name and/or description."""
+        topic = self.store.get_topic(topic_id)
+        if not topic:
+            return None
+        if name is not None:
+            topic.name = name
+        if description is not None:
+            topic.description = description
+        return self.store.update_topic(topic)
 
-        Returns concepts ordered by confidence * instance_count.
-        Useful for browsing/drill-down without a specific query.
-        """
-        return self.store.get_concepts_by_topic(topic)[:k]
+    def delete_topic(self, topic_id: str) -> bool:
+        """Delete a topic. Fails if episodes or concepts still reference it."""
+        stats = self.store.get_topic_stats()
+        for t in stats:
+            if t["id"] == topic_id:
+                if t["episode_count"] > 0 or t["concept_count"] > 0:
+                    raise ValueError(
+                        f"Cannot delete topic '{topic_id}': "
+                        f"{t['episode_count']} episodes and {t['concept_count']} concepts still reference it"
+                    )
+                break
+        return self.store.delete_topic(topic_id)
+
+    def get_topic_overview(self, topic_id: str, k: int = 5) -> list[Concept]:
+        """Get top-k concepts for a topic, no query needed."""
+        return self.store.get_concepts_by_topic(topic_id)[:k]
 
     # Direct access methods
     
@@ -839,7 +910,7 @@ class MemoryInterface:
             episode_type: New type (if None, preserves existing)
             entities: New entity list (if None, preserves existing)
             metadata: Metadata keys to merge in (if None, preserves existing)
-            topic: New topic (if None, preserves existing)
+            topic: New topic ID (if None, preserves existing)
 
         Returns:
             Updated Episode object, or None if not found
@@ -850,10 +921,8 @@ class MemoryInterface:
 
         if content is not None:
             episode.content = content
-            # Clear stale entity relations and mentions derived from old content
             self.store.delete_entity_relations_from_episode(episode_id)
             self.store.delete_mentions_for_episode(episode_id)
-            # Reset extraction/consolidation flags since content changed
             episode.entities_extracted = False if entities is None else True
             episode.relations_extracted = False
             episode.consolidated = False
@@ -876,7 +945,7 @@ class MemoryInterface:
             episode.metadata = {**(episode.metadata or {}), **metadata}
 
         if topic is not None:
-            episode.topic = topic.lower().strip() if topic else None
+            episode.topic_id = self._resolve_topic_id(topic) if topic else None
 
         episode.updated_at = datetime.now()
         self.store.update_episode(episode)

@@ -60,6 +60,47 @@ class EntityType(Enum):
     OTHER = "other"               # Catch-all for other entity types
 
 
+DEFAULT_TOPIC_ID = "general"
+
+
+def slugify(name: str) -> str:
+    """Turn a display name into a slug-style ID."""
+    import re
+    s = name.lower().strip()
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    return s.strip("-")
+
+
+@dataclass
+class Topic:
+    """A managed knowledge area that groups episodes and concepts."""
+
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    name: str = ""
+    description: str = ""
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Topic":
+        return cls(
+            id=data["id"],
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now(),
+        )
+
+
 # Valid entity type prefixes for ID validation
 VALID_ENTITY_TYPE_PREFIXES = {t.value for t in EntityType}
 
@@ -252,8 +293,8 @@ class Concept:
     embedding: Optional[list[float]] = None
     tags: list[str] = field(default_factory=list)
 
-    # Primary knowledge area (e.g. "architecture", "product", "infra")
-    topic: Optional[str] = None
+    # FK to Topic.id
+    topic_id: Optional[str] = None
 
     # Decay tracking
     last_accessed: Optional[datetime] = None
@@ -279,7 +320,7 @@ class Concept:
             "exceptions": self.exceptions,
             "embedding": self.embedding,
             "tags": self.tags,
-            "topic": self.topic,
+            "topic_id": self.topic_id,
             "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
             "access_count": self.access_count,
             "decay_factor": self.decay_factor,
@@ -303,7 +344,7 @@ class Concept:
             exceptions=data.get("exceptions", []),
             embedding=data.get("embedding"),
             tags=data.get("tags", []),
-            topic=data.get("topic"),
+            topic_id=data.get("topic_id") or data.get("topic"),
             last_accessed=datetime.fromisoformat(data["last_accessed"]) if data.get("last_accessed") else None,
             access_count=data.get("access_count", 0),
             decay_factor=data.get("decay_factor", 1.0),
@@ -371,8 +412,8 @@ class Episode:
     # Optional metadata
     metadata: dict = field(default_factory=dict)
 
-    # Primary knowledge area (e.g. "architecture", "product", "infra")
-    topic: Optional[str] = None
+    # FK to Topic.id
+    topic_id: Optional[str] = None
 
     # Origin of this episode (e.g. "agent", "slack", "github", "manual")
     source_type: Optional[str] = None
@@ -416,7 +457,7 @@ class Episode:
             "relations_extracted": self.relations_extracted,
             "confidence": self.confidence,
             "metadata": self.metadata,
-            "topic": self.topic,
+            "topic_id": self.topic_id,
             "source_type": self.source_type,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
         }
@@ -456,7 +497,7 @@ class Episode:
             relations_extracted=data.get("relations_extracted", False),
             confidence=data.get("confidence", 1.0),
             metadata=data.get("metadata", {}),
-            topic=data.get("topic"),
+            topic_id=data.get("topic_id") or data.get("topic"),
             source_type=data.get("source_type"),
             deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None,
         )

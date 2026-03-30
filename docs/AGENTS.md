@@ -10,6 +10,9 @@ External memory layer that persists across sessions and generalizes experiences 
 |------|---------|
 | `remember(content, [episode_type], [entities], [topic], [source_type])` | Store experience (embeds by default, no LLM) |
 | `recall(query, [entity], [episode_k], [topic])` | Retrieve relevant memories (concepts + direct episodes) |
+| `create_topic(name, [description])` | Create a new topic |
+| `update_topic(topic_id, [name], [description])` | Update topic name/description |
+| `delete_topic(topic_id)` | Delete unused topic |
 | `list_topics()` | List all topics with stats |
 | `topic_overview(topic, [k])` | Top concepts for a topic (no query needed) |
 | `ingest(content, [source])` | Auto-ingest raw text with density scoring |
@@ -88,11 +91,21 @@ When `topic` is set, initial matches are filtered to that topic. Cross-topic res
 
 ## Topics
 
+Topics are first-class managed entities that group related memories. Each topic has an ID (slug), name, and description.
+
 ```
+create_topic(name="Architecture", description="System design decisions and patterns")
+create_topic(name="Product")
+update_topic(topic_id="architecture", description="Updated description")
+delete_topic(topic_id="old-topic")  # Only works if no episodes/concepts use it
 list_topics()                           # See all topics with stats
 topic_overview(topic="architecture")    # Top concepts for a topic
 topic_overview(topic="product", k=10)   # More results
 ```
+
+When calling `remember()` or `ingest()` with a topic name, the topic is auto-created if it doesn't exist. If no topic is given, memories go to the "general" default topic.
+
+When calling `recall()` without a topic, results are grouped by topic showing top N per topic. With a topic, results are filtered to that topic only.
 
 Use topics to browse memory structure before querying. Good workflow: `list_topics()` → `topic_overview(topic)` → `recall(query, topic=topic)`
 

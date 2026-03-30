@@ -51,6 +51,17 @@ export interface SourceEpisodeData {
   type: EpisodeType;
 }
 
+export interface Topic {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  episode_count?: number;
+  concept_count?: number;
+  latest_activity?: string | null;
+}
+
 export interface Concept {
   id: string;
   title?: string;
@@ -61,10 +72,11 @@ export interface Concept {
   updated_at: string;
   relations: Relation[];
   source_episodes: string[];
-  source_episodes_data?: SourceEpisodeData[];  // Added for concept detail view
+  source_episodes_data?: SourceEpisodeData[];
   conditions: string | null;
   exceptions: string[];
   tags: string[];
+  topic_id?: string | null;
   // Decay tracking
   decay_factor: number;
   access_count: number;
@@ -85,6 +97,7 @@ export interface Episode {
   relations_extracted: boolean;
   confidence: number;
   metadata: Record<string, any>;
+  topic_id?: string | null;
   deleted_at: string | null;
 }
 

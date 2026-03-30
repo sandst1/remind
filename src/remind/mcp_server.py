@@ -174,27 +174,63 @@ async def tool_list_topics() -> str:
     topics = memory.list_topics()
 
     if not topics:
-        return "No topics found. Use the 'topic' parameter when remembering to assign topics."
+        return "No topics found. Use 'create_topic' to add one, or pass 'topic' when remembering."
 
     lines = ["TOPICS:\n"]
     for t in topics:
+        desc = f" — {t['description']}" if t.get("description") else ""
         lines.append(
-            f"  {t['topic']}: {t['episode_count']} episodes, "
+            f"  [{t['id']}] {t['name']}{desc}: "
+            f"{t['episode_count']} episodes, "
             f"{t['concept_count']} concepts, "
-            f"latest: {t['latest_activity']}"
+            f"latest: {t.get('latest_activity', '')}"
         )
     return "\n".join(lines)
 
 
-async def tool_topic_overview(topic: str, k: int = 5) -> str:
+async def tool_create_topic(name: str, description: str = "") -> str:
+    """Create a new topic."""
+    memory = await get_memory()
+    try:
+        topic = memory.create_topic(name, description=description)
+        return f"Created topic '{topic.id}' ({topic.name})"
+    except ValueError as e:
+        return f"Error: {e}"
+
+
+async def tool_update_topic(topic_id: str, name: str = None, description: str = None) -> str:
+    """Update an existing topic's name or description."""
+    memory = await get_memory()
+    updated = memory.update_topic(topic_id, name=name, description=description)
+    if not updated:
+        return f"Topic '{topic_id}' not found."
+    return f"Updated topic '{updated.id}' ({updated.name})"
+
+
+async def tool_delete_topic(topic_id: str) -> str:
+    """Delete a topic (only if no episodes/concepts reference it)."""
+    memory = await get_memory()
+    try:
+        if memory.delete_topic(topic_id):
+            return f"Deleted topic '{topic_id}'."
+        return f"Topic '{topic_id}' not found."
+    except ValueError as e:
+        return f"Error: {e}"
+
+
+async def tool_topic_overview(topic_id: str, k: int = 5) -> str:
     """Get top concepts for a topic without needing a query."""
     memory = await get_memory()
-    concepts = memory.get_topic_overview(topic, k=k)
+    topic = memory.get_topic(topic_id)
+    concepts = memory.get_topic_overview(topic_id, k=k)
 
     if not concepts:
-        return f"No concepts found for topic '{topic}'."
+        return f"No concepts found for topic '{topic_id}'."
 
-    lines = [f"TOPIC OVERVIEW: {topic}\n"]
+    label = topic.name if topic else topic_id
+    lines = [f"TOPIC OVERVIEW: {label}\n"]
+    if topic and topic.description:
+        lines.append(f"  {topic.description}\n")
     for c in concepts:
         updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
         title = f"{c.title} " if c.title else ""
@@ -981,29 +1017,68 @@ def create_mcp_server(config=None):
     async def list_topics() -> str:
         """List all topics in memory with episode/concept counts.
 
-        Topics are knowledge areas that group related memories. Use this
+        Topics are managed knowledge areas that group related memories. Use this
         to understand the structure of stored knowledge before recalling.
 
         Returns:
-            List of topics with stats (episode count, concept count, latest activity)
+            List of topics with id, name, description, episode count, concept count, latest activity
         """
         return await tool_list_topics()
 
     @mcp.tool()
-    async def topic_overview(topic: str, k: int = 5) -> str:
+    async def create_topic(name: str, description: str = "") -> str:
+        """Create a new topic for grouping memories.
+
+        Args:
+            name: Display name for the topic (e.g., "Architecture", "Product Design")
+            description: What this topic covers
+
+        Returns:
+            Confirmation with topic ID
+        """
+        return await tool_create_topic(name, description)
+
+    @mcp.tool()
+    async def update_topic(topic_id: str, name: str = None, description: str = None) -> str:
+        """Update an existing topic's name or description.
+
+        Args:
+            topic_id: ID of the topic to update
+            name: New display name (or null to keep existing)
+            description: New description (or null to keep existing)
+
+        Returns:
+            Confirmation or error
+        """
+        return await tool_update_topic(topic_id, name, description)
+
+    @mcp.tool()
+    async def delete_topic(topic_id: str) -> str:
+        """Delete a topic (only works if no episodes/concepts reference it).
+
+        Args:
+            topic_id: ID of the topic to delete
+
+        Returns:
+            Confirmation or error
+        """
+        return await tool_delete_topic(topic_id)
+
+    @mcp.tool()
+    async def topic_overview(topic_id: str, k: int = 5) -> str:
         """Get an overview of a topic's top concepts without a specific query.
 
         Use this to browse/explore what is known about a topic before drilling
         down with a targeted recall query.
 
         Args:
-            topic: The topic name to explore (e.g., "architecture", "product")
+            topic_id: The topic ID to explore
             k: Number of top concepts to return (default: 5)
 
         Returns:
             Top concepts for the topic, ordered by confidence and evidence
         """
-        return await tool_topic_overview(topic, k)
+        return await tool_topic_overview(topic_id, k)
 
     @mcp.tool()
     async def consolidate(force: bool = False) -> str:

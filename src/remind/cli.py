@@ -267,40 +267,94 @@ def topics_list(ctx):
     topic_list = memory.list_topics()
 
     if not topic_list:
-        console.print("[dim]No topics found. Use --topic when remembering to assign topics.[/dim]")
+        console.print("[dim]No topics found. Use 'remind topics create' to add one.[/dim]")
         return
 
     table = Table(title="Topics")
-    table.add_column("Topic", style="blue")
+    table.add_column("ID", style="blue")
+    table.add_column("Name", style="bold")
+    table.add_column("Description")
     table.add_column("Episodes", justify="right")
     table.add_column("Concepts", justify="right")
     table.add_column("Latest Activity")
 
     for t in topic_list:
         table.add_row(
-            t["topic"],
+            t["id"],
+            t["name"],
+            (t.get("description") or "")[:50],
             str(t["episode_count"]),
             str(t["concept_count"]),
-            t["latest_activity"] or "",
+            t.get("latest_activity") or "",
         )
 
     console.print(table)
 
 
-@topics.command("overview")
+@topics.command("create")
 @click.argument("name")
+@click.option("--description", "-d", default="", help="Description of the topic")
+@click.pass_context
+def topics_create(ctx, name: str, description: str):
+    """Create a new topic."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    try:
+        topic = memory.create_topic(name, description=description)
+        console.print(f"[green]✓[/green] Created topic [blue]{topic.id}[/blue] ({topic.name})")
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+
+
+@topics.command("update")
+@click.argument("topic_id")
+@click.option("--name", "-n", default=None, help="New display name")
+@click.option("--description", "-d", default=None, help="New description")
+@click.pass_context
+def topics_update(ctx, topic_id: str, name: Optional[str], description: Optional[str]):
+    """Update an existing topic."""
+    if name is None and description is None:
+        raise click.UsageError("At least --name or --description must be provided.")
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    updated = memory.update_topic(topic_id, name=name, description=description)
+    if not updated:
+        console.print(f"[red]Topic '{topic_id}' not found.[/red]")
+    else:
+        console.print(f"[green]✓[/green] Updated topic [blue]{updated.id}[/blue] ({updated.name})")
+
+
+@topics.command("delete")
+@click.argument("topic_id")
+@click.pass_context
+def topics_delete(ctx, topic_id: str):
+    """Delete a topic (only if no episodes/concepts reference it)."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    try:
+        if memory.delete_topic(topic_id):
+            console.print(f"[green]✓[/green] Deleted topic [blue]{topic_id}[/blue]")
+        else:
+            console.print(f"[red]Topic '{topic_id}' not found.[/red]")
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+
+
+@topics.command("overview")
+@click.argument("topic_id")
 @click.option("-k", default=5, help="Number of top concepts to show")
 @click.pass_context
-def topics_overview(ctx, name: str, k: int):
+def topics_overview(ctx, topic_id: str, k: int):
     """Show top concepts for a topic."""
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-    concepts = memory.get_topic_overview(name, k=k)
+    topic = memory.get_topic(topic_id)
+    concepts = memory.get_topic_overview(topic_id, k=k)
 
     if not concepts:
-        console.print(f"[dim]No concepts found for topic '{name}'.[/dim]")
+        console.print(f"[dim]No concepts found for topic '{topic_id}'.[/dim]")
         return
 
-    console.print(f"\n[bold blue]Topic: {name}[/bold blue]\n")
+    label = topic.name if topic else topic_id
+    console.print(f"\n[bold blue]Topic: {label}[/bold blue]\n")
+    if topic and topic.description:
+        console.print(f"  [dim]{topic.description}[/dim]\n")
     for c in concepts:
         updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
         title = f" {c.title}" if c.title else ""

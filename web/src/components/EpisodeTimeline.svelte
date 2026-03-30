@@ -6,9 +6,11 @@
     episodesLoading,
     episodesError,
     currentDb,
+    topics,
+    selectedTopic,
   } from '../lib/stores';
-  import { fetchEpisodes, updateEpisode } from '../lib/api';
-  import type { Episode, EpisodeType } from '../lib/types';
+  import { fetchEpisodes, updateEpisode, fetchTopics } from '../lib/api';
+  import type { Episode, EpisodeType, Topic } from '../lib/types';
   import { Eye, Zap, CircleHelp, Brain, Heart, Search, Filter, FileText, MapPin, ListChecks, Circle, Play, CheckCircle2, Ban, Trash2, Pencil, Target, BookText } from 'lucide-svelte';
   import { deleteEpisode } from '../lib/api';
 
@@ -18,6 +20,8 @@
   let page = 0;
   const pageSize = 20;
   let mounted = false;
+
+  $: topicMap = Object.fromEntries(($topics || []).map((t: Topic) => [t.id, t.name]));
 
   onMount(() => {
     mounted = true;
@@ -42,6 +46,7 @@
         type: filterType || undefined,
         consolidated: filterConsolidated ?? undefined,
         search: search || undefined,
+        topic: $selectedTopic || undefined,
       });
       episodes.set(response.episodes);
       episodesTotal.set(response.total);
@@ -249,6 +254,9 @@
               <span class="episode-date">{formatDate(episode.timestamp)}</span>
               {#if !episode.consolidated}
                 <span class="pending-badge">Pending</span>
+              {/if}
+              {#if episode.topic_id}
+                <span class="topic-badge">{topicMap[episode.topic_id] || episode.topic_id}</span>
               {/if}
             </div>
             {#if episode.episode_type === 'task' && episode.metadata?.status}
@@ -556,6 +564,16 @@
     background: var(--color-warning-bg);
     color: var(--color-warning);
     border: 1px solid var(--color-warning);
+    border-radius: var(--radius-full);
+    font-weight: 500;
+  }
+
+  .topic-badge {
+    font-size: var(--font-size-xs);
+    padding: 2px 8px;
+    background: var(--color-accent-bg, rgba(99, 102, 241, 0.1));
+    color: var(--color-accent);
+    border: 1px solid var(--color-accent);
     border-radius: var(--radius-full);
     font-weight: 500;
   }

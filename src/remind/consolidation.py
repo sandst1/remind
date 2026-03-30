@@ -90,7 +90,7 @@ Respond with this exact JSON structure:
       "source_episodes": ["episode_id1", "episode_id2"],
       "add_exceptions": ["new exception if any"],
       "add_tags": ["new tag if any"],
-      "topic": "primary knowledge area or null to keep existing",
+      "topic_id": "primary knowledge area or null to keep existing",
       "add_relations": [
         {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of|supersedes", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
       ],
@@ -108,7 +108,7 @@ Respond with this exact JSON structure:
       "conditions": "when/where this applies (or null if universal)",
       "exceptions": ["known exceptions"],
       "tags": ["categorization", "tags"],
-      "topic": "primary knowledge area (e.g. architecture, product, infra)",
+      "topic_id": "primary knowledge area (e.g. architecture, product, infra)",
       "relations": [
         {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of|supersedes", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
       ]
@@ -309,19 +309,18 @@ class Consolidator:
         batch_label = f" (batch {batch_num + 1})" if batch_num > 0 else ""
         logger.info(f"Consolidating {len(episodes)} episodes{batch_label}")
 
-        # Group episodes by topic for independent consolidation
         episodes_by_topic: dict[Optional[str], list[Episode]] = {}
         for ep in episodes:
-            episodes_by_topic.setdefault(ep.topic, []).append(ep)
+            episodes_by_topic.setdefault(ep.topic_id, []).append(ep)
 
         topic_count = len(episodes_by_topic)
         if topic_count > 1:
             topic_labels = [t or "(no topic)" for t in episodes_by_topic.keys()]
             logger.info(f"Consolidating {topic_count} topic groups: {', '.join(topic_labels)}")
 
-        for topic, topic_episodes in episodes_by_topic.items():
+        for topic_id, topic_episodes in episodes_by_topic.items():
             topic_result = await self._consolidate_topic_group(
-                topic, topic_episodes, batch_num, batch_label
+                topic_id, topic_episodes, batch_num, batch_label
             )
             if topic_result:
                 result.concepts_created += topic_result.concepts_created
@@ -347,20 +346,19 @@ class Consolidator:
 
     async def _consolidate_topic_group(
         self,
-        topic: Optional[str],
+        topic_id: Optional[str],
         episodes: list[Episode],
         batch_num: int,
         batch_label: str,
     ) -> Optional[ConsolidationResult]:
         """Consolidate a group of episodes belonging to the same topic."""
         result = ConsolidationResult()
-        topic_label = f" [topic={topic}]" if topic else ""
+        topic_label = f" [topic={topic_id}]" if topic_id else ""
 
-        # Get existing concepts — filter to same topic if set, plus untopiced
         all_concepts = self.store.get_concepts_summary()
-        if topic:
+        if topic_id:
             relevant_concepts = [
-                c for c in all_concepts if c.get("topic") == topic or c.get("topic") is None
+                c for c in all_concepts if c.get("topic_id") == topic_id or c.get("topic_id") is None
             ]
         else:
             relevant_concepts = all_concepts
@@ -428,11 +426,10 @@ class Consolidator:
         if merged_operations.get("analysis"):
             logger.info(f"Consolidation analysis{topic_label}: {merged_operations['analysis']}")
 
-        # Inject topic into new concepts if they don't specify one
-        if topic:
+        if topic_id:
             for nc in merged_operations.get("new_concepts", []):
-                if not nc.get("topic"):
-                    nc["topic"] = topic
+                if not nc.get("topic_id") and not nc.get("topic"):
+                    nc["topic_id"] = topic_id
 
         await self._apply_operations(merged_operations, result)
         return result
@@ -685,8 +682,8 @@ class Consolidator:
             line = f"[{c['id']}] (conf: {c.get('confidence', 0.5):.2f}, n={c.get('instance_count', 1)})"
             if tags:
                 line += f" [{tags}]"
-            if c.get("topic"):
-                line += f" topic={c['topic']}"
+            if c.get("topic_id"):
+                line += f" topic={c['topic_id']}"
             if c.get("title"):
                 line += f"\n  Title: {c['title']}"
             line += f"\n  {c['summary']}"
@@ -755,9 +752,9 @@ class Consolidator:
             if tag not in concept.tags:
                 concept.tags.append(tag)
 
-        # Update topic if provided and concept doesn't have one
-        if update.get("topic") and not concept.topic:
-            concept.topic = update["topic"]
+        topic_val = update.get("topic_id") or update.get("topic")
+        if topic_val and not concept.topic_id:
+            concept.topic_id = topic_val
 
         # Add source episodes
         for ep_id in update.get("source_episodes", []):
@@ -787,8 +784,8 @@ class Consolidator:
             conditions=data.get("conditions"),
             exceptions=data.get("exceptions", []),
             tags=data.get("tags", []),
-            topic=data.get("topic"),
-            relations=[],  # Relations added via _add_relation after all concepts created
+            topic_id=data.get("topic_id") or data.get("topic"),
+            relations=[],
             embedding=embedding,
         )
 

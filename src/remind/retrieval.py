@@ -164,11 +164,10 @@ class MemoryRetriever:
             k=self.initial_k * 2  # Get more initially, we'll filter
         )
 
-        # Filter initial matches to topic if specified
         if topic:
             initial_matches = [
                 (c, sim) for c, sim in initial_matches
-                if c.topic == topic or c.topic is None
+                if c.topic_id == topic or c.topic_id is None
             ]
         
         # Build activation map: concept_id -> (activation, source, hops)
@@ -214,9 +213,7 @@ class MemoryRetriever:
                         * target_decay  # Weight by target's decay factor
                     )
 
-                    # Cross-topic penalty: reduce activation when spreading
-                    # to a concept in a different topic
-                    if topic and related_concept.topic and related_concept.topic != topic:
+                    if topic and related_concept.topic_id and related_concept.topic_id != topic:
                         spread_activation *= 0.4
                     
                     if spread_activation < self.activation_threshold:
@@ -404,7 +401,7 @@ class MemoryRetriever:
     
     async def retrieve_by_topic(
         self,
-        topic: str,
+        topic_id: str,
         k: int = 5,
     ) -> list[Concept]:
         """
@@ -413,7 +410,7 @@ class MemoryRetriever:
         Returns concepts ordered by confidence * instance_count,
         suitable for topic overview / drill-down.
         """
-        return self.store.get_concepts_by_topic(topic)[:k]
+        return self.store.get_concepts_by_topic(topic_id)[:k]
 
     async def retrieve_episodes_by_embedding(
         self,
@@ -661,33 +658,32 @@ class MemoryRetriever:
         matched_entities: Optional[list[Entity]] = None,
         max_entity_episodes: int = 10,
         direct_episodes: Optional[list["ScoredEpisode"]] = None,
+        group_by_topic: bool = False,
+        topic_names: Optional[dict[str, str]] = None,
     ) -> str:
         """
         Format retrieved concepts and episodes for injection into an LLM prompt.
-
-        This is the "recall" output that gets added to context.
 
         Args:
             activated: Concept matches from spreading activation.
             include_relations: Show concept relations.
             max_relations: Max relations per concept.
             include_episodes: Show source episodes under each concept.
-            matched_entities: Entities matched by name from the query. If provided,
-                appends entity context sections after concepts.
+            matched_entities: Entities matched by name from the query.
             max_entity_episodes: Max episodes to show per matched entity.
             direct_episodes: Episodes matched by direct embedding search.
-                If provided, rendered before concepts.
+            group_by_topic: When True, group concepts under topic headers.
+            topic_names: {topic_id: display_name} map for headers.
         """
-        # Use stashed entities from last retrieve() if not explicitly provided
         if matched_entities is None:
             matched_entities = getattr(self, "_last_matched_entities", None) or []
 
         if not activated and not matched_entities and not direct_episodes:
             return "(No relevant memories found)"
 
+        topic_names = topic_names or {}
         lines = []
 
-        # Direct episode matches (shown first for highest relevance)
         if direct_episodes:
             lines.append("RELEVANT EPISODES:\n")
             for se in direct_episodes:
@@ -696,118 +692,21 @@ class MemoryRetriever:
 
         lines.append("RELEVANT MEMORY:\n")
 
-        for ac in activated:
-            c = ac.concept
-
-            # Header with ID, title (if present), confidence, and last update
-            updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
-            if c.title:
-                header = f"[{c.id}] {c.title} (confidence: {c.confidence:.2f}, last updated: {updated}"
-            else:
-                header = f"[{c.id}] (confidence: {c.confidence:.2f}, last updated: {updated}"
-            if ac.source == "spread":
-                header += f", via association"
-            elif ac.source == "entity_name":
-                header += f", via entity match"
-            header += ")"
-            lines.append(header)
-
-            # Summary
-            lines.append(f"  {c.summary}")
-
-            # Conditions/Exceptions
-            if c.conditions:
-                lines.append(f"  → Applies when: {c.conditions}")
-            if c.exceptions:
-                lines.append(f"  → Exceptions: {', '.join(c.exceptions)}")
-
-            # Contradictions (always shown, uncapped)
-            outbound_contradictions = [
-                rel for rel in c.relations if rel.type == RelationType.CONTRADICTS
-            ]
-            inbound_contradictions = self.store.get_incoming_relations(
-                c.id, RelationType.CONTRADICTS
-            )
-            if outbound_contradictions or inbound_contradictions:
-                lines.append("  Contradictions:")
-                for rel in outbound_contradictions:
-                    target = self.store.get_concept(rel.target_id)
-                    if target:
-                        label = f"  → contradicts [{target.id}]: {target.summary}"
-                        if rel.context:
-                            label += f" (context: {rel.context})"
-                        lines.append(label)
-                for source_concept, rel in inbound_contradictions:
-                    if source_concept.id == c.id:
-                        continue
-                    label = f"  → [{source_concept.id}] contradicts this: {source_concept.summary}"
-                    if rel.context:
-                        label += f" (context: {rel.context})"
-                    lines.append(label)
-            else:
-                lines.append("  Contradictions: (none)")
-
-            # Supersedes (always shown, uncapped — like contradictions)
-            outbound_supersedes = [
-                rel for rel in c.relations if rel.type == RelationType.SUPERSEDES
-            ]
-            inbound_supersedes = self.store.get_incoming_relations(
-                c.id, RelationType.SUPERSEDES
-            )
-            if outbound_supersedes or inbound_supersedes:
-                for rel in outbound_supersedes:
-                    target = self.store.get_concept(rel.target_id)
-                    if target:
-                        label = f"  → supersedes [{target.id}]: {target.summary}"
-                        if rel.context:
-                            label += f" (context: {rel.context})"
-                        lines.append(label)
-                for source_concept, rel in inbound_supersedes:
-                    if source_concept.id == c.id:
-                        continue
-                    label = f"  → SUPERSEDED BY [{source_concept.id}]: {source_concept.summary}"
-                    if rel.context:
-                        label += f" (context: {rel.context})"
-                    lines.append(label)
-
-            # Other relations (contradicts and supersedes excluded from budget)
-            if include_relations and c.relations:
-                shown = 0
-                for rel in c.relations:
-                    if rel.type in (RelationType.CONTRADICTS, RelationType.SUPERSEDES):
-                        continue
-                    if shown >= max_relations:
-                        break
-                    target = self.store.get_concept(rel.target_id)
-                    if target:
-                        rel_str = f"  → {rel.type.value}: {target.summary}"
-                        lines.append(rel_str)
-                        shown += 1
-
-            # Source episodes with type labels and entity context
-            if include_episodes and c.source_episodes:
-                source_eps = self.store.get_episodes_batch(c.source_episodes)
-
-                # Collect entities from source episodes
-                entity_names: list[str] = []
-                seen_entities: set[str] = set()
-                for ep in source_eps:
-                    for eid in ep.entity_ids:
-                        if eid not in seen_entities:
-                            seen_entities.add(eid)
-                            _, name = Entity.parse_id(eid)
-                            entity_names.append(name)
-                if entity_names:
-                    lines.append(f"  Entities: {', '.join(entity_names)}")
-
+        # Optionally group by topic
+        if group_by_topic and activated:
+            by_topic: dict[Optional[str], list[ActivatedConcept]] = {}
+            for ac in activated:
+                by_topic.setdefault(ac.concept.topic_id, []).append(ac)
+            for topic_id, group in by_topic.items():
+                tname = topic_names.get(topic_id, topic_id) if topic_id else "General"
+                lines.append(f"## Topic: {tname}\n")
+                for ac in group:
+                    self._format_concept_block(ac, lines, include_relations, max_relations, include_episodes)
                 lines.append("")
-                lines.append("  Source episodes:")
-                for episode in source_eps:
-                    lines.append(_format_episode_line(episode))
+        else:
+            for ac in activated:
+                self._format_concept_block(ac, lines, include_relations, max_relations, include_episodes)
 
-            lines.append("")  # Blank line between concepts
-
-        # Append entity context for name-matched entities
         if matched_entities:
             lines.append("---")
             lines.append("MATCHED ENTITIES:\n")
@@ -834,6 +733,117 @@ class MemoryRetriever:
                 lines.append("")
 
         return "\n".join(lines)
+
+    def _format_concept_block(
+        self,
+        ac: ActivatedConcept,
+        lines: list[str],
+        include_relations: bool,
+        max_relations: int,
+        include_episodes: bool,
+    ) -> None:
+        """Render a single activated concept into *lines*."""
+        c = ac.concept
+
+        updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
+        if c.title:
+            header = f"[{c.id}] {c.title} (confidence: {c.confidence:.2f}, last updated: {updated}"
+        else:
+            header = f"[{c.id}] (confidence: {c.confidence:.2f}, last updated: {updated}"
+        if ac.source == "spread":
+            header += ", via association"
+        elif ac.source == "entity_name":
+            header += ", via entity match"
+        header += ")"
+        lines.append(header)
+
+        lines.append(f"  {c.summary}")
+
+        if c.conditions:
+            lines.append(f"  → Applies when: {c.conditions}")
+        if c.exceptions:
+            lines.append(f"  → Exceptions: {', '.join(c.exceptions)}")
+
+        outbound_contradictions = [
+            rel for rel in c.relations if rel.type == RelationType.CONTRADICTS
+        ]
+        inbound_contradictions = self.store.get_incoming_relations(
+            c.id, RelationType.CONTRADICTS
+        )
+        if outbound_contradictions or inbound_contradictions:
+            lines.append("  Contradictions:")
+            for rel in outbound_contradictions:
+                target = self.store.get_concept(rel.target_id)
+                if target:
+                    label = f"  → contradicts [{target.id}]: {target.summary}"
+                    if rel.context:
+                        label += f" (context: {rel.context})"
+                    lines.append(label)
+            for source_concept, rel in inbound_contradictions:
+                if source_concept.id == c.id:
+                    continue
+                label = f"  → [{source_concept.id}] contradicts this: {source_concept.summary}"
+                if rel.context:
+                    label += f" (context: {rel.context})"
+                lines.append(label)
+        else:
+            lines.append("  Contradictions: (none)")
+
+        outbound_supersedes = [
+            rel for rel in c.relations if rel.type == RelationType.SUPERSEDES
+        ]
+        inbound_supersedes = self.store.get_incoming_relations(
+            c.id, RelationType.SUPERSEDES
+        )
+        if outbound_supersedes or inbound_supersedes:
+            for rel in outbound_supersedes:
+                target = self.store.get_concept(rel.target_id)
+                if target:
+                    label = f"  → supersedes [{target.id}]: {target.summary}"
+                    if rel.context:
+                        label += f" (context: {rel.context})"
+                    lines.append(label)
+            for source_concept, rel in inbound_supersedes:
+                if source_concept.id == c.id:
+                    continue
+                label = f"  → SUPERSEDED BY [{source_concept.id}]: {source_concept.summary}"
+                if rel.context:
+                    label += f" (context: {rel.context})"
+                lines.append(label)
+
+        if include_relations and c.relations:
+            shown = 0
+            for rel in c.relations:
+                if rel.type in (RelationType.CONTRADICTS, RelationType.SUPERSEDES):
+                    continue
+                if shown >= max_relations:
+                    break
+                target = self.store.get_concept(rel.target_id)
+                if target:
+                    rel_str = f"  → {rel.type.value}: {target.summary}"
+                    lines.append(rel_str)
+                    shown += 1
+
+        if include_episodes and c.source_episodes:
+            source_eps = self.store.get_episodes_batch(c.source_episodes)
+
+            entity_names: list[str] = []
+            seen_entities: set[str] = set()
+            for ep in source_eps:
+                for eid in ep.entity_ids:
+                    if eid not in seen_entities:
+                        seen_entities.add(eid)
+                        _, name = Entity.parse_id(eid)
+                        entity_names.append(name)
+            if entity_names:
+                lines.append(f"  Entities: {', '.join(entity_names)}")
+
+            lines.append("")
+            lines.append("  Source episodes:")
+            for episode in source_eps:
+                lines.append(_format_episode_line(episode))
+
+        lines.append("")
     
     def format_entity_context(
         self,

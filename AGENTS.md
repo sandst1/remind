@@ -12,7 +12,7 @@ Remind is a generalization-capable memory layer for LLMs. It differs from simple
 
 ```
 src/remind/
-├── models.py          # Data models (Concept, Episode, Entity, Relation)
+├── models.py          # Data models (Concept, Episode, Entity, Relation, Topic)
 ├── store.py           # SQLite persistence layer
 ├── interface.py       # MemoryInterface - main public API
 ├── config.py          # Configuration loading (config file, env vars, defaults)
@@ -48,6 +48,7 @@ src/remind/
 | `Concept` | Generalized knowledge with confidence, relations, conditions. |
 | `Entity` | External referent (file, person, concept, tool). Format: `type:name` |
 | `Relation` | Typed edge between concepts (implies, contradicts, specializes, etc.) |
+| `Topic` | Named knowledge area grouping episodes/concepts. Has id (slug), name, description. |
 | `TaskStatus` | Enum for task status: `todo`, `in_progress`, `done`, `blocked` |
 
 **Episode types**: `observation`, `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`, `fact`

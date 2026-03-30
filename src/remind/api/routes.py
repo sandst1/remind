@@ -80,10 +80,13 @@ async def get_concepts(request: Request) -> JSONResponse:
         offset = int(request.query_params.get("offset", 0))
         limit = int(request.query_params.get("limit", 50))
         search = request.query_params.get("search", "")
+        topic_id = request.query_params.get("topic")
 
         all_concepts = memory.store.get_all_concepts()
 
-        # Simple search filter
+        if topic_id:
+            all_concepts = [c for c in all_concepts if c.topic_id == topic_id]
+
         if search:
             search_lower = search.lower()
             all_concepts = [
@@ -93,7 +96,6 @@ async def get_concepts(request: Request) -> JSONResponse:
                 or any(search_lower in tag.lower() for tag in c.tags)
             ]
 
-        # Sort alphabetically by title (or summary if no title)
         all_concepts.sort(key=lambda c: (c.title or c.summary).lower())
 
         total = len(all_concepts)
@@ -309,8 +311,8 @@ async def get_episodes(request: Request) -> JSONResponse:
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
         search = request.query_params.get("search", "")
+        topic_filter = request.query_params.get("topic")
 
-        # Get episodes based on filters
         if episode_type:
             all_episodes = memory.store.get_episodes_by_type(episode_type, limit=1000)
         elif start_date or end_date:
@@ -322,12 +324,13 @@ async def get_episodes(request: Request) -> JSONResponse:
         else:
             all_episodes = memory.store.get_recent_episodes(limit=1000)
 
-        # Filter by consolidated status
         if consolidated is not None:
             is_consolidated = consolidated.lower() == "true"
             all_episodes = [e for e in all_episodes if e.consolidated == is_consolidated]
 
-        # Filter by search term (fulltext search on content)
+        if topic_filter:
+            all_episodes = [e for e in all_episodes if e.topic_id == topic_filter]
+
         if search:
             search_lower = search.lower()
             all_episodes = [
@@ -751,6 +754,7 @@ async def execute_query(request: Request) -> JSONResponse:
         query = body.get("query") or None
         k = body.get("k", 3)
         entity = body.get("entity") or None
+        topic = body.get("topic") or None
 
         if not query and not entity:
             return JSONResponse(
@@ -758,7 +762,7 @@ async def execute_query(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        result = await memory.recall(query=query, k=k, entity=entity, raw=True)
+        result = await memory.recall(query=query, k=k, entity=entity, raw=True, topic=topic)
 
         if entity:
             return JSONResponse({
@@ -766,7 +770,12 @@ async def execute_query(request: Request) -> JSONResponse:
                 "formatted": memory.retriever.format_entity_context(entity, result),
             })
 
-        formatted = memory.retriever.format_for_llm(result)
+        topic_names = memory._get_topic_names()
+        formatted = memory.retriever.format_for_llm(
+            result,
+            group_by_topic=topic is None,
+            topic_names=topic_names,
+        )
 
         return JSONResponse({
             "concepts": [
@@ -1057,6 +1066,103 @@ async def get_plans(request: Request) -> JSONResponse:
 
 
 # =============================================================================
+# Topics
+# =============================================================================
+
+
+async def api_get_topics(request: Request) -> JSONResponse:
+    """List all topics with stats."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+    try:
+        topics = memory.list_topics()
+        return JSONResponse({"topics": topics, "total": len(topics)})
+    except Exception as e:
+        logger.exception("Failed to get topics")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_create_topic(request: Request) -> JSONResponse:
+    """Create a new topic."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+    try:
+        body = await request.json()
+        name = body.get("name", "").strip()
+        if not name:
+            return JSONResponse({"error": "name is required"}, status_code=400)
+        description = body.get("description", "")
+        topic = memory.create_topic(name, description=description)
+        return JSONResponse(topic.to_dict(), status_code=201)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    except Exception as e:
+        logger.exception("Failed to create topic")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_get_topic_detail(request: Request) -> JSONResponse:
+    """Get a single topic by ID with stats."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+    topic_id = request.path_params.get("id")
+    try:
+        topic = memory.get_topic(topic_id)
+        if not topic:
+            return JSONResponse({"error": "Topic not found"}, status_code=404)
+        stats = memory.list_topics()
+        topic_stat = next((t for t in stats if t["id"] == topic_id), None)
+        result = topic.to_dict()
+        if topic_stat:
+            result["episode_count"] = topic_stat["episode_count"]
+            result["concept_count"] = topic_stat["concept_count"]
+            result["latest_activity"] = topic_stat.get("latest_activity")
+        return JSONResponse(result)
+    except Exception as e:
+        logger.exception("Failed to get topic detail")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_update_topic(request: Request) -> JSONResponse:
+    """Update a topic."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+    topic_id = request.path_params.get("id")
+    try:
+        body = await request.json()
+        name = body.get("name")
+        description = body.get("description")
+        updated = memory.update_topic(topic_id, name=name, description=description)
+        if not updated:
+            return JSONResponse({"error": "Topic not found"}, status_code=404)
+        return JSONResponse(updated.to_dict())
+    except Exception as e:
+        logger.exception("Failed to update topic")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_delete_topic(request: Request) -> JSONResponse:
+    """Delete a topic (only if not in use)."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+    topic_id = request.path_params.get("id")
+    try:
+        if memory.delete_topic(topic_id):
+            return JSONResponse({"deleted": True})
+        return JSONResponse({"error": "Topic not found"}, status_code=404)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    except Exception as e:
+        logger.exception("Failed to delete topic")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# =============================================================================
 # Route definitions
 # =============================================================================
 
@@ -1099,6 +1205,12 @@ api_routes = [
     # Specs & Plans
     Route("/api/v1/specs", get_specs, methods=["GET"]),
     Route("/api/v1/plans", get_plans, methods=["GET"]),
+    # Topics
+    Route("/api/v1/topics", api_get_topics, methods=["GET"]),
+    Route("/api/v1/topics", api_create_topic, methods=["POST"]),
+    Route("/api/v1/topics/{id}", api_get_topic_detail, methods=["GET"]),
+    Route("/api/v1/topics/{id}", api_update_topic, methods=["PUT", "PATCH"]),
+    Route("/api/v1/topics/{id}", api_delete_topic, methods=["DELETE"]),
     # Bulk operations
     Route("/api/v1/deleted/purge-all", purge_all_deleted, methods=["DELETE"]),
 ]

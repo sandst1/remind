@@ -36,6 +36,7 @@ from remind.models import (
     Relation,
     RelationType,
     ConsolidationResult,
+    Topic,
     # v2 models
     Entity,
     EntityType,
@@ -93,6 +94,7 @@ __all__ = [
     "EpisodeType",
     "ExtractionResult",
     "TaskStatus",
+    "Topic",
     # Storage
     "MemoryStore",
     "SQLiteMemoryStore",

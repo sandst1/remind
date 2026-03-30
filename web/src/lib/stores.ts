@@ -4,6 +4,7 @@ import type {
   Concept,
   Episode,
   Entity,
+  Topic,
   DatabaseInfo,
   EntityGraphData,
 } from './types';
@@ -39,8 +40,14 @@ export const entitiesTotal = writable(0);
 export const entitiesLoading = writable(false);
 export const entitiesError = writable<string | null>(null);
 
+// Topics
+export const topics = writable<Topic[]>([]);
+export const topicsLoading = writable(false);
+export const topicsError = writable<string | null>(null);
+export const selectedTopic = writable<string | null>(null);
+
 // Navigation
-export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'memory-health' | 'entity-graph' | 'tasks';
+export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'memory-health' | 'entity-graph' | 'tasks' | 'topics';
 export const currentView = writable<View>('dashboard');
 
 // Entity Graph (network) visualization state

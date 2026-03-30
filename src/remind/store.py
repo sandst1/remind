@@ -38,6 +38,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from remind.models import (
     Concept, Episode, Relation, RelationType,
     Entity, EntityType, EntityRelation, EpisodeType,
+    Topic, DEFAULT_TOPIC_ID,
 )
 
 logger = logging.getLogger(__name__)
@@ -460,6 +461,15 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
 metadata_obj = MetaData()
 
+topics_table = Table(
+    "topics", metadata_obj,
+    Column("id", String, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("description", Text, nullable=False, server_default=""),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now()),
+)
+
 concepts_table = Table(
     "concepts", metadata_obj,
     Column("id", String, primary_key=True),
@@ -469,7 +479,7 @@ concepts_table = Table(
     Column("embedding", LargeBinary, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
     Column("updated_at", DateTime, server_default=func.now()),
-    Column("topic", Text, nullable=True),
+    Column("topic_id", Text, nullable=True),
 )
 
 episodes_table = Table(
@@ -481,7 +491,7 @@ episodes_table = Table(
     Column("consolidated", Boolean, default=False),
     Column("timestamp", DateTime, server_default=func.now()),
     Column("embedding", LargeBinary, nullable=True),
-    Column("topic", Text, nullable=True),
+    Column("topic_id", Text, nullable=True),
 )
 
 relations_table = Table(
@@ -534,8 +544,8 @@ metadata_table = Table(
 # Indexes defined separately to keep Table definitions clean
 Index("idx_episodes_consolidated", episodes_table.c.consolidated)
 Index("idx_episodes_timestamp", episodes_table.c.timestamp)
-Index("idx_episodes_topic", episodes_table.c.topic)
-Index("idx_concepts_topic", concepts_table.c.topic)
+Index("idx_episodes_topic_id", episodes_table.c.topic_id)
+Index("idx_concepts_topic_id", concepts_table.c.topic_id)
 Index("idx_relations_source", relations_table.c.source_id)
 Index("idx_relations_target", relations_table.c.target_id)
 Index("idx_relations_type", relations_table.c.type)
@@ -643,15 +653,22 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 conn.commit()
                 logger.info("Migration: Added embedding column to episodes table")
 
-            if not _has_column("episodes", "topic"):
-                conn.execute(text("ALTER TABLE episodes ADD COLUMN topic TEXT"))
+            if not _has_column("episodes", "topic_id"):
+                conn.execute(text("ALTER TABLE episodes ADD COLUMN topic_id TEXT"))
                 conn.commit()
-                logger.info("Migration: Added topic column to episodes table")
+                logger.info("Migration: Added topic_id column to episodes table")
 
-            if not _has_column("concepts", "topic"):
-                conn.execute(text("ALTER TABLE concepts ADD COLUMN topic TEXT"))
+            if not _has_column("concepts", "topic_id"):
+                conn.execute(text("ALTER TABLE concepts ADD COLUMN topic_id TEXT"))
                 conn.commit()
-                logger.info("Migration: Added topic column to concepts table")
+                logger.info("Migration: Added topic_id column to concepts table")
+
+            # Ensure topics table exists (create_all handles new installs;
+            # this covers upgrades where tables were already created without it)
+            if not insp.has_table("topics"):
+                topics_table.create(self.engine)
+                conn.commit()
+                logger.info("Migration: Created topics table")
 
             try:
                 entity_count = conn.execute(text("SELECT COUNT(*) FROM entities")).scalar()
@@ -676,7 +693,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     embedding=_embedding_to_bytes(concept.embedding),
                     created_at=concept.created_at,
                     updated_at=concept.updated_at,
-                    topic=concept.topic,
+                    topic_id=concept.topic_id,
                 )
             )
             self._sync_relations(conn, concept)
@@ -724,7 +741,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     data=_dump_json(data),
                     embedding=_embedding_to_bytes(concept.embedding),
                     updated_at=concept.updated_at,
-                    topic=concept.topic,
+                    topic_id=concept.topic_id,
                 )
             )
             self._sync_relations(conn, concept)
@@ -810,7 +827,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     concepts_table.c.id,
                     concepts_table.c.title,
                     concepts_table.c.summary,
-                    concepts_table.c.topic,
+                    concepts_table.c.topic_id,
                     concepts_table.c.data,
                 )
             ).fetchall()
@@ -823,7 +840,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     "id": row.id,
                     "title": row.title,
                     "summary": row.summary,
-                    "topic": row.topic,
+                    "topic_id": row.topic_id,
                     "confidence": data.get("confidence"),
                     "instance_count": data.get("instance_count"),
                     "tags": data.get("tags", []),
@@ -999,7 +1016,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     consolidated=episode.consolidated,
                     timestamp=episode.timestamp,
                     embedding=_embedding_to_bytes(episode.embedding),
-                    topic=episode.topic,
+                    topic_id=episode.topic_id,
                 )
             )
         return episode.id
@@ -1020,7 +1037,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                         consolidated=episode.consolidated,
                         timestamp=episode.timestamp,
                         embedding=_embedding_to_bytes(episode.embedding),
-                        topic=episode.topic,
+                        topic_id=episode.topic_id,
                     )
                 )
                 ids.append(episode.id)
@@ -1075,7 +1092,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     consolidated=episode.consolidated,
                     timestamp=episode.timestamp,
                     embedding=_embedding_to_bytes(episode.embedding),
-                    topic=episode.topic,
+                    topic_id=episode.topic_id,
                 )
             )
 
@@ -1868,59 +1885,134 @@ class SQLAlchemyMemoryStore(MemoryStore):
     # Extra methods (not on MemoryStore ABC)
     # ------------------------------------------------------------------
 
-    def list_topics(self) -> list[dict]:
+    # ------------------------------------------------------------------
+    # Topic operations
+    # ------------------------------------------------------------------
+
+    def create_topic(self, topic: Topic) -> Topic:
+        with self._connect() as conn:
+            conn.execute(
+                topics_table.insert().values(
+                    id=topic.id,
+                    name=topic.name,
+                    description=topic.description,
+                    created_at=topic.created_at,
+                    updated_at=topic.updated_at,
+                )
+            )
+        return topic
+
+    def get_topic(self, topic_id: str) -> Optional[Topic]:
+        with self._connect() as conn:
+            row = conn.execute(
+                select(topics_table).where(topics_table.c.id == topic_id)
+            ).fetchone()
+            if not row:
+                return None
+            return Topic(
+                id=row.id,
+                name=row.name,
+                description=row.description or "",
+                created_at=row.created_at if isinstance(row.created_at, datetime) else datetime.now(),
+                updated_at=row.updated_at if isinstance(row.updated_at, datetime) else datetime.now(),
+            )
+
+    def get_all_topics(self) -> list[Topic]:
         with self._connect() as conn:
             rows = conn.execute(
-                select(episodes_table.c.data, episodes_table.c.topic, episodes_table.c.timestamp)
-                .where(episodes_table.c.topic.isnot(None))
+                select(topics_table).order_by(topics_table.c.name)
             ).fetchall()
+            return [
+                Topic(
+                    id=row.id,
+                    name=row.name,
+                    description=row.description or "",
+                    created_at=row.created_at if isinstance(row.created_at, datetime) else datetime.now(),
+                    updated_at=row.updated_at if isinstance(row.updated_at, datetime) else datetime.now(),
+                )
+                for row in rows
+            ]
 
-            topic_map: dict[str, dict] = {}
-            for row in rows:
-                data = _parse_json(row.data)
-                if data.get("deleted_at"):
-                    continue
-                topic = row.topic
-                if topic not in topic_map:
-                    topic_map[topic] = {"episode_count": 0, "latest_activity": None}
-                topic_map[topic]["episode_count"] += 1
-                ts = row.timestamp
-                if isinstance(ts, datetime):
-                    ts = ts.isoformat()
-                elif ts is None:
-                    ts = ""
-                cur = topic_map[topic]["latest_activity"]
-                if cur is None or str(ts) > str(cur):
-                    topic_map[topic]["latest_activity"] = ts
+    def update_topic(self, topic: Topic) -> Topic:
+        topic.updated_at = datetime.now()
+        with self._connect() as conn:
+            conn.execute(
+                topics_table.update()
+                .where(topics_table.c.id == topic.id)
+                .values(
+                    name=topic.name,
+                    description=topic.description,
+                    updated_at=topic.updated_at,
+                )
+            )
+        return topic
+
+    def delete_topic(self, topic_id: str) -> bool:
+        with self._connect() as conn:
+            result = conn.execute(
+                topics_table.delete().where(topics_table.c.id == topic_id)
+            )
+            return result.rowcount > 0
+
+    def get_or_create_default_topic(self) -> Topic:
+        existing = self.get_topic(DEFAULT_TOPIC_ID)
+        if existing:
+            return existing
+        topic = Topic(
+            id=DEFAULT_TOPIC_ID,
+            name="General",
+            description="Default topic for uncategorized memories",
+        )
+        return self.create_topic(topic)
+
+    def get_topic_stats(self) -> list[dict]:
+        """Get all topics with episode/concept counts and latest activity."""
+        topics = self.get_all_topics()
+        if not topics:
+            return []
+
+        with self._connect() as conn:
+            ep_rows = conn.execute(
+                select(
+                    episodes_table.c.topic_id,
+                    func.count().label("cnt"),
+                    func.max(episodes_table.c.timestamp).label("latest"),
+                )
+                .where(episodes_table.c.topic_id.isnot(None))
+                .group_by(episodes_table.c.topic_id)
+            ).fetchall()
+            ep_map = {row.topic_id: {"count": row.cnt, "latest": row.latest} for row in ep_rows}
 
             concept_rows = conn.execute(
-                select(concepts_table.c.data, concepts_table.c.topic)
-                .where(concepts_table.c.topic.isnot(None))
+                select(
+                    concepts_table.c.topic_id,
+                    func.count().label("cnt"),
+                )
+                .where(concepts_table.c.topic_id.isnot(None))
+                .group_by(concepts_table.c.topic_id)
             ).fetchall()
-
-            concept_counts: dict[str, int] = {}
-            for row in concept_rows:
-                data = _parse_json(row.data)
-                if data.get("deleted_at"):
-                    continue
-                t = row.topic
-                concept_counts[t] = concept_counts.get(t, 0) + 1
+            concept_map = {row.topic_id: row.cnt for row in concept_rows}
 
         results = []
-        for topic, info in sorted(topic_map.items(), key=lambda x: x[1]["latest_activity"] or "", reverse=True):
+        for t in topics:
+            ep_info = ep_map.get(t.id, {"count": 0, "latest": None})
+            latest = ep_info["latest"]
+            if isinstance(latest, datetime):
+                latest = latest.isoformat()
             results.append({
-                "topic": topic,
-                "episode_count": info["episode_count"],
-                "concept_count": concept_counts.get(topic, 0),
-                "latest_activity": info["latest_activity"],
+                **t.to_dict(),
+                "episode_count": ep_info["count"],
+                "concept_count": concept_map.get(t.id, 0),
+                "latest_activity": latest,
             })
+        results.sort(key=lambda x: x["latest_activity"] or "", reverse=True)
         return results
 
-    def get_concepts_by_topic(self, topic: str) -> list[Concept]:
+    def get_concepts_by_topic(self, topic_id: str) -> list[Concept]:
         with self._connect() as conn:
             rows = conn.execute(
                 select(concepts_table.c.data, concepts_table.c.embedding)
-                .where(concepts_table.c.topic == topic)
+                .where(concepts_table.c.topic_id == topic_id)
             ).fetchall()
             concepts = []
             for row in rows:
