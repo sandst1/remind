@@ -95,7 +95,7 @@ class RemindConfig:
     consolidation_threshold: int = DEFAULT_CONSOLIDATION_THRESHOLD
     consolidation_concepts_per_pass: int = DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS
     auto_consolidate: bool = True
-    entity_extraction_batch_size: int = 5
+    entity_extraction_batch_size: int = 25
     consolidation_workers: int = 1
 
     # Provider-specific configs

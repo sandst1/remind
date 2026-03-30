@@ -162,7 +162,7 @@ class Consolidator:
         min_confidence: float = 0.3,
         concepts_per_consolidation_pass: int = 64,
         max_workers: int = 1,
-        entity_extraction_batch_size: int = 5,
+        entity_extraction_batch_size: int = 25,
     ):
         self.llm = llm
         self.embedding = embedding

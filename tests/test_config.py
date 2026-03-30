@@ -91,7 +91,7 @@ class TestDefaults:
         assert config.consolidation_threshold == 5
         assert config.consolidation_concepts_per_pass == 64
         assert config.auto_consolidate is True
-        assert config.entity_extraction_batch_size == 5
+        assert config.entity_extraction_batch_size == 25
         assert config.consolidation_workers == 1
         assert config.ingest_buffer_size == 4000
         assert config.ingest_min_density == 0.4
@@ -413,7 +413,7 @@ class TestEnvVarOverrides:
 
     def test_entity_extraction_batch_size_invalid(self):
         c = self._config_with_env(ENTITY_EXTRACTION_BATCH_SIZE="abc")
-        assert c.entity_extraction_batch_size == 5  # unchanged default
+        assert c.entity_extraction_batch_size == 25  # unchanged default
 
     def test_consolidation_workers(self):
         c = self._config_with_env(CONSOLIDATION_WORKERS="4")

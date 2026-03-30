@@ -85,7 +85,7 @@ Consolidation performance can be tuned with two settings:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `entity_extraction_batch_size` | `5` | Number of episodes grouped into each extraction LLM call. Higher values mean fewer LLM calls but larger prompts. |
+| `entity_extraction_batch_size` | `25` | Number of episodes grouped into each extraction LLM call. Higher values mean fewer LLM calls but larger prompts. |
 | `consolidation_workers` | `1` | Maximum number of concurrent LLM calls during consolidation. Set to e.g. `4` to parallelize extraction batches and concept-chunk sub-passes. |
 
 With the defaults (batch size 5, workers 1), 20 episodes require 4 sequential extraction calls instead of 20. Set `consolidation_workers` higher to run those 4 calls concurrently.

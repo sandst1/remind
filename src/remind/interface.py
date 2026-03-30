@@ -86,7 +86,7 @@ class MemoryInterface:
         consolidation_threshold: int = 5,  # episodes before auto-consolidation
         consolidation_concepts_per_pass: int = 64,
         auto_consolidate: bool = True,
-        entity_extraction_batch_size: int = 5,
+        entity_extraction_batch_size: int = 25,
         consolidation_workers: int = 1,
         # Retrieval settings
         default_recall_k: int = 3,

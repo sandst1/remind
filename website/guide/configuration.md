@@ -124,7 +124,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `CONSOLIDATION_THRESHOLD` | `consolidation_threshold` | int | `5` |
 | `CONSOLIDATION_CONCEPTS_PER_PASS` | `consolidation_concepts_per_pass` | int | `64` |
 | `AUTO_CONSOLIDATE` | `auto_consolidate` | bool | `true` |
-| `ENTITY_EXTRACTION_BATCH_SIZE` | `entity_extraction_batch_size` | int | `5` |
+| `ENTITY_EXTRACTION_BATCH_SIZE` | `entity_extraction_batch_size` | int | `25` |
 | `CONSOLIDATION_WORKERS` | `consolidation_workers` | int | `1` |
 | `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
 | `INGEST_MIN_DENSITY` | `ingest_min_density` | float | `0.4` |
@@ -279,7 +279,7 @@ View decay stats with `remind stats`.
 | `consolidation_threshold` | `5` | Episodes before auto-consolidation triggers |
 | `consolidation_concepts_per_pass` | `64` | Max concepts processed per consolidation pass |
 | `auto_consolidate` | `true` | Whether to auto-consolidate after `remember` |
-| `entity_extraction_batch_size` | `5` | Episodes per entity extraction LLM call (higher = fewer calls) |
+| `entity_extraction_batch_size` | `25` | Episodes per entity extraction LLM call (higher = fewer calls) |
 | `consolidation_workers` | `1` | Max parallel LLM calls during consolidation (1 = sequential) |
 
 ## Auto-ingest
