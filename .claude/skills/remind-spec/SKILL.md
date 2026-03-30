@@ -61,24 +61,24 @@ When the user describes what to build, decompose into individual spec episodes. 
 # Feature spec
 remind remember "POST /api/auth/login: accepts {email, password}, returns JWT with 1h expiry. Rate limit 5 attempts/IP/min." \
   -t spec -e module:auth -e subject:login-flow -e file:src/routes/auth.ts \
-  -m '{"status":"approved","priority":"p0","epic":"user-auth"}'
+  -m '{"status":"approved","priority":"p0","epic":"user-auth"}' --topic product
 
 # Architecture decision
 remind remember "Chose bcrypt for password hashing: broad library support, team familiarity, sufficient for threat model" \
-  -t decision -e module:auth -e subject:password-hashing -e tool:bcrypt
+  -t decision -e module:auth -e subject:password-hashing -e tool:bcrypt --topic architecture
 
 # Non-functional requirement
 remind remember "All auth endpoints must respond within 200ms under normal load" \
   -t spec -e module:auth -e subject:performance \
-  -m '{"status":"approved","priority":"p1"}'
+  -m '{"status":"approved","priority":"p1"}' --topic product
 
 # Open question
 remind remember "Should token refresh be silent (via cookie) or explicit (via refresh endpoint)?" \
-  -t question -e module:auth -e subject:token-refresh
+  -t question -e module:auth -e subject:token-refresh --topic product
 
 # Coding standard
 remind remember "Use zod for all request body validation, define schemas adjacent to route handlers" \
-  -t preference -e project:backend-api -e tool:zod
+  -t preference -e project:backend-api -e tool:zod --topic architecture
 ```
 
 **Guidelines**:
@@ -98,6 +98,11 @@ Before implementation, recall all relevant specs and build a plan.
 # Recall all specs for a module
 remind recall "auth module requirements" -k 15
 remind recall "auth" --entity module:auth
+
+# Browse topics first to understand knowledge structure
+remind topics list
+remind topics overview architecture
+remind topics overview product
 
 # Check for open questions
 remind questions

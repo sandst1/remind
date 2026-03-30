@@ -22,6 +22,7 @@ remind tasks                          # What needs doing?
 remind tasks --entity module:<name>   # Scoped to a module
 remind questions                      # Any unresolved blockers?
 remind plans                          # Active plans
+remind topics list                    # Understand knowledge domains
 ```
 
 **Pick the next task** by priority and dependency order:
@@ -68,11 +69,11 @@ Write the code. Stay connected to specs:
 ```bash
 # Implementation decision worth remembering
 remind remember "Used connection pooling with max 10 connections — matches the 200ms latency requirement" \
-  -t decision -e module:db -e file:src/db/pool.ts
+  -t decision -e module:db -e file:src/db/pool.ts --topic architecture
 
 # Found a gap in the spec
 remind remember "Spec doesn't cover what happens when refresh token is expired — defaulting to 401 with re-login prompt" \
-  -t question -e module:auth -e subject:token-refresh
+  -t question -e module:auth -e subject:token-refresh --topic product
 
 # New task discovered
 remind task add "Add error handling for expired refresh tokens" \
@@ -104,7 +105,7 @@ remind task done <task-id>
 
 # Record any implementation decisions made during the task
 remind remember "Implemented auth middleware as Express middleware, not route-level — applies globally except to /health" \
-  -t decision -e module:auth -e file:src/middleware/auth.ts
+  -t decision -e module:auth -e file:src/middleware/auth.ts --topic architecture
 
 # If the spec is now fully implemented, update its status
 remind update-episode <spec-id> -m '{"status":"implemented"}'

@@ -28,6 +28,8 @@ Before planning, load what already exists:
 ```bash
 remind recall "<topic>" -k 10
 remind recall "<topic>" --entity module:<relevant-module>
+remind topics list
+remind topics overview <relevant-topic>
 remind specs --entity module:<relevant-module>
 remind plans
 remind questions
@@ -35,7 +37,7 @@ remind decisions
 remind tasks
 ```
 
-This grounds the conversation in existing knowledge, specs, and prior decisions.
+This grounds the conversation in existing knowledge, topics, specs, and prior decisions.
 
 ### Phase 2: Sparring
 
@@ -52,16 +54,16 @@ The agent should be **opinionated** during planning:
 ```bash
 # Capture decisions as they're made
 remind remember "Chose WebSocket over polling for real-time updates: lower latency, simpler client code" \
-  -t decision -e module:notifications -e tool:websocket
+  -t decision -e module:notifications -e tool:websocket --topic architecture
 
 # Capture open questions that arise
 remind remember "Should we support offline mode for notifications?" \
-  -t question -e module:notifications
+  -t question -e module:notifications --topic product
 
 # Capture constraints discovered
 remind remember "All real-time updates must arrive within 500ms of event" \
   -t spec -e module:notifications -e subject:performance \
-  -m '{"status":"draft"}'
+  -m '{"status":"draft"}' --topic product
 ```
 
 ### Phase 3: Crystallization
