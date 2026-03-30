@@ -96,6 +96,28 @@ remind ui
 - **Multi-provider** — Anthropic, OpenAI, Azure OpenAI, Ollama (fully local)
 - **Web UI** — Dashboard, concept graph, entity explorer, task board
 
+## Database backends
+
+SQLite is the default — no extra dependencies needed. For PostgreSQL or MySQL, install the corresponding extra:
+
+```bash
+pip install "remind-mcp[postgres]"   # PostgreSQL (psycopg v3)
+pip install "remind-mcp[mysql]"      # MySQL (PyMySQL)
+```
+
+Point Remind at your database via config file, environment variable, or CLI flag:
+
+```json
+{ "db_url": "postgresql+psycopg://user:pass@localhost:5432/mydb" }
+```
+
+```bash
+export REMIND_DB_URL="postgresql+psycopg://user:pass@localhost:5432/mydb"
+remind --db "postgresql+psycopg://user:pass@localhost:5432/mydb" remember "..."
+```
+
+Remind creates the schema automatically on first use. See the [examples/](examples/) directory for ready-to-run setups ([SQLite](examples/sqlite/), [PostgreSQL + Docker](examples/postgres-docker/)).
+
 ## CLI reference
 
 ```
