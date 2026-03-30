@@ -13,7 +13,10 @@ External memory layer that persists across sessions and generalizes experiences 
 | `remind end-session` | Consolidate pending episodes |
 | `remind stats` | Memory statistics |
 | `remind topics list` | List all topics with stats |
-| `remind topics overview <name>` | Top concepts for a topic |
+| `remind topics create <name>` | Create a new topic |
+| `remind topics update <id>` | Update topic name/description |
+| `remind topics delete <id>` | Delete unused topic |
+| `remind topics overview <id>` | Top concepts for a topic |
 | `remind decisions` | Show decision episodes |
 | `remind questions` | Show open questions |
 | `remind update-episode <id> -c "<content>"` | Correct episode content |
@@ -36,7 +39,7 @@ remind remember "Slack message: deploy failed on prod" --source-type slack --top
 
 **Episode types** (`-t`): `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
 **Entities** (`-e`): Format `type:name` (file, function, class, person, concept, tool, project)
-**Topics** (`--topic`): Knowledge area grouping (e.g., `architecture`, `product`, `infra`, `security`)
+**Topics** (`--topic`): Topic ID or name. Resolved to an existing topic; falls back to "general" default.
 **Source types** (`--source-type`): Origin of the memory (e.g., `agent`, `slack`, `github`, `manual`)
 
 **When to use**: User preferences, project context, decisions+rationale, open questions, corrections, facts
@@ -45,7 +48,7 @@ remind remember "Slack message: deploy failed on prod" --source-type slack --top
 ## recall
 
 ```bash
-remind recall "authentication issues"              # Semantic search
+remind recall "authentication issues"              # Semantic search (grouped by topic)
 remind recall "auth" --entity file:src/auth.ts     # Entity-specific
 remind recall "caching" -k 10                      # More results
 remind recall "database design" --topic architecture  # Topic-scoped
@@ -55,21 +58,25 @@ Recall returns two layers:
 - **RELEVANT EPISODES** — Direct episode matches via embedding similarity
 - **RELEVANT MEMORY** — Concept matches via spreading activation, with entity context and contradicting/superseding concepts
 
-When `--topic` is set, initial matches are filtered to that topic. Cross-topic results can still surface via spreading activation but are penalized.
+Without `--topic`, results are grouped by topic showing top N per topic. With `--topic`, results are filtered to that topic only (cross-topic results can still surface via spreading activation but are penalized).
 
 ## Topics
 
-Topics organize memory into knowledge areas. Use them to scope retrieval and reduce noise.
+Topics are first-class managed entities that group related memories. Each topic has an ID (slug), display name, and description.
 
 ```bash
-remind topics list                        # See all topics with stats
-remind topics overview architecture       # Top concepts for a topic
-remind topics overview product -k 10      # More results
+remind topics create "Architecture" -d "System design decisions and patterns"
+remind topics create "Product"
+remind topics update architecture -n "System Architecture" -d "Updated description"
+remind topics delete old-topic          # Only works if no episodes/concepts use it
+remind topics list                      # See all topics with stats
+remind topics overview architecture     # Top concepts for a topic
+remind topics overview product -k 10    # More results
 ```
 
-**Workflow**: `remind topics list` → `remind topics overview <name>` → `remind recall "<query>" --topic <name>`
+When using `--topic` with `remember`, the topic is resolved by ID or name. If no match, the memory goes to the "general" default topic.
 
-Good topics: `architecture`, `product`, `infra`, `security`, `testing`, `ux`, `data`
+**Workflow**: `remind topics list` → `remind topics overview <id>` → `remind recall "<query>" --topic <id>`
 
 ## Workflow
 
@@ -126,7 +133,7 @@ remind restore-concept <id>       # Restore if needed
 2. Use clear statements — "User prefers tabs" not "tabs"
 3. Tag decisions with `-t decision`
 4. Track uncertainties with `-t question`
-5. Use `--topic` to group knowledge by domain
+5. Create topics with `topics create` to organize knowledge by domain
 6. Use entity recall (`--entity`) for specific files/people/modules
 7. Run `remind end-session` at natural boundaries
 8. Delete outdated info rather than adding corrections
