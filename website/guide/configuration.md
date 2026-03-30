@@ -1,13 +1,16 @@
 # Configuration
 
-Remind is configured via a config file, environment variables, or CLI arguments. Settings resolve with this priority (highest first):
+Remind is configured via config files, environment variables, or CLI arguments. Settings resolve with this priority (highest first):
 
 1. CLI arguments (`--llm`, `--embedding`)
-2. Environment variables (`ANTHROPIC_API_KEY`, etc.)
-3. Config file (`~/.remind/remind.config.json`)
-4. Defaults
+2. Environment variables
+3. Project-local config file (`<project>/.remind/remind.config.json`)
+4. Global config file (`~/.remind/remind.config.json`)
+5. Defaults
 
-## Config file
+## Config files
+
+### Global config
 
 Create `~/.remind/remind.config.json`:
 
@@ -72,49 +75,142 @@ You only need to include settings you want to change from defaults. A minimal co
 }
 ```
 
+### Project-local config
+
+You can place a `remind.config.json` inside a project's `.remind/` directory to override global settings for that project:
+
+```
+myproject/
+├── .remind/
+│   ├── remind.config.json   ← project-local config
+│   └── remind.db            ← project-local database
+└── ...
+```
+
+Project-local config uses the same format as the global config. Settings in the project-local file override the global file, but are themselves overridden by environment variables and CLI arguments.
+
+A typical use case is selecting a different provider or model for a specific project:
+
+```json
+{
+  "llm_provider": "ollama",
+  "ollama": { "llm_model": "deepseek-coder-v2" }
+}
+```
+
+The CLI automatically reads `<cwd>/.remind/remind.config.json`. When using the Python API, pass `project_dir` to `create_memory()` to enable project-local config loading.
+
+::: warning Do not commit secrets
+If your project-local config contains API keys or other secrets, make sure `.remind/` is in your `.gitignore`. Better yet, keep secrets in the global config (`~/.remind/remind.config.json`) or in environment variables, and use the project-local file only for non-sensitive settings like provider choice and model selection.
+:::
+
 ## Environment variables
 
-### Anthropic (Claude)
+Every config-file setting has a corresponding environment variable. Environment variables take precedence over both config files.
 
-```bash
-ANTHROPIC_API_KEY=sk-ant-...
-LLM_PROVIDER=anthropic
-EMBEDDING_PROVIDER=openai   # Anthropic has no embeddings
-```
+### Complete reference
 
-### OpenAI
+#### General
 
-```bash
-OPENAI_API_KEY=sk-...
-LLM_PROVIDER=openai
-EMBEDDING_PROVIDER=openai
-```
+| Env variable | Config field | Type | Default |
+|---|---|---|---|
+| `LLM_PROVIDER` | `llm_provider` | string | `anthropic` |
+| `EMBEDDING_PROVIDER` | `embedding_provider` | string | `openai` |
+| `CONSOLIDATION_THRESHOLD` | `consolidation_threshold` | int | `5` |
+| `CONSOLIDATION_CONCEPTS_PER_PASS` | `consolidation_concepts_per_pass` | int | `64` |
+| `AUTO_CONSOLIDATE` | `auto_consolidate` | bool | `true` |
+| `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
+| `INGEST_MIN_DENSITY` | `ingest_min_density` | float | `0.4` |
+| `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
 
-### Azure OpenAI
+#### Anthropic (Claude)
 
-```bash
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_API_BASE_URL=https://your-resource.openai.azure.com
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME=text-embedding-3-small
-LLM_PROVIDER=azure_openai
-EMBEDDING_PROVIDER=azure_openai
-```
+| Env variable | Config field | Type | Default |
+|---|---|---|---|
+| `ANTHROPIC_API_KEY` | `anthropic.api_key` | string | — |
+| `ANTHROPIC_MODEL` | `anthropic.model` | string | `claude-sonnet-4-20250514` |
+| `ANTHROPIC_INGEST_MODEL` | `anthropic.ingest_model` | string | — |
 
-### Ollama (local)
+#### OpenAI
+
+| Env variable | Config field | Type | Default |
+|---|---|---|---|
+| `OPENAI_API_KEY` | `openai.api_key` | string | — |
+| `OPENAI_BASE_URL` | `openai.base_url` | string | — |
+| `OPENAI_MODEL` | `openai.model` | string | `gpt-4.1` |
+| `OPENAI_EMBEDDING_MODEL` | `openai.embedding_model` | string | `text-embedding-3-small` |
+| `OPENAI_INGEST_MODEL` | `openai.ingest_model` | string | — |
+
+#### Azure OpenAI
+
+| Env variable | Config field | Type | Default |
+|---|---|---|---|
+| `AZURE_OPENAI_API_KEY` | `azure_openai.api_key` | string | — |
+| `AZURE_OPENAI_API_BASE_URL` | `azure_openai.base_url` | string | — |
+| `AZURE_OPENAI_DEPLOYMENT_NAME` | `azure_openai.deployment_name` | string | — |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME` | `azure_openai.embedding_deployment_name` | string | — |
+| `AZURE_OPENAI_EMBEDDING_SIZE` | `azure_openai.embedding_size` | int | `1536` |
+| `AZURE_OPENAI_INGEST_DEPLOYMENT_NAME` | `azure_openai.ingest_deployment_name` | string | — |
+
+#### Ollama (local)
+
+| Env variable | Config field | Type | Default |
+|---|---|---|---|
+| `OLLAMA_URL` | `ollama.url` | string | `http://localhost:11434` |
+| `OLLAMA_LLM_MODEL` | `ollama.llm_model` | string | `llama3.2` |
+| `OLLAMA_EMBEDDING_MODEL` | `ollama.embedding_model` | string | `nomic-embed-text` |
+| `OLLAMA_INGEST_MODEL` | `ollama.ingest_model` | string | — |
 
 No API keys needed. Install [Ollama](https://ollama.ai/) and pull models:
 
 ```bash
 ollama pull llama3.2           # LLM
 ollama pull nomic-embed-text   # Embeddings
+```
 
-# Optional overrides
-OLLAMA_URL=http://localhost:11434
-OLLAMA_LLM_MODEL=llama3.2
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-LLM_PROVIDER=ollama
-EMBEDDING_PROVIDER=ollama
+#### Memory decay
+
+| Env variable | Config field | Type | Default |
+|---|---|---|---|
+| `REMIND_DECAY_ENABLED` | `decay.enabled` | bool | `true` |
+| `REMIND_DECAY_INTERVAL` | `decay.decay_interval` | int | `20` |
+| `REMIND_DECAY_RATE` | `decay.decay_rate` | float | `0.1` |
+
+Boolean env vars accept `true`, `1`, `yes` (case-insensitive) as truthy values; anything else is falsy.
+
+### Quick-start examples
+
+**Anthropic + OpenAI embeddings (most common):**
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+```
+
+**OpenAI for everything:**
+
+```bash
+export OPENAI_API_KEY=sk-...
+export LLM_PROVIDER=openai
+export EMBEDDING_PROVIDER=openai
+```
+
+**Azure OpenAI:**
+
+```bash
+export AZURE_OPENAI_API_KEY=...
+export AZURE_OPENAI_API_BASE_URL=https://your-resource.openai.azure.com
+export AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
+export AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME=text-embedding-3-small
+export LLM_PROVIDER=azure_openai
+export EMBEDDING_PROVIDER=azure_openai
+```
+
+**Ollama (fully local):**
+
+```bash
+export LLM_PROVIDER=ollama
+export EMBEDDING_PROVIDER=ollama
 ```
 
 ## Database location
@@ -133,7 +229,7 @@ Concepts that are rarely recalled gradually lose retrieval priority, mimicking h
 |--------|---------|-------------|
 | `decay.enabled` | `true` | Set `false` to disable |
 | `decay.decay_interval` | `20` | Recalls between decay passes |
-| `decay.decay_rate` | `0.1` | How much `decay_factor` drops per interval (0.0–1.0) |
+| `decay.decay_rate` | `0.1` | How much `decay_factor` drops per interval (0.0-1.0) |
 
 When a concept is recalled, it gets **rejuvenated** — its decay factor gets a boost proportional to match strength. Recently recalled concepts are protected by a 60-second grace window.
 
@@ -144,6 +240,7 @@ View decay stats with `remind stats`.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `consolidation_threshold` | `5` | Episodes before auto-consolidation triggers |
+| `consolidation_concepts_per_pass` | `64` | Max concepts processed per consolidation pass |
 | `auto_consolidate` | `true` | Whether to auto-consolidate after `remember` |
 
 ## Auto-ingest
@@ -163,14 +260,6 @@ Each provider config has an optional `ingest_model` field (or `ingest_deployment
 | OpenAI | `openai.ingest_model` | `OPENAI_INGEST_MODEL` | `gpt-4.1-mini` |
 | Azure OpenAI | `azure_openai.ingest_deployment_name` | `AZURE_OPENAI_INGEST_DEPLOYMENT_NAME` | `gpt-4-mini` |
 | Ollama | `ollama.ingest_model` | `OLLAMA_INGEST_MODEL` | `llama3.2:1b` |
-
-Environment variable overrides:
-
-```bash
-INGEST_BUFFER_SIZE=4000
-INGEST_MIN_DENSITY=0.4
-ANTHROPIC_INGEST_MODEL=claude-haiku-4-20250414
-```
 
 ## Logging
 

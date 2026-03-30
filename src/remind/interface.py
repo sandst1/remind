@@ -1221,6 +1221,7 @@ def create_memory(
     llm_provider: Optional[str] = None,
     embedding_provider: Optional[str] = None,
     db_path: str = "memory",
+    project_dir: Optional[Path] = None,
     **kwargs,
 ) -> MemoryInterface:
     """
@@ -1230,6 +1231,7 @@ def create_memory(
         llm_provider: "anthropic", "openai", "azure_openai", or "ollama"
         embedding_provider: "openai", "azure_openai", or "ollama"
         db_path: Database name (stored in ~/.remind/)
+        project_dir: Optional project directory for loading project-local config
         **kwargs: Additional arguments passed to MemoryInterface
 
     Returns:
@@ -1238,8 +1240,7 @@ def create_memory(
     import os
     from remind.config import load_config, resolve_db_path
 
-    # Load config (priority: env vars > config file > defaults)
-    config = load_config()
+    config = load_config(project_dir=project_dir)
 
     # Resolve database name to full path (skip if already absolute)
     if not os.path.isabs(db_path):

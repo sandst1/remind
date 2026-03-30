@@ -4,8 +4,9 @@ Configuration management for Remind.
 Config priority (highest to lowest):
 1. Explicit function/CLI arguments
 2. Environment variables
-3. Config file (~/.remind/remind.config.json)
-4. Hardcoded defaults
+3. Project-local config file (<project_dir>/.remind/remind.config.json)
+4. Global config file (~/.remind/remind.config.json)
+5. Hardcoded defaults
 """
 
 from dataclasses import dataclass, field
@@ -106,79 +107,117 @@ class RemindConfig:
     logging_enabled: bool = False
 
 
-def _load_provider_config(file_config: dict, key: str, config_class: type) -> object:
-    """Load a provider config from file config dict."""
+def _apply_provider_config(
+    config_obj: object, file_config: dict, key: str, config_class: type
+) -> None:
+    """Overlay provider settings from a file config dict onto an existing config object."""
     provider_data = file_config.get(key, {})
     if not provider_data:
-        return config_class()
+        return
 
-    # Map JSON keys to dataclass fields (handle snake_case)
-    kwargs = {}
+    current = getattr(config_obj, key)
     for field_name in config_class.__dataclass_fields__:
         if field_name in provider_data:
-            kwargs[field_name] = provider_data[field_name]
-    return config_class(**kwargs)
+            setattr(current, field_name, provider_data[field_name])
 
 
-def load_config() -> RemindConfig:
+def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
+    """Apply settings from a parsed config file dict onto an existing RemindConfig.
+
+    Only keys present in file_config are applied; missing keys leave the
+    existing value untouched.  This allows layering global → project-local
+    configs by calling the function twice.
     """
-    Load configuration with priority: env vars > config file > defaults.
+    if "llm_provider" in file_config:
+        config.llm_provider = file_config["llm_provider"]
+    if "embedding_provider" in file_config:
+        config.embedding_provider = file_config["embedding_provider"]
+    if "consolidation_threshold" in file_config:
+        config.consolidation_threshold = int(file_config["consolidation_threshold"])
+    if "consolidation_concepts_per_pass" in file_config:
+        config.consolidation_concepts_per_pass = int(
+            file_config["consolidation_concepts_per_pass"]
+        )
+    if "auto_consolidate" in file_config:
+        config.auto_consolidate = bool(file_config["auto_consolidate"])
+
+    # Provider-specific settings (overlay, not replace)
+    _apply_provider_config(config, file_config, "anthropic", AnthropicConfig)
+    _apply_provider_config(config, file_config, "openai", OpenAIConfig)
+    _apply_provider_config(config, file_config, "azure_openai", AzureOpenAIConfig)
+    _apply_provider_config(config, file_config, "ollama", OllamaConfig)
+
+    # Decay settings
+    if "decay" in file_config:
+        decay_data = file_config["decay"]
+        if "enabled" in decay_data:
+            config.decay.enabled = bool(decay_data["enabled"])
+        if "decay_interval" in decay_data:
+            config.decay.decay_interval = int(decay_data["decay_interval"])
+        if "decay_rate" in decay_data:
+            config.decay.decay_rate = float(decay_data["decay_rate"])
+
+    # Auto-ingest settings
+    if "ingest_buffer_size" in file_config:
+        config.ingest_buffer_size = int(file_config["ingest_buffer_size"])
+    if "ingest_min_density" in file_config:
+        config.ingest_min_density = float(file_config["ingest_min_density"])
+
+    # Logging
+    if "logging_enabled" in file_config:
+        config.logging_enabled = bool(file_config["logging_enabled"])
+
+
+def _load_config_file(path: Path) -> Optional[dict]:
+    """Read and parse a JSON config file, returning None on failure."""
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        logger.debug(f"Loaded config from {path}")
+        return data
+    except (json.JSONDecodeError, IOError, ValueError) as e:
+        logger.warning(f"Failed to load config file {path}: {e}")
+        return None
+
+
+def load_config(project_dir: Optional[Path] = None) -> RemindConfig:
+    """
+    Load configuration with priority:
+      env vars > project-local config > global config > defaults.
+
+    Args:
+        project_dir: Optional project directory. When provided, also reads
+            ``<project_dir>/.remind/remind.config.json`` (takes precedence
+            over the global config but is overridden by env vars).
 
     Returns:
         RemindConfig with resolved settings.
     """
     config = RemindConfig()
 
-    # Load from config file if exists
-    if CONFIG_FILE.exists():
-        try:
-            with open(CONFIG_FILE) as f:
-                file_config = json.load(f)
+    # Layer 1: global config file (~/.remind/remind.config.json)
+    global_data = _load_config_file(CONFIG_FILE)
+    if global_data:
+        _apply_file_config(config, global_data)
 
-            # Top-level settings
-            if "llm_provider" in file_config:
-                config.llm_provider = file_config["llm_provider"]
-            if "embedding_provider" in file_config:
-                config.embedding_provider = file_config["embedding_provider"]
-            if "consolidation_threshold" in file_config:
-                config.consolidation_threshold = int(file_config["consolidation_threshold"])
-            if "consolidation_concepts_per_pass" in file_config:
-                config.consolidation_concepts_per_pass = int(file_config["consolidation_concepts_per_pass"])
-            if "auto_consolidate" in file_config:
-                config.auto_consolidate = bool(file_config["auto_consolidate"])
+    # Layer 2: project-local config file (<project_dir>/.remind/remind.config.json)
+    if project_dir is not None:
+        project_config_file = Path(project_dir) / ".remind" / "remind.config.json"
+        project_data = _load_config_file(project_config_file)
+        if project_data:
+            _apply_file_config(config, project_data)
 
-            # Provider-specific settings
-            config.anthropic = _load_provider_config(file_config, "anthropic", AnthropicConfig)
-            config.openai = _load_provider_config(file_config, "openai", OpenAIConfig)
-            config.azure_openai = _load_provider_config(file_config, "azure_openai", AzureOpenAIConfig)
-            config.ollama = _load_provider_config(file_config, "ollama", OllamaConfig)
+    # Layer 3: environment variables (highest priority)
+    _apply_env_vars(config)
 
-            # Decay settings
-            if "decay" in file_config:
-                decay_data = file_config["decay"]
-                config.decay = DecayConfig()
-                if "enabled" in decay_data:
-                    config.decay.enabled = bool(decay_data["enabled"])
-                if "decay_interval" in decay_data:
-                    config.decay.decay_interval = int(decay_data["decay_interval"])
-                if "decay_rate" in decay_data:
-                    config.decay.decay_rate = float(decay_data["decay_rate"])
+    return config
 
-            # Auto-ingest settings
-            if "ingest_buffer_size" in file_config:
-                config.ingest_buffer_size = int(file_config["ingest_buffer_size"])
-            if "ingest_min_density" in file_config:
-                config.ingest_min_density = float(file_config["ingest_min_density"])
 
-            # Logging
-            if "logging_enabled" in file_config:
-                config.logging_enabled = bool(file_config["logging_enabled"])
-
-            logger.debug(f"Loaded config from {CONFIG_FILE}")
-        except (json.JSONDecodeError, IOError, ValueError) as e:
-            logger.warning(f"Failed to load config file {CONFIG_FILE}: {e}")
-
-    # Override top-level with environment variables (highest priority)
+def _apply_env_vars(config: RemindConfig) -> None:
+    """Override config values from environment variables."""
+    # Top-level
     if llm := os.environ.get("LLM_PROVIDER"):
         config.llm_provider = llm
     if embedding := os.environ.get("EMBEDDING_PROVIDER"):
@@ -196,16 +235,25 @@ def load_config() -> RemindConfig:
         except ValueError:
             logger.warning(f"Invalid CONSOLIDATION_CONCEPTS_PER_PASS: {concepts_per_pass}")
 
-    # Override provider settings with environment variables
     # Anthropic
     if api_key := os.environ.get("ANTHROPIC_API_KEY"):
         config.anthropic.api_key = api_key
+    if model := os.environ.get("ANTHROPIC_MODEL"):
+        config.anthropic.model = model
+    if ingest_model := os.environ.get("ANTHROPIC_INGEST_MODEL"):
+        config.anthropic.ingest_model = ingest_model
 
     # OpenAI
     if api_key := os.environ.get("OPENAI_API_KEY"):
         config.openai.api_key = api_key
     if base_url := os.environ.get("OPENAI_BASE_URL"):
         config.openai.base_url = base_url
+    if model := os.environ.get("OPENAI_MODEL"):
+        config.openai.model = model
+    if embed_model := os.environ.get("OPENAI_EMBEDDING_MODEL"):
+        config.openai.embedding_model = embed_model
+    if ingest_model := os.environ.get("OPENAI_INGEST_MODEL"):
+        config.openai.ingest_model = ingest_model
 
     # Azure OpenAI
     if api_key := os.environ.get("AZURE_OPENAI_API_KEY"):
@@ -221,6 +269,8 @@ def load_config() -> RemindConfig:
             config.azure_openai.embedding_size = int(embed_size)
         except ValueError:
             pass
+    if ingest_deployment := os.environ.get("AZURE_OPENAI_INGEST_DEPLOYMENT_NAME"):
+        config.azure_openai.ingest_deployment_name = ingest_deployment
 
     # Ollama
     if url := os.environ.get("OLLAMA_URL"):
@@ -229,8 +279,10 @@ def load_config() -> RemindConfig:
         config.ollama.llm_model = llm_model
     if embed_model := os.environ.get("OLLAMA_EMBEDDING_MODEL"):
         config.ollama.embedding_model = embed_model
+    if ingest_model := os.environ.get("OLLAMA_INGEST_MODEL"):
+        config.ollama.ingest_model = ingest_model
 
-    # Auto-ingest overrides
+    # Auto-ingest
     if buf_size := os.environ.get("INGEST_BUFFER_SIZE"):
         try:
             config.ingest_buffer_size = int(buf_size)
@@ -242,21 +294,23 @@ def load_config() -> RemindConfig:
         except ValueError:
             logger.warning(f"Invalid INGEST_MIN_DENSITY: {min_density}")
 
-    # Logging override
+    # Decay
+    if decay_enabled := os.environ.get("REMIND_DECAY_ENABLED"):
+        config.decay.enabled = decay_enabled.lower() in ("true", "1", "yes")
+    if decay_interval := os.environ.get("REMIND_DECAY_INTERVAL"):
+        try:
+            config.decay.decay_interval = int(decay_interval)
+        except ValueError:
+            logger.warning(f"Invalid REMIND_DECAY_INTERVAL: {decay_interval}")
+    if decay_rate := os.environ.get("REMIND_DECAY_RATE"):
+        try:
+            config.decay.decay_rate = float(decay_rate)
+        except ValueError:
+            logger.warning(f"Invalid REMIND_DECAY_RATE: {decay_rate}")
+
+    # Logging
     if logging_enabled := os.environ.get("REMIND_LOGGING_ENABLED"):
         config.logging_enabled = logging_enabled.lower() in ("true", "1", "yes")
-
-    # Per-provider ingest model overrides
-    if ingest_model := os.environ.get("ANTHROPIC_INGEST_MODEL"):
-        config.anthropic.ingest_model = ingest_model
-    if ingest_model := os.environ.get("OPENAI_INGEST_MODEL"):
-        config.openai.ingest_model = ingest_model
-    if ingest_model := os.environ.get("AZURE_OPENAI_INGEST_DEPLOYMENT_NAME"):
-        config.azure_openai.ingest_deployment_name = ingest_model
-    if ingest_model := os.environ.get("OLLAMA_INGEST_MODEL"):
-        config.ollama.ingest_model = ingest_model
-
-    return config
 
 
 def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:

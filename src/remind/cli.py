@@ -70,8 +70,8 @@ def main(ctx, db: str, llm: str, embedding: str):
     """Remind - Generalization-capable memory for LLMs."""
     from remind.config import load_config, resolve_db_path, setup_file_logging
 
-    # Load config (priority: env vars > config file > defaults)
-    config = load_config()
+    # Load config (priority: env vars > project-local config > global config > defaults)
+    config = load_config(project_dir=Path.cwd())
 
     # Resolve providers (CLI > Config)
     llm = llm or config.llm_provider
