@@ -85,6 +85,8 @@ class MemoryInterface:
         consolidation_threshold: int = 5,  # episodes before auto-consolidation
         consolidation_concepts_per_pass: int = 64,
         auto_consolidate: bool = True,
+        entity_extraction_batch_size: int = 5,
+        consolidation_workers: int = 1,
         # Retrieval settings
         default_recall_k: int = 3,
         default_episode_k: int = 5,
@@ -114,6 +116,8 @@ class MemoryInterface:
             embedding=embedding,
             store=self.store,
             concepts_per_consolidation_pass=consolidation_concepts_per_pass,
+            max_workers=consolidation_workers,
+            entity_extraction_batch_size=entity_extraction_batch_size,
         )
         
         self.retriever = MemoryRetriever(
@@ -1296,6 +1300,10 @@ def create_memory(
         kwargs["ingest_min_density"] = config.ingest_min_density
     if "episode_types" not in kwargs:
         kwargs["episode_types"] = config.episode_types
+    if "entity_extraction_batch_size" not in kwargs:
+        kwargs["entity_extraction_batch_size"] = config.entity_extraction_batch_size
+    if "consolidation_workers" not in kwargs:
+        kwargs["consolidation_workers"] = config.consolidation_workers
     
     # Import providers
     from remind.providers import (

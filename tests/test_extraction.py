@@ -9,7 +9,7 @@ from remind.extraction import (
     try_fix_json,
     MAX_CONTENT_LENGTH,
 )
-from remind.models import EpisodeType, EntityType, Episode
+from remind.models import EpisodeType, EntityType, Episode, Entity, ExtractionResult
 
 
 class TestTryFixJson:
@@ -300,6 +300,169 @@ class TestEntityExtractor:
 
         auth_episodes = memory_store.get_episodes_mentioning("file:auth.py")
         assert len(auth_episodes) == 1
+
+
+class TestExtractBatch:
+    """Tests for batched extraction."""
+
+    @pytest.mark.asyncio
+    async def test_extract_batch_single_episode_delegates_to_extract(self, mock_llm, memory_store):
+        """Single-episode batch delegates to extract() directly."""
+        mock_llm.set_complete_json_response({
+            "type": "observation",
+            "entities": [{"type": "file", "id": "file:main.py", "name": "main.py"}],
+        })
+        ep = Episode(content="Working on main.py")
+        extractor = EntityExtractor(mock_llm, memory_store)
+        results = await extractor.extract_batch([ep])
+
+        assert ep.id in results
+        assert results[ep.id].episode_type == "observation"
+        assert len(results[ep.id].entities) == 1
+
+    @pytest.mark.asyncio
+    async def test_extract_batch_multiple_episodes(self, mock_llm, memory_store):
+        """Multiple episodes batched into one LLM call."""
+        ep1 = Episode(content="User likes Python")
+        ep2 = Episode(content="Bug found in auth.py")
+        ep3 = Episode(content="Decided to use Redis")
+
+        mock_llm.set_complete_json_response({
+            "results": {
+                ep1.id: {"type": "preference", "title": "Likes Python", "entities": [], "entity_relationships": []},
+                ep2.id: {"type": "observation", "title": "Bug in auth", "entities": [{"type": "file", "id": "file:auth.py", "name": "auth.py"}], "entity_relationships": []},
+                ep3.id: {"type": "decision", "title": "Use Redis", "entities": [{"type": "tool", "id": "tool:redis", "name": "Redis"}], "entity_relationships": []},
+            }
+        })
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        results = await extractor.extract_batch([ep1, ep2, ep3])
+
+        assert len(results) == 3
+        assert results[ep1.id].episode_type == "preference"
+        assert results[ep2.id].episode_type == "observation"
+        assert len(results[ep2.id].entities) == 1
+        assert results[ep3.id].episode_type == "decision"
+
+        json_calls = [c for c in mock_llm.get_call_history() if c["method"] == "complete_json"]
+        assert len(json_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_extract_batch_empty_returns_empty(self, mock_llm, memory_store):
+        extractor = EntityExtractor(mock_llm, memory_store)
+        results = await extractor.extract_batch([])
+        assert results == {}
+
+    @pytest.mark.asyncio
+    async def test_extract_batch_partial_results(self, mock_llm, memory_store):
+        """Missing episode IDs in the response are omitted from the result."""
+        ep1 = Episode(content="Content 1")
+        ep2 = Episode(content="Content 2")
+
+        mock_llm.set_complete_json_response({
+            "results": {
+                ep1.id: {"type": "observation", "entities": []},
+            }
+        })
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        results = await extractor.extract_batch([ep1, ep2])
+
+        assert ep1.id in results
+        assert ep2.id not in results
+
+    @pytest.mark.asyncio
+    async def test_extract_batch_llm_failure_returns_empty(self, mock_llm, memory_store):
+        """Total LLM failure returns empty dict."""
+        async def raise_error(*args, **kwargs):
+            raise Exception("LLM unavailable")
+        mock_llm.complete_json = raise_error
+
+        ep = Episode(content="Test")
+        extractor = EntityExtractor(mock_llm, memory_store)
+        results = await extractor.extract_batch([ep, Episode(content="Test 2")])
+        assert results == {}
+
+    @pytest.mark.asyncio
+    async def test_extract_batch_scales_max_tokens(self, mock_llm, memory_store):
+        """max_tokens scales with number of episodes."""
+        episodes = [Episode(content=f"Content {i}") for i in range(3)]
+        mock_llm.set_complete_json_response({"results": {}})
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        await extractor.extract_batch(episodes)
+
+        call = mock_llm.get_call_history()[0]
+        assert call["max_tokens"] == 1024 * 3
+
+
+class TestStoreExtractionResult:
+    """Tests for store_extraction_result."""
+
+    def test_stores_entities_and_updates_episode(self, mock_llm, memory_store):
+        ep = Episode(content="Working on auth.py")
+        memory_store.add_episode(ep)
+
+        result = ExtractionResult(
+            episode_type="observation",
+            title="Working on auth",
+            entities=[Entity(id="file:auth.py", type=EntityType.FILE, display_name="auth.py")],
+        )
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        extractor.store_extraction_result(ep, result)
+
+        updated = memory_store.get_episode(ep.id)
+        assert updated.episode_type == "observation"
+        assert updated.entities_extracted is True
+        assert "file:auth.py" in updated.entity_ids
+
+        entity = memory_store.get_entity("file:auth.py")
+        assert entity is not None
+
+    def test_deduplicates_entities(self, mock_llm, memory_store):
+        """When an entity already exists, reuse its ID."""
+        existing_entity = Entity(id="file:auth.py", type=EntityType.FILE, display_name="auth.py")
+        memory_store.add_entity(existing_entity)
+
+        ep = Episode(content="Still working on auth.py")
+        memory_store.add_episode(ep)
+
+        result = ExtractionResult(
+            episode_type="observation",
+            entities=[Entity(id="file:auth.py_dup", type=EntityType.FILE, display_name="auth.py")],
+        )
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        extractor.store_extraction_result(ep, result)
+
+        updated = memory_store.get_episode(ep.id)
+        assert "file:auth.py" in updated.entity_ids
+
+
+class TestStoreRelationsResult:
+    """Tests for store_relations_result."""
+
+    def test_stores_relations_and_marks_episode(self, mock_llm, memory_store):
+        from remind.models import EntityRelation
+        ep = Episode(content="Alice manages Bob")
+        memory_store.add_episode(ep)
+
+        relations = [
+            EntityRelation(
+                source_id="person:alice",
+                target_id="person:bob",
+                relation_type="manages",
+                strength=0.9,
+                source_episode_id=ep.id,
+            )
+        ]
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        extractor.store_relations_result(ep, relations)
+
+        updated = memory_store.get_episode(ep.id)
+        assert updated.relations_extracted is True
 
 
 class TestExtractForRemember:

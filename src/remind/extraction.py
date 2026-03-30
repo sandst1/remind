@@ -156,6 +156,51 @@ Keep entity names under 30 chars. Empty arrays if none found. Strength is 0.0-1.
 EXTRACTION_PROMPT_TEMPLATE = _build_extraction_prompt(list(_BUILTIN_TYPE_DESCRIPTIONS.keys()))
 
 
+def _build_batch_extraction_prompt(valid_types: list[str]) -> str:
+    type_enum = "|".join(valid_types)
+    desc_parts = []
+    for t in valid_types:
+        if t in _BUILTIN_TYPE_DESCRIPTIONS:
+            desc_parts.append(f"{t}={_BUILTIN_TYPE_DESCRIPTIONS[t]}")
+        else:
+            desc_parts.append(t)
+    type_descriptions = ", ".join(desc_parts)
+
+    return """Classify and extract from each episode below. Episodes are delimited by [EPISODE_ID] headers.
+
+{{episodes}}
+
+For EACH episode, return its classification and extracted entities.
+
+Return JSON:
+{{{{
+  "results": {{{{
+    "EPISODE_ID": {{{{
+      "type": "{type_enum}",
+      "title": "Short descriptive title (5-10 words)",
+      "entities": [{{{{"type": "file|function|class|person|subject|tool|project", "id": "type:name", "name": "short name"}}}}],
+      "entity_relationships": [{{{{"source": "type:name", "target": "type:name", "relationship": "verb or description", "strength": 0.7}}}}]
+    }}}}
+  }}}}
+}}}}
+
+Types: {type_descriptions}
+Title: Concise summary capturing the main insight, decision, or topic
+Entity examples: {{{{"type":"file","id":"file:auth.ts","name":"auth.ts"}}}}, {{{{"type":"person","id":"person:alice","name":"Alice"}}}}
+Relationship examples: {{{{"source":"person:alice","target":"project:backend","relationship":"maintains","strength":0.8}}}}
+
+Keep entity names under 30 chars. Empty arrays if none found. Strength is 0.0-1.0 confidence.
+You MUST include a result for every episode ID listed above.""".format(
+        type_enum=type_enum,
+        type_descriptions=type_descriptions,
+    )
+
+
+BATCH_EXTRACTION_PROMPT_TEMPLATE = _build_batch_extraction_prompt(
+    list(_BUILTIN_TYPE_DESCRIPTIONS.keys())
+)
+
+
 # Prompt for extracting relationships from episodes that already have entities extracted
 RELATIONS_ONLY_PROMPT_TEMPLATE = """Given this text and its already-identified entities, identify relationships between them:
 
@@ -192,8 +237,10 @@ class EntityExtractor:
         self.store = store
         if valid_types:
             self._prompt_template = _build_extraction_prompt(valid_types)
+            self._batch_prompt_template = _build_batch_extraction_prompt(valid_types)
         else:
             self._prompt_template = EXTRACTION_PROMPT_TEMPLATE
+            self._batch_prompt_template = BATCH_EXTRACTION_PROMPT_TEMPLATE
     
     async def extract(self, content: str, episode_id: Optional[str] = None) -> ExtractionResult:
         """
@@ -313,6 +360,129 @@ class EntityExtractor:
         )
 
         return result
+
+    async def extract_batch(
+        self,
+        episodes: list[Episode],
+    ) -> dict[str, ExtractionResult]:
+        """Extract type, entities, and relationships from multiple episodes in one LLM call.
+
+        Args:
+            episodes: List of episodes to process
+
+        Returns:
+            Dict mapping episode ID to ExtractionResult. Episodes that failed
+            extraction are omitted from the result.
+        """
+        if not episodes:
+            return {}
+
+        if len(episodes) == 1:
+            result = await self.extract(episodes[0].content, episode_id=episodes[0].id)
+            return {episodes[0].id: result}
+
+        episode_sections = []
+        for ep in episodes:
+            content = ep.content
+            if len(content) > MAX_CONTENT_LENGTH:
+                content = content[:MAX_CONTENT_LENGTH] + "...[truncated]"
+            episode_sections.append(f"[{ep.id}]\n{content}")
+
+        episodes_text = "\n\n".join(episode_sections)
+
+        if hasattr(self, "_batch_prompt_template"):
+            prompt = self._batch_prompt_template.format(episodes=episodes_text)
+        else:
+            prompt = BATCH_EXTRACTION_PROMPT_TEMPLATE.format(episodes=episodes_text)
+
+        max_tokens = 1024 * len(episodes)
+
+        logger.debug(
+            "Batch extraction LLM request:\n"
+            f"  provider: {self.llm.name}\n"
+            f"  episodes: {len(episodes)}\n"
+            f"  prompt_length: {len(prompt)}\n"
+        )
+
+        try:
+            result = await self.llm.complete_json(
+                prompt=prompt,
+                system=EXTRACTION_SYSTEM_PROMPT,
+                temperature=0.1,
+                max_tokens=max_tokens,
+            )
+
+            logger.debug(f"Batch extraction LLM response: {json.dumps(result, indent=2)}")
+
+            results_dict = result.get("results", result)
+            output = {}
+            for ep in episodes:
+                ep_result = results_dict.get(ep.id)
+                if ep_result:
+                    output[ep.id] = ExtractionResult.from_dict(ep_result, episode_id=ep.id)
+
+            return output
+
+        except Exception as e:
+            logger.warning(f"Batch extraction failed ({len(episodes)} episodes): {e}")
+            return {}
+
+    def store_extraction_result(self, episode: Episode, result: ExtractionResult) -> None:
+        """Apply an extraction result to the store (entity dedup, mentions, episode update).
+
+        This is the store-write portion of extract_and_store(), separated out so
+        LLM calls can be parallelized while store writes remain sequential.
+        """
+        episode.episode_type = result.episode_type
+        episode.title = result.title
+        episode.entities_extracted = True
+        episode.relations_extracted = True
+
+        final_entity_ids = []
+        for entity in result.entities:
+            existing = self.store.find_entity_by_name(entity.display_name)
+            if existing:
+                entity_id = existing.id
+                if entity.type != existing.type:
+                    existing.type = entity.type
+                    self.store.add_entity(existing)
+            else:
+                self.store.add_entity(entity)
+                entity_id = entity.id
+
+            final_entity_ids.append(entity_id)
+            self.store.add_mention(episode.id, entity_id)
+
+        episode.entity_ids = final_entity_ids
+        episode.updated_at = datetime.now()
+        self.store.update_episode(episode)
+
+        for relation in result.entity_relations:
+            self.store.add_entity_relation(relation)
+
+        logger.debug(
+            f"Stored extraction for {episode.id}: type={result.episode_type}, "
+            f"entities={[e.id for e in result.entities]}, "
+            f"relations={len(result.entity_relations)}"
+        )
+
+    def store_relations_result(self, episode: Episode, relations: list[EntityRelation]) -> None:
+        """Apply relation extraction results to the store.
+
+        This is the store-write portion of extract_and_store_relations_only(),
+        separated out so LLM calls can be parallelized while store writes
+        remain sequential.
+        """
+        for relation in relations:
+            self.store.add_entity_relation(relation)
+
+        episode.relations_extracted = True
+        episode.updated_at = datetime.now()
+        self.store.update_episode(episode)
+
+        logger.debug(
+            f"Stored relations for {episode.id}: {len(relations)} relationships"
+        )
 
     async def extract_relations_only(self, episode: Episode) -> list[EntityRelation]:
         """

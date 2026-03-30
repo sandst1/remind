@@ -11,6 +11,7 @@ This is where the magic happens. Consolidation runs in two phases:
    and resolves contradictions.
 """
 
+import asyncio
 from datetime import datetime
 from typing import Callable, Optional
 import json
@@ -160,6 +161,8 @@ class Consolidator:
         batch_size: int = 25,
         min_confidence: float = 0.3,
         concepts_per_consolidation_pass: int = 64,
+        max_workers: int = 1,
+        entity_extraction_batch_size: int = 5,
     ):
         self.llm = llm
         self.embedding = embedding
@@ -167,6 +170,9 @@ class Consolidator:
         self.batch_size = batch_size
         self.min_confidence = min_confidence
         self.concepts_per_consolidation_pass = concepts_per_consolidation_pass
+        self.max_workers = max_workers
+        self.entity_extraction_batch_size = entity_extraction_batch_size
+        self._semaphore = asyncio.Semaphore(max_workers)
         self.extractor = EntityExtractor(llm, store)
     
     async def consolidate(
@@ -365,7 +371,7 @@ class Consolidator:
         merged_operations = self._empty_operations()
         num_chunks = len(concept_chunks)
 
-        for chunk_idx, chunk in enumerate(concept_chunks):
+        async def _consolidate_chunk(chunk_idx: int, chunk: list[dict]):
             other_concepts = [c for c in all_concepts if c not in chunk]
             other_index = self._format_concept_index(other_concepts)
 
@@ -389,18 +395,26 @@ class Consolidator:
                 f"  prompt:\n{prompt}"
             )
 
-            try:
-                operations = await self.llm.complete_json(
-                    prompt=prompt,
-                    system=CONSOLIDATION_SYSTEM_PROMPT,
-                    temperature=0.3,
-                    max_tokens=8192,
-                )
-            except Exception as e:
-                logger.error(f"LLM consolidation failed{topic_label}{sub_pass_label}: {e}")
-                raise
+            async with self._semaphore:
+                try:
+                    operations = await self.llm.complete_json(
+                        prompt=prompt,
+                        system=CONSOLIDATION_SYSTEM_PROMPT,
+                        temperature=0.3,
+                        max_tokens=8192,
+                    )
+                except Exception as e:
+                    logger.error(f"LLM consolidation failed{topic_label}{sub_pass_label}: {e}")
+                    raise
 
             logger.debug(f"Consolidation LLM response{topic_label}{sub_pass_label}: {json.dumps(operations, indent=2)}")
+            return (chunk_idx, operations)
+
+        chunk_results = await asyncio.gather(
+            *[_consolidate_chunk(i, c) for i, c in enumerate(concept_chunks)],
+        )
+
+        for chunk_idx, operations in sorted(chunk_results, key=lambda x: x[0]):
             self._merge_operations(merged_operations, operations, chunk_idx)
 
         if num_chunks > 1:
@@ -564,6 +578,10 @@ class Consolidator:
         This is Phase 1 of consolidation - classifying episode types and
         extracting entity mentions. Also extracts relationships for episodes
         that have entities but haven't had relationship extraction.
+
+        Episodes are grouped into batches of ``entity_extraction_batch_size``
+        for fewer LLM calls. Multiple batches run concurrently up to
+        ``max_workers``.
         
         Returns:
             dict with extraction stats or None if no episodes needed extraction
@@ -572,34 +590,80 @@ class Consolidator:
         entities_created = 0
         relations_extracted = 0
 
-        # Step 1: Full extraction for episodes without entities
+        # Step 1: Batched entity extraction
         unextracted = self.store.get_unextracted_episodes(limit=self.batch_size)
-        
-        if unextracted:
-            logger.info(f"Running extraction on {len(unextracted)} episodes...")
-            
-            for episode in unextracted:
-                try:
-                    extraction = await self.extractor.extract_and_store(episode)
-                    episodes_processed += 1
-                    entities_created += len(extraction.entities)
-                    relations_extracted += len(extraction.entity_relations)
-                except Exception as e:
-                    logger.warning(f"Failed to extract from {episode.id}: {e}")
 
-        # Step 2: Relationship-only extraction for episodes with entities but no relations
+        if unextracted:
+            bs = self.entity_extraction_batch_size
+            episode_batches = [unextracted[i:i + bs] for i in range(0, len(unextracted), bs)]
+            logger.info(
+                f"Running extraction on {len(unextracted)} episodes "
+                f"({len(episode_batches)} batches of up to {bs})..."
+            )
+
+            async def _extract_batch(batch: list) -> dict:
+                async with self._semaphore:
+                    return await self.extractor.extract_batch(batch)
+
+            batch_results = await asyncio.gather(
+                *[_extract_batch(batch) for batch in episode_batches],
+                return_exceptions=True,
+            )
+
+            # Fall back to individual calls for batches that failed entirely
+            fallback_episodes = []
+            all_results: dict = {}
+            for batch, batch_result in zip(episode_batches, batch_results):
+                if isinstance(batch_result, Exception):
+                    logger.warning(f"Batch extraction failed: {batch_result}")
+                    fallback_episodes.extend(batch)
+                else:
+                    all_results.update(batch_result)
+                    missing = [ep for ep in batch if ep.id not in batch_result]
+                    fallback_episodes.extend(missing)
+
+            if fallback_episodes:
+                logger.info(f"Falling back to individual extraction for {len(fallback_episodes)} episodes")
+                for ep in fallback_episodes:
+                    try:
+                        result = await self.extractor.extract(ep.content, episode_id=ep.id)
+                        all_results[ep.id] = result
+                    except Exception as e:
+                        logger.warning(f"Individual extraction also failed for {ep.id}: {e}")
+
+            # Sequential store writes
+            episode_by_id = {ep.id: ep for ep in unextracted}
+            for ep_id, result in all_results.items():
+                ep = episode_by_id.get(ep_id)
+                if ep:
+                    self.extractor.store_extraction_result(ep, result)
+                    episodes_processed += 1
+                    entities_created += len(result.entities)
+                    relations_extracted += len(result.entity_relations)
+
+        # Step 2: Parallel relationship-only extraction (1 call per episode)
         unextracted_relations = self.store.get_unextracted_relation_episodes(limit=self.batch_size)
 
         if unextracted_relations:
             logger.info(f"Extracting relationships from {len(unextracted_relations)} episodes...")
 
-            for episode in unextracted_relations:
-                try:
-                    count = await self.extractor.extract_and_store_relations_only(episode)
-                    relations_extracted += count
-                    episodes_processed += 1
-                except Exception as e:
-                    logger.warning(f"Failed to extract relations from {episode.id}: {e}")
+            async def _extract_rels(ep):
+                async with self._semaphore:
+                    return (ep, await self.extractor.extract_relations_only(ep))
+
+            rel_results = await asyncio.gather(
+                *[_extract_rels(ep) for ep in unextracted_relations],
+                return_exceptions=True,
+            )
+
+            for item in rel_results:
+                if isinstance(item, Exception):
+                    logger.warning(f"Relation extraction failed: {item}")
+                    continue
+                episode, relations = item
+                self.extractor.store_relations_result(episode, relations)
+                relations_extracted += len(relations)
+                episodes_processed += 1
 
         if episodes_processed == 0:
             return None

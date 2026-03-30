@@ -60,6 +60,8 @@ _ALL_CONFIG_ENV_VARS = [
     "REMIND_DECAY_RATE",
     "REMIND_LOGGING_ENABLED",
     "REMIND_EPISODE_TYPES",
+    "ENTITY_EXTRACTION_BATCH_SIZE",
+    "CONSOLIDATION_WORKERS",
 ]
 
 
@@ -89,6 +91,8 @@ class TestDefaults:
         assert config.consolidation_threshold == 5
         assert config.consolidation_concepts_per_pass == 64
         assert config.auto_consolidate is True
+        assert config.entity_extraction_batch_size == 5
+        assert config.consolidation_workers == 1
         assert config.ingest_buffer_size == 4000
         assert config.ingest_min_density == 0.4
         assert config.logging_enabled is False
@@ -262,6 +266,15 @@ class TestApplyFileConfig:
         assert config.decay.decay_interval == 20
         assert config.decay.decay_rate == 0.2
 
+    def test_applies_consolidation_parallelism_fields(self):
+        config = RemindConfig()
+        _apply_file_config(config, {
+            "entity_extraction_batch_size": 10,
+            "consolidation_workers": 4,
+        })
+        assert config.entity_extraction_batch_size == 10
+        assert config.consolidation_workers == 4
+
     def test_applies_episode_types(self):
         config = RemindConfig()
         _apply_file_config(config, {
@@ -393,6 +406,22 @@ class TestEnvVarOverrides:
     def test_logging_enabled(self):
         c = self._config_with_env(REMIND_LOGGING_ENABLED="true")
         assert c.logging_enabled is True
+
+    def test_entity_extraction_batch_size(self):
+        c = self._config_with_env(ENTITY_EXTRACTION_BATCH_SIZE="10")
+        assert c.entity_extraction_batch_size == 10
+
+    def test_entity_extraction_batch_size_invalid(self):
+        c = self._config_with_env(ENTITY_EXTRACTION_BATCH_SIZE="abc")
+        assert c.entity_extraction_batch_size == 5  # unchanged default
+
+    def test_consolidation_workers(self):
+        c = self._config_with_env(CONSOLIDATION_WORKERS="4")
+        assert c.consolidation_workers == 4
+
+    def test_consolidation_workers_invalid(self):
+        c = self._config_with_env(CONSOLIDATION_WORKERS="abc")
+        assert c.consolidation_workers == 1  # unchanged default
 
     # -- Episode types --
 

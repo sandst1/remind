@@ -921,3 +921,141 @@ class TestConceptChunking:
         # Second chunk (c03, c04) should have c00, c01, c02 in "OTHER" index
         assert "OTHER KNOWN CONCEPTS" in json_calls[1]["prompt"]
         assert "[c00]" in json_calls[1]["prompt"]
+
+
+class TestParallelConsolidation:
+    """Tests for parallel consolidation with max_workers > 1."""
+
+    @pytest.fixture
+    def parallel_consolidator(self, mock_llm, mock_embedding, memory_store):
+        """Create a consolidator with parallel workers."""
+        return Consolidator(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=memory_store,
+            batch_size=20,
+            min_confidence=0.3,
+            max_workers=4,
+            entity_extraction_batch_size=3,
+        )
+
+    @pytest.mark.asyncio
+    async def test_parallel_extraction_batches_episodes(
+        self, parallel_consolidator, memory_store, mock_llm
+    ):
+        """Entity extraction groups episodes into batches of entity_extraction_batch_size."""
+        for i in range(7):
+            memory_store.add_episode(Episode(content=f"Episode {i}"))
+
+        # Return batch results keyed by episode ID
+        original_complete_json = mock_llm.complete_json
+        call_count = 0
+
+        async def mock_batch_response(prompt, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # Parse episode IDs from prompt
+            import re
+            ids = re.findall(r'\[([a-f0-9-]+)\]', prompt)
+            results = {}
+            for ep_id in ids:
+                results[ep_id] = {
+                    "type": "observation",
+                    "title": f"Title for {ep_id[:8]}",
+                    "entities": [],
+                    "entity_relationships": [],
+                }
+            return {"results": results}
+
+        mock_llm.complete_json = mock_batch_response
+        result = await parallel_consolidator._run_extraction_phase()
+
+        assert result is not None
+        assert result["episodes_processed"] == 7
+        # 7 episodes / batch_size 3 = 3 batches (3 + 3 + 1)
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_parallel_consolidate_with_force(
+        self, parallel_consolidator, memory_store, mock_llm, mock_embedding
+    ):
+        """Parallel consolidation produces same results as sequential."""
+        e1 = Episode(content="User likes Python", entities_extracted=True)
+        e2 = Episode(content="User prefers async", entities_extracted=True)
+        e3 = Episode(content="User values typing", entities_extracted=True)
+        for ep in [e1, e2, e3]:
+            memory_store.add_episode(ep)
+
+        mock_llm.set_complete_json_response({
+            "analysis": "Programming preferences",
+            "updates": [],
+            "new_concepts": [
+                {
+                    "summary": "User prefers typed async Python",
+                    "confidence": 0.8,
+                    "source_episodes": [e1.id, e2.id, e3.id],
+                    "tags": ["programming"],
+                    "relations": [],
+                }
+            ],
+            "new_relations": [],
+            "contradictions": [],
+        })
+
+        result = await parallel_consolidator.consolidate(force=True)
+
+        assert result.episodes_processed == 3
+        assert result.concepts_created == 1
+
+    @pytest.mark.asyncio
+    async def test_parallel_multi_chunk_consolidation(
+        self, mock_llm, mock_embedding, memory_store
+    ):
+        """Parallel chunk sub-passes produce correct merged results."""
+        consolidator = Consolidator(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=memory_store,
+            concepts_per_consolidation_pass=3,
+            max_workers=4,
+        )
+
+        for i in range(5):
+            memory_store.add_concept(Concept(
+                id=f"c{i:02d}",
+                summary=f"Existing concept {i}",
+                embedding=[0.1] * 128,
+            ))
+        for i in range(3):
+            memory_store.add_episode(Episode(content=f"Ep {i}", entities_extracted=True))
+
+        mock_llm.set_complete_json_responses([
+            make_consolidation_response(
+                analysis="Chunk 0",
+                new_concepts=[{
+                    "temp_id": "NEW_0",
+                    "summary": "From chunk 0",
+                    "confidence": 0.7,
+                    "tags": [],
+                    "relations": [],
+                }],
+            ),
+            make_consolidation_response(
+                analysis="Chunk 1",
+                new_concepts=[{
+                    "temp_id": "NEW_0",
+                    "summary": "From chunk 1",
+                    "confidence": 0.6,
+                    "tags": [],
+                    "relations": [],
+                }],
+            ),
+        ])
+
+        result = await consolidator.consolidate()
+
+        assert result.concepts_created == 2
+        all_concepts = memory_store.get_all_concepts()
+        new_summaries = {c.summary for c in all_concepts if "From chunk" in c.summary}
+        assert "From chunk 0" in new_summaries
+        assert "From chunk 1" in new_summaries

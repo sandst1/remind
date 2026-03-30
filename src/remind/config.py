@@ -95,6 +95,8 @@ class RemindConfig:
     consolidation_threshold: int = DEFAULT_CONSOLIDATION_THRESHOLD
     consolidation_concepts_per_pass: int = DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS
     auto_consolidate: bool = True
+    entity_extraction_batch_size: int = 5
+    consolidation_workers: int = 1
 
     # Provider-specific configs
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
@@ -152,6 +154,10 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         )
     if "auto_consolidate" in file_config:
         config.auto_consolidate = bool(file_config["auto_consolidate"])
+    if "entity_extraction_batch_size" in file_config:
+        config.entity_extraction_batch_size = int(file_config["entity_extraction_batch_size"])
+    if "consolidation_workers" in file_config:
+        config.consolidation_workers = int(file_config["consolidation_workers"])
 
     # Provider-specific settings (overlay, not replace)
     _apply_provider_config(config, file_config, "anthropic", AnthropicConfig)
@@ -256,6 +262,16 @@ def _apply_env_vars(config: RemindConfig) -> None:
             config.consolidation_concepts_per_pass = int(concepts_per_pass)
         except ValueError:
             logger.warning(f"Invalid CONSOLIDATION_CONCEPTS_PER_PASS: {concepts_per_pass}")
+    if extraction_batch := os.environ.get("ENTITY_EXTRACTION_BATCH_SIZE"):
+        try:
+            config.entity_extraction_batch_size = int(extraction_batch)
+        except ValueError:
+            logger.warning(f"Invalid ENTITY_EXTRACTION_BATCH_SIZE: {extraction_batch}")
+    if workers := os.environ.get("CONSOLIDATION_WORKERS"):
+        try:
+            config.consolidation_workers = int(workers)
+        except ValueError:
+            logger.warning(f"Invalid CONSOLIDATION_WORKERS: {workers}")
 
     # Anthropic
     if api_key := os.environ.get("ANTHROPIC_API_KEY"):

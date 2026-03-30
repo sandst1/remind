@@ -12,7 +12,7 @@ Remind does the same thing. Raw episodes are replayed through an LLM, which iden
 
 ### Phase 1: Extraction
 
-For each unconsolidated episode:
+Episodes are grouped into batches (default 5 per batch) and sent to the LLM in a single call per batch, rather than one call per episode. For each episode in a batch:
 - **Type classification** — Is this an observation, decision, question, spec, plan, task, outcome, or fact?
 - **Entity extraction** — What files, people, tools, and concepts are mentioned?
 - **Relationship extraction** — When multiple entities appear in the same episode, their relationships are inferred (e.g., "Alice manages Bob" → `person:alice → manages → person:bob`)
@@ -78,6 +78,19 @@ Consolidation might produce:
 This is understanding, not storage.
 
 Consolidation prioritizes specificity and falsifiability — concepts should be concrete enough to be validated against reality. For `fact` episodes, consolidation preserves details verbatim in concept summaries rather than abstracting them away.
+
+## Performance tuning
+
+Consolidation performance can be tuned with two settings:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `entity_extraction_batch_size` | `5` | Number of episodes grouped into each extraction LLM call. Higher values mean fewer LLM calls but larger prompts. |
+| `consolidation_workers` | `1` | Maximum number of concurrent LLM calls during consolidation. Set to e.g. `4` to parallelize extraction batches and concept-chunk sub-passes. |
+
+With the defaults (batch size 5, workers 1), 20 episodes require 4 sequential extraction calls instead of 20. Set `consolidation_workers` higher to run those 4 calls concurrently.
+
+Only LLM calls are parallelized — all store writes (entity deduplication, concept creation, relation storage) remain sequential to avoid conflicts.
 
 ## Immediate consolidation from auto-ingest
 
