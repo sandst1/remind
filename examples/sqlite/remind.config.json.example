@@ -1,0 +1,10 @@
+{
+  "llm_provider": "anthropic",
+  "embedding_provider": "openai",
+  "anthropic": {
+    "api_key": "sk-ant-..."
+  },
+  "openai": {
+    "api_key": "sk-..."
+  }
+}

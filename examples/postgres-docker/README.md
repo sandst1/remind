@@ -30,15 +30,11 @@ docker compose ps
 
 ```bash
 cp .env.example .env
-# Edit .env and fill in your API keys
+# Edit .env — fill in your API keys and adjust any settings
+source .env   # or use direnv, dotenv, etc.
 ```
 
-Then load the variables:
-
-```bash
-source .env
-# or use direnv, dotenv, etc.
-```
+> **Note:** Remind reads environment variables only — it does not load `.env` files automatically.
 
 ### 3. Use Remind normally
 
