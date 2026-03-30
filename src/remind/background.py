@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
 from filelock import FileLock, Timeout
@@ -28,24 +29,26 @@ LOCK_TIMEOUT = 1800
 INGEST_WORKER_GRACE_SECONDS = 2
 
 
-def _db_hash(db_path: str) -> str:
-    return hashlib.md5(db_path.encode()).hexdigest()[:12]
+def _db_hash(db_url: str) -> str:
+    return hashlib.md5(db_url.encode()).hexdigest()[:12]
 
 
-def get_consolidation_lock_path(db_path: str) -> Path:
+def get_consolidation_lock_path(db_url: str, remind_dir: Optional[Path] = None) -> Path:
     """Get lock file path for a database.
 
-    Uses a hash of the db_path to create a unique lock file name.
+    Uses a hash of the db_url to create a unique lock file name.
+    Stored in *remind_dir* when provided, otherwise falls back to ~/.remind.
     """
-    return REMIND_DIR / f".consolidate-{_db_hash(db_path)}.lock"
+    base = remind_dir if remind_dir is not None else REMIND_DIR
+    return base / f".consolidate-{_db_hash(db_url)}.lock"
 
 
-def is_consolidation_running(db_path: str) -> bool:
+def is_consolidation_running(db_url: str, remind_dir: Optional[Path] = None) -> bool:
     """Check if consolidation is already running for this database.
 
     Returns True if another process holds the lock, False otherwise.
     """
-    lock_path = get_consolidation_lock_path(db_path)
+    lock_path = get_consolidation_lock_path(db_url, remind_dir=remind_dir)
 
     # Ensure the lock directory exists
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -63,66 +66,70 @@ def is_consolidation_running(db_path: str) -> bool:
 
 
 def spawn_background_consolidation(
-    db_path: str,
+    db_url: str,
     llm_provider: str,
     embedding_provider: str,
+    remind_dir: Optional[Path] = None,
 ) -> bool:
     """
     Spawn a background process to run consolidation.
 
     Args:
-        db_path: Full path to the database file.
+        db_url: Database URL or file path.
         llm_provider: LLM provider name (anthropic, openai, etc.)
         embedding_provider: Embedding provider name (openai, ollama, etc.)
+        remind_dir: Project-local .remind directory for locks/logs. Falls back
+            to ~/.remind when not provided.
 
     Returns:
         True if spawned successfully, False if consolidation already running.
     """
-    if is_consolidation_running(db_path):
-        logger.debug(f"Consolidation already running for {db_path}")
+    if is_consolidation_running(db_url, remind_dir=remind_dir):
+        logger.debug(f"Consolidation already running for {db_url}")
         return False
 
-    # Build the command - use the same Python interpreter
     cmd = [
         sys.executable,
         "-m",
         "remind.background_worker",
         "--db",
-        db_path,
+        db_url,
         "--llm",
         llm_provider,
         "--embedding",
         embedding_provider,
     ]
+    if remind_dir is not None:
+        cmd += ["--remind-dir", str(remind_dir)]
 
     logger.debug(f"Spawning background consolidation: {' '.join(cmd)}")
 
-    # Spawn detached subprocess
-    # Use DEVNULL for stdin/stdout/stderr to fully detach
     subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,  # Detach from parent process group
+        start_new_session=True,
     )
 
     return True
 
 
-def get_ingest_queue_dir(db_path: str) -> Path:
+def get_ingest_queue_dir(db_url: str, remind_dir: Optional[Path] = None) -> Path:
     """Get the queue directory for ingest chunks for a database."""
-    return REMIND_DIR / "ingest-queue" / _db_hash(db_path)
+    base = remind_dir if remind_dir is not None else REMIND_DIR
+    return base / "ingest-queue" / _db_hash(db_url)
 
 
-def get_ingest_lock_path(db_path: str) -> Path:
+def get_ingest_lock_path(db_url: str, remind_dir: Optional[Path] = None) -> Path:
     """Get lock file path for the ingest worker for a database."""
-    return REMIND_DIR / f".ingest-{_db_hash(db_path)}.lock"
+    base = remind_dir if remind_dir is not None else REMIND_DIR
+    return base / f".ingest-{_db_hash(db_url)}.lock"
 
 
-def is_ingest_running(db_path: str) -> bool:
+def is_ingest_running(db_url: str, remind_dir: Optional[Path] = None) -> bool:
     """Check if an ingest worker is already running for this database."""
-    lock_path = get_ingest_lock_path(db_path)
+    lock_path = get_ingest_lock_path(db_url, remind_dir=remind_dir)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
     lock = FileLock(str(lock_path), timeout=0)
@@ -135,9 +142,10 @@ def is_ingest_running(db_path: str) -> bool:
 
 
 def enqueue_ingest_chunk(
-    db_path: str,
+    db_url: str,
     chunk: str,
     source: str = "conversation",
+    remind_dir: Optional[Path] = None,
 ) -> Path:
     """Write a chunk to the ingest queue directory for later processing.
 
@@ -146,7 +154,7 @@ def enqueue_ingest_chunk(
     Returns:
         Path to the enqueued file.
     """
-    queue_dir = get_ingest_queue_dir(db_path)
+    queue_dir = get_ingest_queue_dir(db_url, remind_dir=remind_dir)
     queue_dir.mkdir(parents=True, exist_ok=True)
 
     ts = f"{time.time():.6f}"
@@ -159,9 +167,10 @@ def enqueue_ingest_chunk(
 
 
 def spawn_ingest_worker(
-    db_path: str,
+    db_url: str,
     llm_provider: str,
     embedding_provider: str,
+    remind_dir: Optional[Path] = None,
 ) -> bool:
     """Spawn a single background ingest worker that drains the queue.
 
@@ -172,8 +181,8 @@ def spawn_ingest_worker(
     Returns:
         True if a new worker was spawned, False if one is already running.
     """
-    if is_ingest_running(db_path):
-        logger.debug(f"Ingest worker already running for {db_path}")
+    if is_ingest_running(db_url, remind_dir=remind_dir):
+        logger.debug(f"Ingest worker already running for {db_url}")
         return False
 
     cmd = [
@@ -181,13 +190,15 @@ def spawn_ingest_worker(
         "-m",
         "remind.background_worker",
         "--db",
-        db_path,
+        db_url,
         "--llm",
         llm_provider,
         "--embedding",
         embedding_provider,
         "--ingest-worker",
     ]
+    if remind_dir is not None:
+        cmd += ["--remind-dir", str(remind_dir)]
 
     logger.debug(f"Spawning ingest worker: {' '.join(cmd)}")
 

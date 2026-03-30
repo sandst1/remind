@@ -449,20 +449,24 @@ def resolve_db_url(
 _file_logging_configured: set[str] = set()
 
 
-def setup_file_logging(db_path_or_url: str) -> None:
+def setup_file_logging(db_path_or_url: str, project_dir: Optional[Path] = None) -> None:
     """Configure file logging to remind.log in the same directory as the database.
 
     Attaches a FileHandler to the ``remind`` package logger so all
     sub-module loggers (remind.interface, remind.consolidation, etc.)
     propagate their output to the log file at DEBUG level.
 
-    For non-SQLite database URLs the log goes to ~/.remind/remind.log.
+    For non-SQLite database URLs the log goes to <project_dir>/.remind/remind.log
+    when *project_dir* is provided, otherwise falls back to ~/.remind/remind.log.
 
     Safe to call multiple times -- duplicate handlers for the same
     directory are skipped.
     """
     if _is_db_url(db_path_or_url) and not db_path_or_url.startswith("sqlite"):
-        log_dir = str(REMIND_DIR)
+        if project_dir is not None:
+            log_dir = str(project_dir / ".remind")
+        else:
+            log_dir = str(REMIND_DIR)
     else:
         path = db_path_or_url
         if path.startswith("sqlite:///"):

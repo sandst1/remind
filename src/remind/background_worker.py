@@ -32,16 +32,35 @@ from remind.background import (
     INGEST_WORKER_GRACE_SECONDS,
 )
 from remind.config import REMIND_DIR, load_config, setup_file_logging
+from pathlib import Path
 
 
-def setup_logging(db_path: str) -> logging.Logger:
-    """Set up logging to a file.
+def _log_dir_for_db(db_path: str, remind_dir: Path | None = None) -> Path:
+    """Return the log directory for a database path.
 
-    Always logs to ~/.remind/logs/consolidation.log at INFO level.
+    Priority:
+    1. *remind_dir* / "logs" when explicitly provided (project-local)
+    2. Directory of the SQLite file / "logs" for plain sqlite paths
+    3. ~/.remind/logs fallback for remote DB URLs
+    """
+    if remind_dir is not None:
+        return remind_dir / "logs"
+    if db_path.startswith("sqlite:///"):
+        db_file = Path(db_path[len("sqlite:///"):])
+        return db_file.parent / "logs"
+    if "://" not in db_path:
+        return Path(db_path).parent / "logs"
+    return REMIND_DIR / "logs"
+
+
+def setup_logging(db_path: str, remind_dir: Path | None = None) -> logging.Logger:
+    """Set up logging to a file next to the database (or in remind_dir).
+
+    Logs to <log_dir>/consolidation.log at INFO level.
     When logging_enabled is set in config, also logs DEBUG-level
     detail to remind.log next to the database.
     """
-    log_dir = REMIND_DIR / "logs"
+    log_dir = _log_dir_for_db(db_path, remind_dir=remind_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
@@ -50,16 +69,19 @@ def setup_logging(db_path: str) -> logging.Logger:
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
-    config = load_config()
+    project_dir = remind_dir.parent if remind_dir is not None else None
+    config = load_config(project_dir=project_dir)
     if config.logging_enabled:
-        setup_file_logging(db_path)
+        setup_file_logging(db_path, project_dir=project_dir)
 
     return logging.getLogger(__name__)
 
 
 def run_consolidation(args, logger):
     """Run consolidation with file locking."""
-    lock_path = get_consolidation_lock_path(args.db)
+    remind_dir = Path(args.remind_dir) if args.remind_dir else None
+    project_dir = remind_dir.parent if remind_dir is not None else None
+    lock_path = get_consolidation_lock_path(args.db, remind_dir=remind_dir)
     lock = FileLock(str(lock_path), timeout=0)
 
     try:
@@ -78,6 +100,7 @@ def run_consolidation(args, logger):
             embedding_provider=args.embedding,
             db_url=args.db,
             ingest_background=False,
+            project_dir=project_dir,
         )
 
         async def _consolidate():
@@ -119,6 +142,9 @@ def run_ingest(args, logger):
         except Exception:
             pass
 
+    remind_dir = Path(args.remind_dir) if args.remind_dir else None
+    project_dir = remind_dir.parent if remind_dir is not None else None
+
     logger.info(f"Starting background ingest for {args.db} ({len(chunk)} chars, source={source})")
 
     try:
@@ -129,6 +155,7 @@ def run_ingest(args, logger):
             embedding_provider=args.embedding,
             db_url=args.db,
             ingest_background=False,
+            project_dir=project_dir,
         )
 
         async def _ingest():
@@ -175,7 +202,9 @@ def _next_queued_chunk(queue_dir: Path) -> tuple[Path, str, str] | None:
 
 def run_ingest_worker(args, logger):
     """Drain the ingest queue one chunk at a time under a file lock."""
-    lock_path = get_ingest_lock_path(args.db)
+    remind_dir = Path(args.remind_dir) if args.remind_dir else None
+    project_dir = remind_dir.parent if remind_dir is not None else None
+    lock_path = get_ingest_lock_path(args.db, remind_dir=remind_dir)
     lock = FileLock(str(lock_path), timeout=0)
 
     try:
@@ -194,9 +223,10 @@ def run_ingest_worker(args, logger):
             embedding_provider=args.embedding,
             db_url=args.db,
             ingest_background=False,
+            project_dir=project_dir,
         )
 
-        queue_dir = get_ingest_queue_dir(args.db)
+        queue_dir = get_ingest_queue_dir(args.db, remind_dir=remind_dir)
 
         async def _drain_queue():
             total_episodes = 0
@@ -248,11 +278,13 @@ def main():
     parser.add_argument("--db", required=True, help="Database URL or path")
     parser.add_argument("--llm", required=True, help="LLM provider")
     parser.add_argument("--embedding", required=True, help="Embedding provider")
+    parser.add_argument("--remind-dir", help="Project-local .remind directory for logs/locks/queue")
     parser.add_argument("--ingest-worker", action="store_true", help="Run as queue-draining ingest worker")
     parser.add_argument("--ingest-chunk-file", help="(Legacy) Path to temp JSON file with chunk to ingest")
     args = parser.parse_args()
 
-    logger = setup_logging(args.db)
+    remind_dir = Path(args.remind_dir) if args.remind_dir else None
+    logger = setup_logging(args.db, remind_dir=remind_dir)
 
     if args.ingest_worker:
         run_ingest_worker(args, logger)

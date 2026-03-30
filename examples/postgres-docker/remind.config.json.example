@@ -1,6 +1,7 @@
 {
   "llm_provider": "openai",
   "embedding_provider": "openai",
+  "db_url": "postgresql+psycopg://remind:remind@localhost:5432/remind-postgres-example",
   "openai": {
     "api_key": "sk-...",
     "model": "gpt-4.1",

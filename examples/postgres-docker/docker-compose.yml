@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_USER: remind
       POSTGRES_PASSWORD: remind
-      POSTGRES_DB: remind
+      POSTGRES_DB: remind-postgres-example
     ports:
       - "5432:5432"
     volumes:

@@ -1275,7 +1275,7 @@ def create_memory(
             db_url = resolve_db_url(db_path)
 
     if config.logging_enabled:
-        setup_file_logging(db_url)
+        setup_file_logging(db_url, project_dir=project_dir)
 
     # Use config values if not explicitly provided
     llm_provider = llm_provider or config.llm_provider

@@ -1405,20 +1405,21 @@ class SQLAlchemyMemoryStore(MemoryStore):
             return []
         exclude = exclude_episode_ids or set()
         with self._connect() as conn:
-            stmt = (
+            count_subq = (
                 select(
-                    episodes_table.c.data,
+                    mentions_table.c.episode_id.label("id"),
                     func.count(func.distinct(mentions_table.c.entity_id)).label("overlap_count"),
                 )
-                .select_from(
-                    episodes_table.join(
-                        mentions_table,
-                        episodes_table.c.id == mentions_table.c.episode_id,
-                    )
-                )
                 .where(mentions_table.c.entity_id.in_(entity_ids))
-                .group_by(episodes_table.c.id, episodes_table.c.data)
-                .order_by(text("overlap_count DESC"), episodes_table.c.timestamp.desc())
+                .group_by(mentions_table.c.episode_id)
+                .subquery()
+            )
+            stmt = (
+                select(episodes_table.c.data, count_subq.c.overlap_count)
+                .select_from(
+                    episodes_table.join(count_subq, episodes_table.c.id == count_subq.c.id)
+                )
+                .order_by(count_subq.c.overlap_count.desc(), episodes_table.c.timestamp.desc())
                 .limit(limit + len(exclude))
             )
             rows = conn.execute(stmt).fetchall()
@@ -1459,9 +1460,9 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def get_entity_mention_counts(self) -> list[tuple[Entity, int]]:
         with self._connect() as conn:
-            stmt = (
+            count_subq = (
                 select(
-                    entities_table.c.data,
+                    entities_table.c.id,
                     func.count(mentions_table.c.episode_id).label("mention_count"),
                 )
                 .select_from(
@@ -1470,8 +1471,15 @@ class SQLAlchemyMemoryStore(MemoryStore):
                         entities_table.c.id == mentions_table.c.entity_id,
                     )
                 )
-                .group_by(entities_table.c.id, entities_table.c.data)
-                .order_by(text("mention_count DESC"), entities_table.c.type)
+                .group_by(entities_table.c.id)
+                .subquery()
+            )
+            stmt = (
+                select(entities_table.c.data, count_subq.c.mention_count)
+                .select_from(
+                    entities_table.join(count_subq, entities_table.c.id == count_subq.c.id)
+                )
+                .order_by(count_subq.c.mention_count.desc(), entities_table.c.type)
             )
             rows = conn.execute(stmt).fetchall()
             return [

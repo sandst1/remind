@@ -45,13 +45,14 @@ def _read_skill(name: str) -> str:
     return ref.read_text(encoding="utf-8")
 
 
-def get_memory(db_path: str, llm: str, embedding: str):
+def get_memory(db_path: str, llm: str, embedding: str, project_dir: Optional[Path] = None):
     """Create a MemoryInterface with the given settings."""
     from remind.interface import create_memory
     return create_memory(
         llm_provider=llm,
         embedding_provider=embedding,
         db_url=db_path,
+        project_dir=project_dir or Path.cwd(),
     )
 
 
@@ -84,13 +85,27 @@ def main(ctx, db: str, llm: str, embedding: str):
     else:
         db_url = resolve_db_url(None, project_aware=True)
 
+    # Determine the directory for locks/logs/queues used by background workers.
+    # - SQLite: use the directory containing the .db file (co-located with the db)
+    # - Remote DB (postgres, mysql, …): use <cwd>/.remind (project-local)
+    # - Anything else: None → falls back to ~/.remind
+    project_remind_dir: Optional[Path]
+    if db_url.startswith("sqlite:///"):
+        db_file = Path(db_url[len("sqlite:///"):])
+        project_remind_dir = db_file.parent
+    elif "://" in db_url:
+        project_remind_dir = Path.cwd() / ".remind"
+    else:
+        project_remind_dir = None
+
     if config.logging_enabled:
-        setup_file_logging(db_url)
+        setup_file_logging(db_url, project_dir=Path.cwd())
 
     ctx.ensure_object(dict)
     ctx.obj["db"] = db_url
     ctx.obj["llm"] = llm
     ctx.obj["embedding"] = embedding
+    ctx.obj["remind_dir"] = project_remind_dir
 
 
 @main.command()
@@ -153,6 +168,7 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
             db_url=ctx.obj["db"],
             llm_provider=ctx.obj["llm"],
             embedding_provider=ctx.obj["embedding"],
+            remind_dir=ctx.obj.get("remind_dir"),
         ):
             console.print(f"[dim]→ Background consolidation started ({unconsolidated} episodes)[/dim]")
         else:
@@ -325,13 +341,13 @@ def consolidate(ctx, force: bool, background: bool):
         llm = ctx.obj["llm"]
         embedding = ctx.obj["embedding"]
 
-        if spawn_background_consolidation(db_path, llm, embedding):
+        if spawn_background_consolidation(db_path, llm, embedding, remind_dir=ctx.obj.get("remind_dir")):
             console.print(f"[green]✓ Background consolidation started ({unconsolidated} episodes)[/green]")
         else:
             console.print("[yellow]Consolidation already running[/yellow]")
         return
 
-    lock_path = get_consolidation_lock_path(db_path)
+    lock_path = get_consolidation_lock_path(db_path, remind_dir=ctx.obj.get("remind_dir"))
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock = FileLock(str(lock_path), timeout=0)
 
@@ -494,14 +510,15 @@ def end_session(ctx):
     db_path = ctx.obj["db"]
     llm = ctx.obj["llm"]
     embedding = ctx.obj["embedding"]
+    remind_dir = ctx.obj.get("remind_dir")
 
     # Ensure any queued ingest chunks are being processed
-    queue_dir = get_ingest_queue_dir(db_path)
+    queue_dir = get_ingest_queue_dir(db_path, remind_dir=remind_dir)
     if queue_dir.is_dir() and any(queue_dir.glob("*.json")):
-        if spawn_ingest_worker(db_path, llm, embedding):
+        if spawn_ingest_worker(db_path, llm, embedding, remind_dir=remind_dir):
             console.print("[dim]Started ingest worker for queued chunks.[/dim]")
 
-    if spawn_background_consolidation(db_path, llm, embedding):
+    if spawn_background_consolidation(db_path, llm, embedding, remind_dir=remind_dir):
         console.print(f"[green]✓ Session ended — consolidating {pending} episodes in background[/green]")
     else:
         console.print(f"[yellow]Consolidation already running ({pending} episodes pending)[/yellow]")
@@ -560,11 +577,13 @@ def ingest(ctx, content: Optional[str], source: str, foreground: bool):
             db_url=ctx.obj["db"],
             chunk=content,
             source=source,
+            remind_dir=ctx.obj.get("remind_dir"),
         )
         spawned = spawn_ingest_worker(
             db_url=ctx.obj["db"],
             llm_provider=ctx.obj["llm"],
             embedding_provider=ctx.obj["embedding"],
+            remind_dir=ctx.obj.get("remind_dir"),
         )
         console.print(f"[green]✓[/green] Ingest queued ({len(content)} chars)")
         if spawned:
@@ -813,15 +832,16 @@ def status(ctx):
     stats_data = memory.get_stats()
 
     # Consolidation status
-    consolidating = is_consolidation_running(db_path)
+    remind_dir = ctx.obj.get("remind_dir")
+    consolidating = is_consolidation_running(db_path, remind_dir=remind_dir)
     pending = stats_data.get("unconsolidated_episodes", 0)
     unextracted = stats_data.get("unextracted_episodes", 0)
     threshold = stats_data.get("consolidation_threshold", 10)
     last = stats_data.get("last_consolidation") or "never"
 
     # Ingest status
-    ingesting = is_ingest_running(db_path)
-    queue_dir = get_ingest_queue_dir(db_path)
+    ingesting = is_ingest_running(db_path, remind_dir=remind_dir)
+    queue_dir = get_ingest_queue_dir(db_path, remind_dir=remind_dir)
     queued_chunks = sorted(queue_dir.glob("*.json")) if queue_dir.is_dir() else []
     queued_count = len(queued_chunks)
 

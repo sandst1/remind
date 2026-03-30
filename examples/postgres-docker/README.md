@@ -26,15 +26,21 @@ Wait for the health check to pass:
 docker compose ps
 ```
 
-### 2. Configure environment
+### 2. Configure Remind
+
+Copy the example config to either the global or project-local location:
 
 ```bash
-cp .env.example .env
-# Edit .env — fill in your API keys and adjust any settings
-source .env   # or use direnv, dotenv, etc.
+# Global (applies to all projects)
+mkdir -p ~/.remind
+cp remind.config.json.example ~/.remind/remind.config.json
+
+# Project-local (only this directory, takes precedence over global)
+mkdir -p .remind
+cp remind.config.json.example .remind/remind.config.json
 ```
 
-> **Note:** Remind reads environment variables only — it does not load `.env` files automatically.
+Edit the file and fill in your API keys.
 
 ### 3. Use Remind normally
 
@@ -57,7 +63,7 @@ remind consolidate
 ### 4. Inspect the database directly
 
 ```bash
-docker compose exec postgres psql -U remind remind
+docker compose exec postgres psql -U remind remind-postgres-example
 ```
 
 ```sql
@@ -75,25 +81,17 @@ docker compose down -v    # stop containers AND delete data
 
 ## Alternative ways to pass the database URL
 
-**Environment variable** (recommended for production):
-
-```bash
-export REMIND_DB_URL="postgresql+psycopg://remind:remind@localhost:5432/remind"
-remind remember "something"
-```
-
 **CLI flag** (ad-hoc usage):
 
 ```bash
-remind --db "postgresql+psycopg://remind:remind@localhost:5432/remind" remember "something"
+remind --db "postgresql+psycopg://remind:remind@localhost:5432/remind-postgres-example" remember "something"
 ```
 
-**Config file** (`~/.remind/remind.config.json`):
+**Environment variable**:
 
-```json
-{
-  "db_url": "postgresql+psycopg://remind:remind@localhost:5432/remind"
-}
+```bash
+export REMIND_DB_URL="postgresql+psycopg://remind:remind@localhost:5432/remind-postgres-example"
+remind remember "something"
 ```
 
 ## Connection string format
