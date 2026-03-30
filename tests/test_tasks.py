@@ -37,17 +37,23 @@ class TestNewEpisodeTypes:
             ep = Episode(content="test", episode_type=ep_type)
             d = ep.to_dict()
             restored = Episode.from_dict(d)
-            assert restored.episode_type == ep_type
+            assert restored.episode_type == ep_type.value
 
     def test_backwards_compat_unknown_type(self):
-        """Unknown episode types should fall back to OBSERVATION."""
+        """Unknown episode types are preserved as-is (custom types are valid)."""
         d = {
             "id": "test",
             "content": "test",
-            "episode_type": "unknown_future_type",
+            "episode_type": "custom_type",
         }
         ep = Episode.from_dict(d)
-        assert ep.episode_type == EpisodeType.OBSERVATION
+        assert ep.episode_type == "custom_type"
+
+    def test_missing_type_defaults_to_observation(self):
+        """Missing episode_type should default to observation."""
+        d = {"id": "test", "content": "test"}
+        ep = Episode.from_dict(d)
+        assert ep.episode_type == "observation"
 
 
 class TestMemoryInterfaceTasks:
@@ -70,7 +76,7 @@ class TestMemoryInterfaceTasks:
             entities=["module:auth"],
         )
         episode = memory.store.get_episode(ep_id)
-        assert episode.episode_type == EpisodeType.SPEC
+        assert episode.episode_type == "spec"
 
     @pytest.mark.asyncio
     async def test_remember_plan(self, memory):
@@ -80,7 +86,7 @@ class TestMemoryInterfaceTasks:
             entities=["module:auth"],
         )
         episode = memory.store.get_episode(ep_id)
-        assert episode.episode_type == EpisodeType.PLAN
+        assert episode.episode_type == "plan"
 
     @pytest.mark.asyncio
     async def test_remember_task(self, memory):
@@ -91,7 +97,7 @@ class TestMemoryInterfaceTasks:
             entities=["module:auth"],
         )
         episode = memory.store.get_episode(ep_id)
-        assert episode.episode_type == EpisodeType.TASK
+        assert episode.episode_type == "task"
         assert episode.metadata["status"] == "todo"
         assert episode.metadata["priority"] == "p0"
 
@@ -114,7 +120,7 @@ class TestMemoryInterfaceTasks:
         )
         tasks = memory.get_tasks()
         assert len(tasks) == 1
-        assert tasks[0].episode_type == EpisodeType.TASK
+        assert tasks[0].episode_type == "task"
 
     @pytest.mark.asyncio
     async def test_get_tasks_filter_by_status(self, memory):

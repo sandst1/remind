@@ -12,7 +12,7 @@ from typing import Optional
 import logging
 import math
 
-from remind.models import Concept, Episode, Entity, EpisodeType, RelationType
+from remind.models import Concept, Episode, Entity, RelationType
 from remind.store import MemoryStore
 from remind.providers.base import EmbeddingProvider
 
@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 # Metadata keys to suppress in recall output (internal bookkeeping)
 _HIDDEN_METADATA_KEYS = {"source", "triage_density"}
+
+# Default weight for custom episode types not in the built-in map
+_DEFAULT_EPISODE_TYPE_WEIGHT = 0.6
 
 
 def _format_episode_line(ep: "Episode", prefix: str = "    • ") -> str:
@@ -34,21 +37,21 @@ def _format_episode_line(ep: "Episode", prefix: str = "    • ") -> str:
         meta_parts.append(f"{k}={v}")
 
     meta_str = f" ({', '.join(meta_parts)})" if meta_parts else ""
-    return f"{prefix}[{ep.episode_type.value}, {date}]{meta_str} {ep.content}"
+    return f"{prefix}[{ep.episode_type}, {date}]{meta_str} {ep.content}"
 
 
 # Episode type weights for scoring -- higher value = more signal
-_EPISODE_TYPE_WEIGHTS: dict[EpisodeType, float] = {
-    EpisodeType.FACT: 1.0,
-    EpisodeType.DECISION: 0.95,
-    EpisodeType.PREFERENCE: 0.85,
-    EpisodeType.OUTCOME: 0.8,
-    EpisodeType.SPEC: 0.8,
-    EpisodeType.OBSERVATION: 0.6,
-    EpisodeType.QUESTION: 0.5,
-    EpisodeType.PLAN: 0.5,
-    EpisodeType.TASK: 0.4,
-    EpisodeType.META: 0.3,
+_EPISODE_TYPE_WEIGHTS: dict[str, float] = {
+    "fact": 1.0,
+    "decision": 0.95,
+    "preference": 0.85,
+    "outcome": 0.8,
+    "spec": 0.8,
+    "observation": 0.6,
+    "question": 0.5,
+    "plan": 0.5,
+    "task": 0.4,
+    "meta": 0.3,
 }
 
 
@@ -73,7 +76,7 @@ class ScoredEpisode:
     score: float  # 0.0 - 1.0 composite relevance score
 
     def __repr__(self) -> str:
-        return f"ScoredEpisode({self.episode.id}, score={self.score:.3f}, type={self.episode.episode_type.value})"
+        return f"ScoredEpisode({self.episode.id}, score={self.score:.3f}, type={self.episode.episode_type})"
 
 
 class MemoryRetriever:
@@ -512,7 +515,7 @@ class MemoryRetriever:
         unconsolidated_bonus = 1.0 if not episode.consolidated else 0.0
 
         # Episode type weight
-        type_weight = _EPISODE_TYPE_WEIGHTS.get(episode.episode_type, 0.5)
+        type_weight = _EPISODE_TYPE_WEIGHTS.get(episode.episode_type, _DEFAULT_EPISODE_TYPE_WEIGHT)
 
         # Recency (1.0 for today, decays to 0.3 over 90 days)
         age = now - episode.timestamp
@@ -765,7 +768,7 @@ class MemoryRetriever:
                 lines.append(f"[{entity.id}] {entity.display_name}")
                 by_type: dict[str, list[Episode]] = {}
                 for ep in episodes:
-                    by_type.setdefault(ep.episode_type.value, []).append(ep)
+                    by_type.setdefault(ep.episode_type, []).append(ep)
                 type_order = [
                     "fact", "decision", "question", "preference",
                     "observation", "outcome", "meta",
@@ -811,8 +814,7 @@ class MemoryRetriever:
             # Group by episode type
             by_type: dict[str, list[Episode]] = {}
             for ep in episodes:
-                type_name = ep.episode_type.value
-                by_type.setdefault(type_name, []).append(ep)
+                by_type.setdefault(ep.episode_type, []).append(ep)
             
             type_order = ["fact", "decision", "question", "preference", "observation", "meta"]
             for type_name in type_order:

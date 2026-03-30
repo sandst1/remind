@@ -273,7 +273,7 @@ class Consolidator:
         active_tasks = []
         consolidatable = []
         for ep in episodes:
-            if ep.episode_type == EpisodeType.TASK:
+            if ep.episode_type == EpisodeType.TASK.value:
                 task_status = (ep.metadata or {}).get("status", "todo")
                 if task_status != "done":
                     active_tasks.append(ep)
@@ -590,7 +590,7 @@ class Consolidator:
             timestamp = ep.timestamp.strftime("%Y-%m-%d %H:%M")
             # Include type and confidence in header
             conf_str = f", conf={ep.confidence:.1f}" if ep.confidence < 1.0 else ""
-            header = f"[{ep.id}] ({timestamp}, type={ep.episode_type.value}{conf_str})"
+            header = f"[{ep.id}] ({timestamp}, type={ep.episode_type}{conf_str})"
 
             # Include entities if present
             if ep.entity_ids:

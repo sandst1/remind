@@ -165,6 +165,51 @@ class TestEpisode:
         assert restored.metadata == episode.metadata
 
 
+class TestEpisodeTypeAsString:
+    """Tests for configurable episode types (episode_type is now a str)."""
+
+    def test_default_episode_type_is_observation_string(self):
+        ep = Episode(content="test")
+        assert ep.episode_type == "observation"
+        assert isinstance(ep.episode_type, str)
+
+    def test_enum_value_auto_converts_to_string(self):
+        ep = Episode(content="test", episode_type=EpisodeType.DECISION)
+        assert ep.episode_type == "decision"
+        assert isinstance(ep.episode_type, str)
+
+    def test_custom_type_preserved(self):
+        ep = Episode(content="test", episode_type="review")
+        assert ep.episode_type == "review"
+
+    def test_custom_type_roundtrip(self):
+        ep = Episode(content="test", episode_type="incident_report")
+        d = ep.to_dict()
+        assert d["episode_type"] == "incident_report"
+        restored = Episode.from_dict(d)
+        assert restored.episode_type == "incident_report"
+
+    def test_missing_type_defaults_to_observation(self):
+        d = {"id": "x", "content": "test"}
+        ep = Episode.from_dict(d)
+        assert ep.episode_type == "observation"
+
+    def test_empty_type_defaults_to_observation(self):
+        d = {"id": "x", "content": "test", "episode_type": ""}
+        ep = Episode.from_dict(d)
+        assert ep.episode_type == "observation"
+
+    def test_extraction_result_custom_type(self):
+        data = {"type": "bug_report", "entities": []}
+        result = ExtractionResult.from_dict(data)
+        assert result.episode_type == "bug_report"
+
+    def test_extraction_result_missing_type_defaults(self):
+        data = {"entities": []}
+        result = ExtractionResult.from_dict(data)
+        assert result.episode_type == "observation"
+
+
 class TestConsolidationResult:
     def test_creation_with_defaults(self):
         result = ConsolidationResult()

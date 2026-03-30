@@ -95,6 +95,8 @@ class MemoryInterface:
         ingest_min_density: float = 0.4,
         triage_llm: Optional[LLMProvider] = None,
         ingest_background: bool = True,
+        # Configurable episode types
+        episode_types: Optional[list[str]] = None,
     ):
         self.llm = llm
         self.embedding = embedding
@@ -117,6 +119,7 @@ class MemoryInterface:
         self.extractor = EntityExtractor(
             llm=llm,
             store=self.store,
+            valid_types=episode_types,
         )
         
         # Auto-ingest components
@@ -124,6 +127,7 @@ class MemoryInterface:
         self._triager = IngestionTriager(
             llm=triage_llm or llm,
             min_density=ingest_min_density,
+            valid_types=episode_types,
         )
         self._ingest_background = ingest_background
         self._background_tasks: set[asyncio.Task] = set()
@@ -175,7 +179,7 @@ class MemoryInterface:
         self,
         content: str,
         metadata: Optional[dict] = None,
-        episode_type: Optional[EpisodeType] = None,
+        episode_type: Optional[str] = None,
         entities: Optional[list[str]] = None,
         confidence: float = 1.0,
         embed: bool = True,
@@ -210,7 +214,7 @@ class MemoryInterface:
         
         # Apply explicit type/entities if provided
         if episode_type:
-            episode.episode_type = episode_type
+            episode.episode_type = episode_type.value if isinstance(episode_type, EpisodeType) else str(episode_type)
         
         if entities:
             episode.entities_extracted = True
@@ -277,7 +281,8 @@ class MemoryInterface:
                 confidence=max(0.0, min(1.0, item.get("confidence", 1.0))),
             )
             if item.get("episode_type"):
-                episode.episode_type = item["episode_type"]
+                et = item["episode_type"]
+                episode.episode_type = et.value if isinstance(et, EpisodeType) else str(et)
             if item.get("entities"):
                 episode.entities_extracted = True
             episodes.append(episode)
@@ -668,12 +673,6 @@ class MemoryInterface:
 
         episode_ids: list[str] = []
         for ep in triage_result.episodes:
-            ep_type = None
-            try:
-                ep_type = EpisodeType(ep.episode_type)
-            except ValueError:
-                ep_type = EpisodeType.OBSERVATION
-
             metadata = ep.metadata.copy() if ep.metadata else {}
             metadata["source"] = source
             metadata["triage_density"] = triage_result.density
@@ -681,7 +680,7 @@ class MemoryInterface:
             episode_id = await self.remember(
                 content=ep.content,
                 metadata=metadata,
-                episode_type=ep_type,
+                episode_type=ep.episode_type or "observation",
                 entities=ep.entities if ep.entities else None,
             )
             episode_ids.append(episode_id)
@@ -794,7 +793,7 @@ class MemoryInterface:
         """Get recent episodes."""
         return self.store.get_recent_episodes(limit=limit)
     
-    def get_episodes_by_type(self, episode_type: EpisodeType, limit: int = 50) -> list[Episode]:
+    def get_episodes_by_type(self, episode_type: str, limit: int = 50) -> list[Episode]:
         """Get episodes of a specific type (decision, question, meta, etc.)."""
         return self.store.get_episodes_by_type(episode_type, limit=limit)
 
@@ -804,7 +803,7 @@ class MemoryInterface:
         self,
         episode_id: str,
         content: Optional[str] = None,
-        episode_type: Optional[EpisodeType] = None,
+        episode_type: Optional[str] = None,
         entities: Optional[list[str]] = None,
         metadata: Optional[dict] = None,
     ) -> Optional[Episode]:
@@ -841,7 +840,7 @@ class MemoryInterface:
             episode.entity_ids = [] if entities is None else entities
 
         if episode_type is not None:
-            episode.episode_type = episode_type
+            episode.episode_type = episode_type.value if isinstance(episode_type, EpisodeType) else str(episode_type)
 
         if entities is not None:
             episode.entities_extracted = True
@@ -1062,7 +1061,7 @@ class MemoryInterface:
             plan_id: Filter by originating plan episode ID
             limit: Maximum number of tasks to return
         """
-        all_tasks = self.store.get_episodes_by_type(EpisodeType.TASK, limit=1000)
+        all_tasks = self.store.get_episodes_by_type(EpisodeType.TASK.value, limit=1000)
         normalized_entity = self._normalize_entity_id(entity_id) if entity_id else None
 
         filtered = []
@@ -1103,7 +1102,7 @@ class MemoryInterface:
             Updated Episode, or None if not found or invalid
         """
         episode = self.store.get_episode(task_id)
-        if not episode or episode.episode_type != EpisodeType.TASK:
+        if not episode or episode.episode_type != EpisodeType.TASK.value:
             return None
 
         try:
@@ -1266,6 +1265,8 @@ def create_memory(
         kwargs["ingest_buffer_size"] = config.ingest_buffer_size
     if "ingest_min_density" not in kwargs:
         kwargs["ingest_min_density"] = config.ingest_min_density
+    if "episode_types" not in kwargs:
+        kwargs["episode_types"] = config.episode_types
     
     # Import providers
     from remind.providers import (

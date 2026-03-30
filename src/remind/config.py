@@ -16,6 +16,12 @@ import json
 import os
 import logging
 
+# Built-in episode types (always valid, used as defaults)
+DEFAULT_EPISODE_TYPES = [
+    "observation", "decision", "question", "meta", "preference",
+    "spec", "plan", "task", "outcome", "fact",
+]
+
 logger = logging.getLogger(__name__)
 
 # Global paths
@@ -103,6 +109,9 @@ class RemindConfig:
     ingest_buffer_size: int = 4000
     ingest_min_density: float = 0.4
 
+    # Episode types
+    episode_types: list[str] = field(default_factory=lambda: list(DEFAULT_EPISODE_TYPES))
+
     # Logging
     logging_enabled: bool = False
 
@@ -162,6 +171,12 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         config.ingest_buffer_size = int(file_config["ingest_buffer_size"])
     if "ingest_min_density" in file_config:
         config.ingest_min_density = float(file_config["ingest_min_density"])
+
+    # Episode types
+    if "episode_types" in file_config:
+        raw = file_config["episode_types"]
+        if isinstance(raw, list):
+            config.episode_types = [str(t).strip().lower() for t in raw if str(t).strip()]
 
     # Logging
     if "logging_enabled" in file_config:
@@ -307,6 +322,12 @@ def _apply_env_vars(config: RemindConfig) -> None:
             config.decay.decay_rate = float(decay_rate)
         except ValueError:
             logger.warning(f"Invalid REMIND_DECAY_RATE: {decay_rate}")
+
+    # Episode types
+    if episode_types := os.environ.get("REMIND_EPISODE_TYPES"):
+        parsed = [t.strip().lower() for t in episode_types.split(",") if t.strip()]
+        if parsed:
+            config.episode_types = parsed
 
     # Logging
     if logging_enabled := os.environ.get("REMIND_LOGGING_ENABLED"):

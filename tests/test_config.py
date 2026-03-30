@@ -27,6 +27,8 @@ from remind.config import (
 
 
 # All env vars the config system reads, used to ensure clean test isolation
+from remind.config import DEFAULT_EPISODE_TYPES
+
 _ALL_CONFIG_ENV_VARS = [
     "LLM_PROVIDER",
     "EMBEDDING_PROVIDER",
@@ -57,6 +59,7 @@ _ALL_CONFIG_ENV_VARS = [
     "REMIND_DECAY_INTERVAL",
     "REMIND_DECAY_RATE",
     "REMIND_LOGGING_ENABLED",
+    "REMIND_EPISODE_TYPES",
 ]
 
 
@@ -125,6 +128,13 @@ class TestDefaults:
         assert c.enabled is True
         assert c.decay_interval == 20
         assert c.decay_rate == 0.1
+
+    def test_episode_types_defaults(self):
+        config = RemindConfig()
+        assert config.episode_types == DEFAULT_EPISODE_TYPES
+        assert "observation" in config.episode_types
+        assert "task" in config.episode_types
+        assert "fact" in config.episode_types
 
     def test_load_config_returns_defaults_when_no_files_or_env(self):
         with patch("remind.config.CONFIG_FILE", Path("/nonexistent/path/config.json")):
@@ -252,6 +262,25 @@ class TestApplyFileConfig:
         assert config.decay.decay_interval == 20
         assert config.decay.decay_rate == 0.2
 
+    def test_applies_episode_types(self):
+        config = RemindConfig()
+        _apply_file_config(config, {
+            "episode_types": ["observation", "decision", "custom_type"]
+        })
+        assert config.episode_types == ["observation", "decision", "custom_type"]
+
+    def test_episode_types_normalizes_case(self):
+        config = RemindConfig()
+        _apply_file_config(config, {
+            "episode_types": ["OBSERVATION", "Custom_Type", "  fact  "]
+        })
+        assert config.episode_types == ["observation", "custom_type", "fact"]
+
+    def test_episode_types_not_set_preserves_defaults(self):
+        config = RemindConfig()
+        _apply_file_config(config, {"llm_provider": "openai"})
+        assert config.episode_types == DEFAULT_EPISODE_TYPES
+
     def test_provider_overlay_preserves_unset_fields(self):
         """Setting one provider field shouldn't clobber others."""
         config = RemindConfig()
@@ -364,6 +393,20 @@ class TestEnvVarOverrides:
     def test_logging_enabled(self):
         c = self._config_with_env(REMIND_LOGGING_ENABLED="true")
         assert c.logging_enabled is True
+
+    # -- Episode types --
+
+    def test_episode_types_from_env(self):
+        c = self._config_with_env(REMIND_EPISODE_TYPES="observation,decision,custom")
+        assert c.episode_types == ["observation", "decision", "custom"]
+
+    def test_episode_types_env_trims_whitespace(self):
+        c = self._config_with_env(REMIND_EPISODE_TYPES=" fact , custom_type ,  decision ")
+        assert c.episode_types == ["fact", "custom_type", "decision"]
+
+    def test_episode_types_env_empty_preserves_defaults(self):
+        c = self._config_with_env(REMIND_EPISODE_TYPES="")
+        assert c.episode_types == DEFAULT_EPISODE_TYPES
 
     # -- Anthropic --
 

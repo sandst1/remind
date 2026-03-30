@@ -108,13 +108,7 @@ async def tool_remember(
     
     meta = json.loads(metadata) if metadata else None
     
-    # Parse episode type if provided
-    ep_type = None
-    if episode_type:
-        try:
-            ep_type = EpisodeType(episode_type)
-        except ValueError:
-            return f"Invalid episode_type: {episode_type}. Valid: observation, decision, question, meta, preference, spec, plan, task"
+    ep_type = episode_type or None
     
     # Parse entities if provided (comma-separated)
     entity_list = None
@@ -228,7 +222,7 @@ async def tool_inspect(
         for ep in episodes:
             status = "✓" if ep.consolidated else "pending"
             timestamp = ep.timestamp.strftime('%Y-%m-%d %H:%M:%S')
-            ep_type = ep.episode_type.value
+            ep_type = ep.episode_type
             lines.append(f"  [{ep.id}] {timestamp} ({ep_type}, {status})")
             lines.append(f"      {ep.content}")
             if ep.entity_ids:
@@ -448,13 +442,7 @@ async def tool_update_episode(
 
     memory = await get_memory()
 
-    # Parse episode type
-    ep_type = None
-    if episode_type:
-        try:
-            ep_type = EpisodeType(episode_type)
-        except ValueError:
-            return f"Invalid episode_type: {episode_type}. Valid types: observation, decision, question, meta, preference, spec, plan, task"
+    ep_type = episode_type or None
 
     # Parse entities
     entity_list = None
@@ -625,7 +613,7 @@ async def tool_task_add(
     episode_id = await memory.remember(
         content,
         metadata=meta,
-        episode_type=EpisodeType.TASK,
+        episode_type=EpisodeType.TASK.value,
         entities=entity_list,
     )
 
@@ -704,7 +692,7 @@ async def tool_list_specs(
     from remind.models import EpisodeType
 
     memory = await get_memory()
-    episodes = memory.get_episodes_by_type(EpisodeType.SPEC, limit=1000)
+    episodes = memory.get_episodes_by_type(EpisodeType.SPEC.value, limit=1000)
 
     if entity:
         episodes = [ep for ep in episodes if entity in ep.entity_ids]
@@ -736,7 +724,7 @@ async def tool_list_plans(
     from remind.models import EpisodeType
 
     memory = await get_memory()
-    episodes = memory.get_episodes_by_type(EpisodeType.PLAN, limit=1000)
+    episodes = memory.get_episodes_by_type(EpisodeType.PLAN.value, limit=1000)
 
     if entity:
         episodes = [ep for ep in episodes if entity in ep.entity_ids]
@@ -886,8 +874,8 @@ def create_mcp_server():
         Args:
             content: The experience/observation to remember (clear, standalone statement)
             metadata: Optional JSON string with additional metadata
-            episode_type: Optional explicit type: observation, decision, question, meta, preference, spec, plan, task
-                          (auto-detected during consolidation if not provided)
+            episode_type: Optional explicit type (e.g., observation, decision, question, meta, preference, spec, plan, task, outcome, fact).
+                          Custom types are also accepted if configured. Auto-detected during consolidation if not provided.
             entities: Optional comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
                       (auto-detected during consolidation if not provided)
         
@@ -1067,7 +1055,7 @@ def create_mcp_server():
         Args:
             episode_id: ID of the episode to update (required)
             content: New content text
-            episode_type: New type: observation, decision, question, meta, preference, spec, plan, task
+            episode_type: New type (e.g., observation, decision, question, meta, preference, spec, plan, task, outcome, fact, or any configured custom type)
             entities: New comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
             plan_id: Plan episode ID to link this task to
             spec_ids: Comma-separated spec episode IDs to link this task to

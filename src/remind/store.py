@@ -315,7 +315,7 @@ class MemoryStore(ABC):
         ...
     
     @abstractmethod
-    def get_episodes_by_type(self, episode_type: EpisodeType, limit: int = 50) -> list[Episode]:
+    def get_episodes_by_type(self, episode_type: str, limit: int = 50) -> list[Episode]:
         """Get episodes of a specific type."""
         ...
 
@@ -1361,8 +1361,9 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
     
-    def get_episodes_by_type(self, episode_type: EpisodeType, limit: int = 50) -> list[Episode]:
+    def get_episodes_by_type(self, episode_type: str, limit: int = 50) -> list[Episode]:
         """Get episodes of a specific type (excluding soft-deleted)."""
+        type_str = episode_type.value if isinstance(episode_type, EpisodeType) else str(episode_type)
         conn = self._get_conn()
         try:
             rows = conn.execute(
@@ -1373,7 +1374,7 @@ class SQLiteMemoryStore(MemoryStore):
                 ORDER BY timestamp DESC
                 LIMIT ?
                 """,
-                (episode_type.value, limit)
+                (type_str, limit)
             ).fetchall()
 
             return [Episode.from_dict(json.loads(row["data"])) for row in rows]

@@ -63,7 +63,7 @@ class TestMemoryInterface:
         )
 
         episode = memory.store.get_episode(episode_id)
-        assert episode.episode_type == EpisodeType.DECISION
+        assert episode.episode_type == "decision"
         # Setting type manually doesn't mean entities are extracted - consolidation will still extract them
         assert episode.entities_extracted == False
 
@@ -84,7 +84,7 @@ class TestMemoryInterface:
         for ep_type in types:
             episode_id = await memory.remember(f"Test {ep_type.value}", episode_type=ep_type)
             episode = memory.store.get_episode(episode_id)
-            assert episode.episode_type == ep_type
+            assert episode.episode_type == ep_type.value
 
     @pytest.mark.asyncio
     async def test_remember_with_explicit_entities(self, memory):

@@ -131,8 +131,8 @@ async def get_concept_detail(request: Request) -> JSONResponse:
                 source_episodes_data.append({
                     "id": episode.id,
                     "title": episode.title,
-                    "content": episode.content[:150],  # Truncated preview
-                    "type": episode.episode_type.value,
+                    "content": episode.content[:150],
+                    "type": episode.episode_type,
                 })
         result["source_episodes_data"] = source_episodes_data
 
@@ -312,14 +312,7 @@ async def get_episodes(request: Request) -> JSONResponse:
 
         # Get episodes based on filters
         if episode_type:
-            try:
-                ep_type = EpisodeType(episode_type)
-                all_episodes = memory.store.get_episodes_by_type(ep_type, limit=1000)
-            except ValueError:
-                return JSONResponse(
-                    {"error": f"Invalid episode type: {episode_type}"},
-                    status_code=400,
-                )
+            all_episodes = memory.store.get_episodes_by_type(episode_type, limit=1000)
         elif start_date or end_date:
             all_episodes = memory.store.get_episodes_by_date_range(
                 start_date=start_date,
@@ -388,24 +381,13 @@ async def update_episode(request: Request) -> JSONResponse:
         entities = body.get("entities")
         metadata = body.get("metadata")
 
-        # Parse episode type
-        ep_type = None
-        if episode_type:
-            try:
-                ep_type = EpisodeType(episode_type)
-            except ValueError:
-                return JSONResponse(
-                    {"error": f"Invalid episode_type: {episode_type}"},
-                    status_code=400,
-                )
-
         if metadata is not None and not isinstance(metadata, dict):
             return JSONResponse({"error": "metadata must be an object"}, status_code=400)
 
         updated = memory.update_episode(
             episode_id,
             content=content,
-            episode_type=ep_type,
+            episode_type=episode_type or None,
             entities=entities,
             metadata=metadata,
         )
@@ -633,8 +615,8 @@ async def get_graph(request: Request) -> JSONResponse:
                     source_episodes_data.append({
                         "id": episode.id,
                         "title": episode.title,
-                        "content": episode.content[:200],  # Truncate
-                        "type": episode.episode_type.value,
+                        "content": episode.content[:200],
+                        "type": episode.episode_type,
                     })
 
             # Build relations with target summaries
@@ -989,7 +971,7 @@ async def add_task(request: Request) -> JSONResponse:
 
         episode_id = await memory.remember(
             content=content,
-            episode_type=EpisodeType.TASK,
+            episode_type=EpisodeType.TASK.value,
             entities=entities or None,
             metadata=metadata,
         )
@@ -1023,7 +1005,7 @@ async def get_specs(request: Request) -> JSONResponse:
         entity_id = request.query_params.get("entity")
         status = request.query_params.get("status")
 
-        specs = memory.store.get_episodes_by_type(EpisodeType.SPEC, limit=1000)
+        specs = memory.store.get_episodes_by_type(EpisodeType.SPEC.value, limit=1000)
 
         if entity_id:
             norm_eid = _normalize_entity_param(entity_id)
@@ -1054,7 +1036,7 @@ async def get_plans(request: Request) -> JSONResponse:
         entity_id = request.query_params.get("entity")
         status = request.query_params.get("status")
 
-        plans = memory.store.get_episodes_by_type(EpisodeType.PLAN, limit=1000)
+        plans = memory.store.get_episodes_by_type(EpisodeType.PLAN.value, limit=1000)
 
         if entity_id:
             norm_eid = _normalize_entity_param(entity_id)

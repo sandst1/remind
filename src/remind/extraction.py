@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from remind.models import (
-    Episode, Entity, EntityType, EntityRelation, EpisodeType,
+    Episode, Entity, EntityType, EntityRelation,
     ExtractionResult, normalize_entity_name,
 )
 from remind.store import MemoryStore
@@ -106,24 +106,54 @@ Only include relationships that are explicitly stated or strongly implied.
 Respond with ONLY valid JSON, no explanations."""
 
 
-EXTRACTION_PROMPT_TEMPLATE = """Classify and extract from this text:
+_BUILTIN_TYPE_DESCRIPTIONS = {
+    "observation": "noticed/learned",
+    "decision": "choice made",
+    "question": "uncertainty",
+    "meta": "about thinking",
+    "preference": "opinion/value",
+    "spec": 'prescriptive requirement ("X shall/must")',
+    "plan": 'sequenced intention ("we will do X then Y")',
+    "task": "discrete work item",
+    "outcome": "result of action/strategy (success/failure/partial)",
+    "fact": "specific factual assertion (config value, name, date, concrete technical detail)",
+}
 
-{content}
+
+def _build_extraction_prompt(valid_types: list[str]) -> str:
+    type_enum = "|".join(valid_types)
+    desc_parts = []
+    for t in valid_types:
+        if t in _BUILTIN_TYPE_DESCRIPTIONS:
+            desc_parts.append(f"{t}={_BUILTIN_TYPE_DESCRIPTIONS[t]}")
+        else:
+            desc_parts.append(t)
+    type_descriptions = ", ".join(desc_parts)
+
+    return """Classify and extract from this text:
+
+{{content}}
 
 Return JSON:
-{{
-  "type": "observation|decision|question|meta|preference|spec|plan|task|outcome|fact",
+{{{{
+  "type": "{type_enum}",
   "title": "Short descriptive title (5-10 words)",
-  "entities": [{{"type": "file|function|class|person|subject|tool|project", "id": "type:name", "name": "short name"}}],
-  "entity_relationships": [{{"source": "type:name", "target": "type:name", "relationship": "verb or description", "strength": 0.7}}]
-}}
+  "entities": [{{{{"type": "file|function|class|person|subject|tool|project", "id": "type:name", "name": "short name"}}}}],
+  "entity_relationships": [{{{{"source": "type:name", "target": "type:name", "relationship": "verb or description", "strength": 0.7}}}}]
+}}}}
 
-Types: observation=noticed/learned, decision=choice made, question=uncertainty, meta=about thinking, preference=opinion/value, spec=prescriptive requirement ("X shall/must"), plan=sequenced intention ("we will do X then Y"), task=discrete work item, outcome=result of action/strategy (success/failure/partial), fact=specific factual assertion (config value, name, date, concrete technical detail)
+Types: {type_descriptions}
 Title: Concise summary capturing the main insight, decision, or topic (e.g., "User prefers Python for backends", "Bug in auth flow identified")
-Entity examples: {{"type":"file","id":"file:auth.ts","name":"auth.ts"}}, {{"type":"person","id":"person:alice","name":"Alice"}}
-Relationship examples: {{"source":"person:alice","target":"project:backend","relationship":"maintains","strength":0.8}}, {{"source":"file:auth.ts","target":"file:utils.ts","relationship":"imports","strength":0.9}}
+Entity examples: {{{{"type":"file","id":"file:auth.ts","name":"auth.ts"}}}}, {{{{"type":"person","id":"person:alice","name":"Alice"}}}}
+Relationship examples: {{{{"source":"person:alice","target":"project:backend","relationship":"maintains","strength":0.8}}}}, {{{{"source":"file:auth.ts","target":"file:utils.ts","relationship":"imports","strength":0.9}}}}
 
-Keep entity names under 30 chars. Empty arrays if none found. Strength is 0.0-1.0 confidence."""
+Keep entity names under 30 chars. Empty arrays if none found. Strength is 0.0-1.0 confidence.""".format(
+        type_enum=type_enum,
+        type_descriptions=type_descriptions,
+    )
+
+
+EXTRACTION_PROMPT_TEMPLATE = _build_extraction_prompt(list(_BUILTIN_TYPE_DESCRIPTIONS.keys()))
 
 
 # Prompt for extracting relationships from episodes that already have entities extracted
@@ -156,9 +186,14 @@ class EntityExtractor:
         self,
         llm: LLMProvider,
         store: MemoryStore,
+        valid_types: Optional[list[str]] = None,
     ):
         self.llm = llm
         self.store = store
+        if valid_types:
+            self._prompt_template = _build_extraction_prompt(valid_types)
+        else:
+            self._prompt_template = EXTRACTION_PROMPT_TEMPLATE
     
     async def extract(self, content: str, episode_id: Optional[str] = None) -> ExtractionResult:
         """
@@ -175,7 +210,7 @@ class EntityExtractor:
         if len(content) > MAX_CONTENT_LENGTH:
             content = content[:MAX_CONTENT_LENGTH] + "...[truncated]"
 
-        prompt = EXTRACTION_PROMPT_TEMPLATE.format(content=content)
+        prompt = self._prompt_template.format(content=content)
 
         logger.debug(
             "Extraction LLM request:\n"
@@ -216,12 +251,11 @@ class EntityExtractor:
                 pass
 
             logger.warning(f"Extraction failed (JSON): {e}")
-            return ExtractionResult(episode_type=EpisodeType.OBSERVATION, entities=[])
+            return ExtractionResult(episode_type="observation", entities=[])
 
         except Exception as e:
             logger.warning(f"Extraction failed: {e}")
-            # Return defaults on failure
-            return ExtractionResult(episode_type=EpisodeType.OBSERVATION, entities=[])
+            return ExtractionResult(episode_type="observation", entities=[])
     
     async def extract_and_store(self, episode: Episode) -> ExtractionResult:
         """
@@ -273,7 +307,7 @@ class EntityExtractor:
             self.store.add_entity_relation(relation)
 
         logger.debug(
-            f"Extracted from {episode.id}: type={result.episode_type.value}, "
+            f"Extracted from {episode.id}: type={result.episode_type}, "
             f"entities={[e.id for e in result.entities]}, "
             f"relations={len(result.entity_relations)}"
         )

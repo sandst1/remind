@@ -337,8 +337,9 @@ class Episode:
     # The raw interaction content
     content: str = ""
     
-    # Episode type classification (defaults to observation for backwards compat)
-    episode_type: EpisodeType = EpisodeType.OBSERVATION
+    # Episode type classification (defaults to observation for backwards compat).
+    # Stored as a plain string to support configurable custom types.
+    episode_type: str = "observation"
     
     # Optional compressed summary (created during consolidation)
     summary: Optional[str] = None
@@ -373,6 +374,8 @@ class Episode:
     def __post_init__(self):
         if self.updated_at is None:
             self.updated_at = self.created_at
+        if isinstance(self.episode_type, EpisodeType):
+            self.episode_type = self.episode_type.value
 
     @property
     def timestamp(self) -> datetime:
@@ -392,7 +395,7 @@ class Episode:
             "timestamp": self.updated_at.isoformat(),
             "title": self.title,
             "content": self.content,
-            "episode_type": self.episode_type.value,
+            "episode_type": self.episode_type,
             "summary": self.summary,
             "concepts_activated": self.concepts_activated,
             "entity_ids": self.entity_ids,
@@ -407,13 +410,8 @@ class Episode:
     @classmethod
     def from_dict(cls, data: dict) -> "Episode":
         """Deserialize from dictionary."""
-        # Handle backwards compatibility for episode_type
-        episode_type = EpisodeType.OBSERVATION
-        if data.get("episode_type"):
-            try:
-                episode_type = EpisodeType(data["episode_type"])
-            except ValueError:
-                episode_type = EpisodeType.OBSERVATION
+        # episode_type is stored as a plain string; default to "observation"
+        episode_type = data.get("episode_type") or "observation"
 
         # created_at: prefer explicit key, fall back to legacy timestamp
         if data.get("created_at"):
@@ -467,7 +465,7 @@ class ConsolidationResult:
 class ExtractionResult:
     """Result of entity/type extraction from an episode."""
 
-    episode_type: EpisodeType
+    episode_type: str = "observation"
     title: Optional[str] = None
     entities: list[Entity] = field(default_factory=list)
     entity_relations: list[EntityRelation] = field(default_factory=list)
@@ -475,13 +473,7 @@ class ExtractionResult:
     @classmethod
     def from_dict(cls, data: dict, episode_id: Optional[str] = None) -> "ExtractionResult":
         """Create from LLM extraction response."""
-        # Parse episode type
-        episode_type = EpisodeType.OBSERVATION
-        if data.get("type"):
-            try:
-                episode_type = EpisodeType(data["type"])
-            except ValueError:
-                pass
+        episode_type = data.get("type") or "observation"
 
         # Parse title
         title = data.get("title")

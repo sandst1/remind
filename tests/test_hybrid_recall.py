@@ -23,7 +23,7 @@ class TestFactEpisodeType:
             content="Redis cache TTL is 300 seconds",
             episode_type=EpisodeType.FACT,
         )
-        assert ep.episode_type == EpisodeType.FACT
+        assert ep.episode_type == "fact"
         assert ep.content == "Redis cache TTL is 300 seconds"
 
     def test_fact_serialization_round_trip(self):
@@ -34,12 +34,12 @@ class TestFactEpisodeType:
         )
         data = ep.to_dict()
         restored = Episode.from_dict(data)
-        assert restored.episode_type == EpisodeType.FACT
+        assert restored.episode_type == "fact"
         assert restored.content == ep.content
 
     def test_fact_type_weight_is_highest(self):
-        assert _EPISODE_TYPE_WEIGHTS[EpisodeType.FACT] >= max(
-            v for k, v in _EPISODE_TYPE_WEIGHTS.items() if k != EpisodeType.FACT
+        assert _EPISODE_TYPE_WEIGHTS["fact"] >= max(
+            v for k, v in _EPISODE_TYPE_WEIGHTS.items() if k != "fact"
         )
 
 

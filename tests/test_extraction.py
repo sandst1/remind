@@ -82,7 +82,7 @@ class TestEntityExtractor:
         extractor = EntityExtractor(mock_llm, memory_store)
         result = await extractor.extract("Found a bug in auth.py")
 
-        assert result.episode_type == EpisodeType.OBSERVATION
+        assert result.episode_type == "observation"
         assert len(result.entities) == 1
         assert result.entities[0].id == "file:auth.py"
 
@@ -97,7 +97,7 @@ class TestEntityExtractor:
         extractor = EntityExtractor(mock_llm, memory_store)
         result = await extractor.extract("Decided to use FastAPI")
 
-        assert result.episode_type == EpisodeType.DECISION
+        assert result.episode_type == "decision"
 
     @pytest.mark.asyncio
     async def test_extract_question(self, mock_llm, memory_store):
@@ -110,7 +110,7 @@ class TestEntityExtractor:
         extractor = EntityExtractor(mock_llm, memory_store)
         result = await extractor.extract("Should we use Redis?")
 
-        assert result.episode_type == EpisodeType.QUESTION
+        assert result.episode_type == "question"
 
     @pytest.mark.asyncio
     async def test_extract_preference(self, mock_llm, memory_store):
@@ -123,7 +123,7 @@ class TestEntityExtractor:
         extractor = EntityExtractor(mock_llm, memory_store)
         result = await extractor.extract("I prefer Python over JavaScript")
 
-        assert result.episode_type == EpisodeType.PREFERENCE
+        assert result.episode_type == "preference"
 
     @pytest.mark.asyncio
     async def test_extract_meta(self, mock_llm, memory_store):
@@ -136,7 +136,7 @@ class TestEntityExtractor:
         extractor = EntityExtractor(mock_llm, memory_store)
         result = await extractor.extract("I notice a pattern in my thinking")
 
-        assert result.episode_type == EpisodeType.META
+        assert result.episode_type == "meta"
 
     @pytest.mark.asyncio
     async def test_extract_multiple_entities(self, mock_llm, memory_store):
@@ -222,18 +222,17 @@ class TestEntityExtractor:
         assert result.entities[0].type == EntityType.OTHER
 
     @pytest.mark.asyncio
-    async def test_extract_handles_unknown_episode_type(self, mock_llm, memory_store):
-        """Test handling of unknown episode types."""
+    async def test_extract_preserves_unknown_episode_type(self, mock_llm, memory_store):
+        """Unknown episode types are preserved (custom types are valid)."""
         mock_llm.set_complete_json_response({
-            "type": "unknown_episode_type",
+            "type": "custom_type",
             "entities": []
         })
 
         extractor = EntityExtractor(mock_llm, memory_store)
         result = await extractor.extract("Test content")
 
-        # Should default to observation
-        assert result.episode_type == EpisodeType.OBSERVATION
+        assert result.episode_type == "custom_type"
 
     @pytest.mark.asyncio
     async def test_extract_handles_llm_error(self, mock_llm, memory_store):
@@ -247,7 +246,7 @@ class TestEntityExtractor:
         result = await extractor.extract("Some content")
 
         # Should return defaults
-        assert result.episode_type == EpisodeType.OBSERVATION
+        assert result.episode_type == "observation"
         assert result.entities == []
 
     @pytest.mark.asyncio
@@ -268,7 +267,7 @@ class TestEntityExtractor:
 
         # Check episode was updated
         updated = memory_store.get_episode(sample_episode.id)
-        assert updated.episode_type == EpisodeType.PREFERENCE
+        assert updated.episode_type == "preference"
         assert updated.entities_extracted == True
         assert "tool:python" in updated.entity_ids
 
@@ -319,7 +318,7 @@ class TestExtractForRemember:
             mock_llm, memory_store, episode, auto_extract=True
         )
 
-        assert result.episode_type == EpisodeType.DECISION
+        assert result.episode_type == "decision"
         assert result.entities_extracted == True
 
     @pytest.mark.asyncio
@@ -331,7 +330,7 @@ class TestExtractForRemember:
         )
 
         # Should return unchanged
-        assert result.episode_type == EpisodeType.OBSERVATION
+        assert result.episode_type == "observation"
         assert result.entities_extracted == False
         assert mock_llm.get_call_history() == []
 
@@ -368,6 +367,6 @@ class TestExtractForRemember:
 
         # EntityExtractor.extract() catches errors internally and returns defaults,
         # so extract_for_remember successfully processes the default result
-        assert result.episode_type == EpisodeType.OBSERVATION
+        assert result.episode_type == "observation"
         assert result.entities_extracted == True  # Set to True after processing default result
         assert result.entity_ids == []  # No entities extracted

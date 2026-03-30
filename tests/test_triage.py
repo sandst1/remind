@@ -498,7 +498,7 @@ class TestOutcomeEpisodeType:
         )
 
         episode = memory.store.get_episode(episode_id)
-        assert episode.episode_type == EpisodeType.OUTCOME
+        assert episode.episode_type == "outcome"
         assert episode.metadata["strategy"] == "grep-based search"
 
 

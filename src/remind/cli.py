@@ -98,7 +98,6 @@ def main(ctx, db: str, llm: str, embedding: str):
 @click.argument("content")
 @click.option("--metadata", "-m", help="JSON metadata to attach")
 @click.option("--type", "-t", "episode_type", 
-              type=click.Choice(["observation", "decision", "question", "meta", "preference", "spec", "plan", "task", "outcome"]),
               help="Episode type (detected during consolidation if not provided)")
 @click.option("--entity", "-e", "entities", multiple=True, 
               help="Entity IDs (e.g., file:src/auth.ts, person:alice)")
@@ -111,19 +110,16 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
     Embeds the episode by default for vector search during recall.
     Entity extraction and type classification happen during consolidation.
     """
-    from remind.models import EpisodeType
-    
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
     
     meta = json.loads(metadata) if metadata else None
-    ep_type = EpisodeType(episode_type) if episode_type else None
     entity_list = list(entities) if entities else None
     
     async def _remember():
         return await memory.remember(
             content, 
             metadata=meta,
-            episode_type=ep_type,
+            episode_type=episode_type,
             entities=entity_list,
             embed=not no_embed,
         )
@@ -133,8 +129,8 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
     console.print(f"[green]✓[/green] Remembered as episode [cyan]{episode_id}[/cyan]")
 
     # Show explicit type/entities if provided
-    if ep_type:
-        console.print(f"  Type: [yellow]{ep_type.value}[/yellow]")
+    if episode_type:
+        console.print(f"  Type: [yellow]{episode_type}[/yellow]")
     if entity_list:
         console.print(f"  Entities: {', '.join(entity_list)}")
 
@@ -200,7 +196,7 @@ def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[
             
             for ep in result:
                 content = ep.content[:60] + "..." if len(ep.content) > 60 else ep.content
-                table.add_row(ep.id, ep.episode_type.value, content)
+                table.add_row(ep.id, ep.episode_type, content)
             
             console.print(table)
         else:
@@ -567,7 +563,7 @@ def inspect(ctx, concept_id: Optional[str], episodes: bool, limit: int):
                 entities += f" +{len(ep.entity_ids)-2}"
             table.add_row(
                 ep.id, 
-                ep.episode_type.value[:3],  # Shortened type
+                ep.episode_type[:3],  # Shortened type
                 ep.timestamp.strftime("%Y-%m-%d %H:%M"), 
                 content, 
                 entities,
@@ -976,7 +972,7 @@ def mentions(ctx, entity_id: str):
         content = ep.content[:60] + "..." if len(ep.content) > 60 else ep.content
         table.add_row(
             ep.id,
-            ep.episode_type.value,
+            ep.episode_type,
             ep.timestamp.strftime("%Y-%m-%d %H:%M"),
             content,
         )
@@ -993,7 +989,7 @@ def decisions(ctx, limit: int):
     from remind.models import EpisodeType
     store = SQLiteMemoryStore(ctx.obj["db"])
     
-    episodes = store.get_episodes_by_type(EpisodeType.DECISION, limit=limit)
+    episodes = store.get_episodes_by_type(EpisodeType.DECISION.value, limit=limit)
     
     if not episodes:
         console.print("[yellow]No decisions recorded yet[/yellow]")
@@ -1022,7 +1018,7 @@ def questions(ctx, limit: int):
     from remind.models import EpisodeType
     store = SQLiteMemoryStore(ctx.obj["db"])
 
-    episodes = store.get_episodes_by_type(EpisodeType.QUESTION, limit=limit)
+    episodes = store.get_episodes_by_type(EpisodeType.QUESTION.value, limit=limit)
 
     if not episodes:
         console.print("[yellow]No questions recorded yet[/yellow]")
@@ -1057,7 +1053,7 @@ def specs(ctx, limit: int, entity: Optional[str], status: Optional[str]):
     from remind.models import EpisodeType
     store = SQLiteMemoryStore(ctx.obj["db"])
 
-    episodes = store.get_episodes_by_type(EpisodeType.SPEC, limit=1000)
+    episodes = store.get_episodes_by_type(EpisodeType.SPEC.value, limit=1000)
 
     if entity:
         episodes = [ep for ep in episodes if entity in ep.entity_ids]
@@ -1100,7 +1096,7 @@ def plans(ctx, limit: int, entity: Optional[str], status: Optional[str]):
     from remind.models import EpisodeType
     store = SQLiteMemoryStore(ctx.obj["db"])
 
-    episodes = store.get_episodes_by_type(EpisodeType.PLAN, limit=1000)
+    episodes = store.get_episodes_by_type(EpisodeType.PLAN.value, limit=1000)
 
     if entity:
         episodes = [ep for ep in episodes if entity in ep.entity_ids]
@@ -1230,13 +1226,11 @@ def task_add(ctx, content: str, entities: tuple, priority: str, plan: Optional[s
     if depends_on:
         meta["depends_on"] = list(depends_on)
 
-    from remind.models import EpisodeType
-
     async def _remember():
         return await memory.remember(
             content,
             metadata=meta,
-            episode_type=EpisodeType.TASK,
+            episode_type="task",
             entities=list(entities) if entities else None,
         )
 
@@ -1551,7 +1545,6 @@ def skill_install(names: tuple):
 @click.argument("episode_id")
 @click.option("--content", "-c", help="New content text")
 @click.option("--type", "-t", "episode_type",
-              type=click.Choice(["observation", "decision", "question", "meta", "preference", "spec", "plan", "task"]),
               help="New episode type")
 @click.option("--entity", "-e", "entities", multiple=True, help="New entity IDs (replaces existing)")
 @click.option("--plan", help="Plan episode ID to link")
@@ -1564,11 +1557,9 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
                    plan: Optional[str], spec_ids: tuple, depends_on: tuple,
                    priority: Optional[str]):
     """Update an existing episode."""
-    from remind.models import EpisodeType
-
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
 
-    ep_type = EpisodeType(episode_type) if episode_type else None
+    ep_type = episode_type or None
     entity_list = list(entities) if entities else None
 
     meta: dict = {}

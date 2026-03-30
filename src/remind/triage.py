@@ -14,7 +14,6 @@ from typing import Optional
 import json
 import logging
 
-from remind.models import EpisodeType
 from remind.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -29,11 +28,16 @@ You produce two outputs:
 Be aggressive about compression. Strip conversational filler, hedging, and step-by-step narration. Each episode should be a single clear assertion that stands on its own."""
 
 
-TRIAGE_PROMPT_TEMPLATE = """## EXISTING RELEVANT KNOWLEDGE
-{existing_concepts}
+_DEFAULT_TRIAGE_TYPES = "observation|decision|preference|question|meta|outcome|fact"
+
+
+def _build_triage_prompt(valid_types: list[str]) -> str:
+    type_enum = "|".join(valid_types)
+    return """## EXISTING RELEVANT KNOWLEDGE
+{{existing_concepts}}
 
 ## RAW CONVERSATION FRAGMENT
-{chunk}
+{{chunk}}
 
 Score the INFORMATION DENSITY of this text from 0.0 to 1.0:
 - 0.0: Pure boilerplate, greetings, acknowledgments, routine narration
@@ -44,7 +48,7 @@ Score the INFORMATION DENSITY of this text from 0.0 to 1.0:
 
 Information already captured in EXISTING RELEVANT KNOWLEDGE does NOT count toward density unless it adds new nuance, corrections, or context.
 
-If density >= {min_density}, extract memory-worthy episodes as TIGHT, DISTILLED statements. Do NOT copy conversation verbatim. Compress and rewrite into information-dense factual statements. Strip conversational filler, hedging, and step-by-step narration. Each episode should be a single clear assertion that stands on its own.
+If density >= {{min_density}}, extract memory-worthy episodes as TIGHT, DISTILLED statements. Do NOT copy conversation verbatim. Compress and rewrite into information-dense factual statements. Strip conversational filler, hedging, and step-by-step narration. Each episode should be a single clear assertion that stands on its own.
 
 Good: "Token expiry check in verify_credentials uses <= instead of <, causing tokens to be accepted one second past expiry"
 Bad:  "The assistant looked at the auth bug and found that the issue is in verify_credentials where the token expiry check uses <= instead of <"
@@ -54,27 +58,30 @@ Additionally, detect ACTION-RESULT pairs: when a strategy, tool, or approach was
 Use "fact" type for specific factual assertions: concrete values, configuration details, names, dates, version numbers, or technical details that would be lost if generalized. Facts are high-value and should not be paraphrased into vague summaries.
 
 Output JSON:
-{{
+{{{{
   "density": 0.7,
   "reasoning": "Brief explanation of density score",
   "episodes": [
-    {{
+    {{{{
       "content": "tight, distilled factual statement",
-      "type": "observation|decision|preference|question|meta|outcome|fact",
+      "type": "{type_enum}",
       "entities": ["type:name"],
-      "metadata": {{}}
-    }}
+      "metadata": {{{{}}}}
+    }}}}
   ]
-}}
+}}}}
 
 For outcome episodes, include metadata like:
-{{
+{{{{
   "strategy": "what approach was used",
   "result": "success|failure|partial",
   "prediction_error": "low|medium|high"
-}}
+}}}}
 
-Episodes array should be empty if density < {min_density}."""
+Episodes array should be empty if {{min_density}}.""".format(type_enum=type_enum)
+
+
+TRIAGE_PROMPT_TEMPLATE = _build_triage_prompt(_DEFAULT_TRIAGE_TYPES.split("|"))
 
 
 @dataclass
@@ -221,9 +228,14 @@ class IngestionTriager:
         self,
         llm: LLMProvider,
         min_density: float = 0.4,
+        valid_types: Optional[list[str]] = None,
     ):
         self.llm = llm
         self.min_density = min_density
+        if valid_types:
+            self._prompt_template = _build_triage_prompt(valid_types)
+        else:
+            self._prompt_template = TRIAGE_PROMPT_TEMPLATE
 
     async def triage(
         self,
@@ -245,7 +257,7 @@ class IngestionTriager:
 
         concepts_text = existing_concepts or "(No existing knowledge yet)"
 
-        prompt = TRIAGE_PROMPT_TEMPLATE.format(
+        prompt = self._prompt_template.format(
             existing_concepts=concepts_text,
             chunk=chunk,
             min_density=self.min_density,
