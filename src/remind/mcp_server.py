@@ -840,9 +840,17 @@ async def tool_list_deleted(
 # FastMCP Server Setup
 # ============================================================================
 
-def create_mcp_server():
-    """Create and configure the FastMCP server."""
+def create_mcp_server(config=None):
+    """Create and configure the FastMCP server.
+    
+    Tools for spec, plan, and task episode types are only registered
+    when those types are present in config.episode_types.
+    """
     from fastmcp import FastMCP
+    
+    if config is None:
+        config = load_config()
+    episode_types = set(config.episode_types)
     
     mcp = FastMCP(
         "Remind",
@@ -1178,117 +1186,120 @@ def create_mcp_server():
         """
         return await tool_list_deleted(item_type, limit)
 
-    @mcp.tool()
-    async def task_add(
-        content: str,
-        entities: Optional[str] = None,
-        priority: str = "p1",
-        plan_id: Optional[str] = None,
-        spec_ids: Optional[str] = None,
-        depends_on: Optional[str] = None,
-    ) -> str:
-        """Create a new task episode.
+    if "task" in episode_types:
+        @mcp.tool()
+        async def task_add(
+            content: str,
+            entities: Optional[str] = None,
+            priority: str = "p1",
+            plan_id: Optional[str] = None,
+            spec_ids: Optional[str] = None,
+            depends_on: Optional[str] = None,
+        ) -> str:
+            """Create a new task episode.
 
-        Tasks are discrete units of work with status tracking (todo -> in_progress -> done).
-        They can link to plans and specs via IDs.
+            Tasks are discrete units of work with status tracking (todo -> in_progress -> done).
+            They can link to plans and specs via IDs.
 
-        Args:
-            content: Task description
-            entities: Optional comma-separated entity IDs (e.g., "module:auth,file:src/auth.ts")
-            priority: Priority level: p0, p1, p2 (default: p1)
-            plan_id: Optional plan episode ID this task implements
-            spec_ids: Optional comma-separated spec episode IDs this task implements
-            depends_on: Optional comma-separated task IDs this depends on
+            Args:
+                content: Task description
+                entities: Optional comma-separated entity IDs (e.g., "module:auth,file:src/auth.ts")
+                priority: Priority level: p0, p1, p2 (default: p1)
+                plan_id: Optional plan episode ID this task implements
+                spec_ids: Optional comma-separated spec episode IDs this task implements
+                depends_on: Optional comma-separated task IDs this depends on
 
-        Returns:
-            Confirmation with task ID
-        """
-        return await tool_task_add(content, entities, priority, plan_id, spec_ids, depends_on)
+            Returns:
+                Confirmation with task ID
+            """
+            return await tool_task_add(content, entities, priority, plan_id, spec_ids, depends_on)
 
-    @mcp.tool()
-    async def task_update_status(
-        task_id: str,
-        status: str,
-        reason: Optional[str] = None,
-    ) -> str:
-        """Update a task's status.
+        @mcp.tool()
+        async def task_update_status(
+            task_id: str,
+            status: str,
+            reason: Optional[str] = None,
+        ) -> str:
+            """Update a task's status.
 
-        Valid statuses: todo, in_progress, done, blocked.
-        Timestamps are automatically tracked (started_at, completed_at).
+            Valid statuses: todo, in_progress, done, blocked.
+            Timestamps are automatically tracked (started_at, completed_at).
 
-        Args:
-            task_id: Episode ID of the task
-            status: New status: todo, in_progress, done, blocked
-            reason: Optional reason (used when blocking a task)
+            Args:
+                task_id: Episode ID of the task
+                status: New status: todo, in_progress, done, blocked
+                reason: Optional reason (used when blocking a task)
 
-        Returns:
-            Confirmation or error message
-        """
-        return await tool_task_update_status(task_id, status, reason)
+            Returns:
+                Confirmation or error message
+            """
+            return await tool_task_update_status(task_id, status, reason)
 
-    @mcp.tool()
-    async def list_tasks(
-        status: Optional[str] = None,
-        entity: Optional[str] = None,
-        plan_id: Optional[str] = None,
-        include_done: bool = False,
-    ) -> str:
-        """List tasks grouped by status.
+        @mcp.tool()
+        async def list_tasks(
+            status: Optional[str] = None,
+            entity: Optional[str] = None,
+            plan_id: Optional[str] = None,
+            include_done: bool = False,
+        ) -> str:
+            """List tasks grouped by status.
 
-        By default excludes completed tasks. Use include_done=True to show all.
+            By default excludes completed tasks. Use include_done=True to show all.
 
-        Args:
-            status: Filter by status: todo, in_progress, done, blocked
-            entity: Filter by entity ID (e.g., "module:auth")
-            plan_id: Filter by originating plan episode ID
-            include_done: Include completed tasks (default: False)
+            Args:
+                status: Filter by status: todo, in_progress, done, blocked
+                entity: Filter by entity ID (e.g., "module:auth")
+                plan_id: Filter by originating plan episode ID
+                include_done: Include completed tasks (default: False)
 
-        Returns:
-            Tasks grouped by status
-        """
-        return await tool_list_tasks(status, entity, plan_id, include_done)
+            Returns:
+                Tasks grouped by status
+            """
+            return await tool_list_tasks(status, entity, plan_id, include_done)
 
-    @mcp.tool()
-    async def list_specs(
-        entity: Optional[str] = None,
-        status: Optional[str] = None,
-        limit: int = 20,
-    ) -> str:
-        """List spec episodes (requirements, acceptance criteria).
+    if "spec" in episode_types:
+        @mcp.tool()
+        async def list_specs(
+            entity: Optional[str] = None,
+            status: Optional[str] = None,
+            limit: int = 20,
+        ) -> str:
+            """List spec episodes (requirements, acceptance criteria).
 
-        Specs are prescriptive requirements ("X shall/must be the case").
-        They have a lifecycle: draft -> approved -> implemented -> deprecated.
+            Specs are prescriptive requirements ("X shall/must be the case").
+            They have a lifecycle: draft -> approved -> implemented -> deprecated.
 
-        Args:
-            entity: Filter by entity ID (e.g., "module:auth")
-            status: Filter by spec status: draft, approved, implemented, deprecated
-            limit: Maximum number of specs to show (default: 20)
+            Args:
+                entity: Filter by entity ID (e.g., "module:auth")
+                status: Filter by spec status: draft, approved, implemented, deprecated
+                limit: Maximum number of specs to show (default: 20)
 
-        Returns:
-            List of spec episodes
-        """
-        return await tool_list_specs(entity, status, limit)
+            Returns:
+                List of spec episodes
+            """
+            return await tool_list_specs(entity, status, limit)
 
-    @mcp.tool()
-    async def list_plans(
-        entity: Optional[str] = None,
-        status: Optional[str] = None,
-        limit: int = 20,
-    ) -> str:
-        """List plan episodes (implementation plans, roadmaps).
+    if "plan" in episode_types:
+        @mcp.tool()
+        async def list_plans(
+            entity: Optional[str] = None,
+            status: Optional[str] = None,
+            limit: int = 20,
+        ) -> str:
+            """List plan episodes (implementation plans, roadmaps).
 
-        Plans are sequenced intentions ("we will do X, then Y, then Z").
-        They have a lifecycle: draft -> active -> completed -> superseded.
+            Plans are sequenced intentions ("we will do X, then Y, then Z").
+            They have a lifecycle: draft -> active -> completed -> superseded.
 
-        Args:
-            entity: Filter by entity ID (e.g., "module:auth")
-            status: Filter by plan status: draft, active, completed, superseded
-            limit: Maximum number of plans to show (default: 20)
+            Args:
+                entity: Filter by entity ID (e.g., "module:auth")
+                status: Filter by plan status: draft, active, completed, superseded
+                limit: Maximum number of plans to show (default: 20)
 
-        Returns:
-            List of plan episodes
-        """
-        return await tool_list_plans(entity, status, limit)
+            Returns:
+                List of plan episodes
+            """
+            return await tool_list_plans(entity, status, limit)
 
     @mcp.tool()
     async def ingest(

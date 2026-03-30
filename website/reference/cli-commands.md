@@ -127,6 +127,10 @@ remind specs                      # Spec episodes
 remind plans                      # Plan episodes
 ```
 
+::: tip Conditional commands
+`specs` and `plans` only appear when the `spec` and `plan` episode types are enabled in your [configuration](/guide/configuration#episode-types). All types are enabled by default.
+:::
+
 ## Entity management
 
 ```bash
@@ -139,6 +143,10 @@ remind extract-relations --force          # Re-extract all
 ```
 
 ## Task management
+
+::: tip Conditional commands
+Task commands only appear when the `task` episode type is enabled in your [configuration](/guide/configuration#episode-types). All types are enabled by default.
+:::
 
 ```bash
 remind tasks                          # Active tasks

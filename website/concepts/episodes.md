@@ -17,6 +17,8 @@ Episodes are raw experiences — specific interactions, observations, or decisio
 | `outcome` | Result of an action or strategy | "Grep search for 'auth' missed verify_credentials due to naming" |
 | `fact` | Specific factual assertion to preserve verbatim | "Redis cache TTL is 300 seconds for auth tokens" |
 
+You can configure which types are available via the `episode_types` setting. Custom type names are also supported. When `spec`, `plan`, or `task` are excluded, their dedicated CLI commands and MCP tools are hidden. See [Configuration](/guide/configuration#episode-types).
+
 ## Lifecycle
 
 Episodes are **temporary by design**. The lifecycle:

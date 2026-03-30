@@ -60,7 +60,10 @@ Create `~/.remind/remind.config.json`:
   "ingest_buffer_size": 4000,
   "ingest_min_density": 0.4,
 
-  "logging_enabled": false
+  "logging_enabled": false,
+
+  "episode_types": ["observation", "decision", "question", "meta", "preference",
+                     "spec", "plan", "task", "outcome", "fact"]
 }
 ```
 
@@ -122,6 +125,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
 | `INGEST_MIN_DENSITY` | `ingest_min_density` | float | `0.4` |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
+| `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
 
 #### Anthropic (Claude)
 
@@ -289,3 +293,36 @@ Or environment variable:
 ```bash
 REMIND_LOGGING_ENABLED=true
 ```
+
+## Episode types
+
+Control which episode types are available. This affects which CLI commands and MCP tools are registered.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `episode_types` | all built-in types | List of enabled episode types |
+
+Built-in types: `observation`, `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`, `fact`.
+
+By default all types are enabled. To restrict to a subset:
+
+```json
+{
+  "episode_types": ["observation", "decision", "question", "outcome", "fact"]
+}
+```
+
+Or via environment variable (comma-separated):
+
+```bash
+REMIND_EPISODE_TYPES=observation,decision,question,outcome,fact
+```
+
+Custom type names are also accepted — they will be used in LLM prompts for triage and extraction with generic descriptions.
+
+### Feature gating
+
+When `spec`, `plan`, or `task` types are excluded from `episode_types`:
+
+- **CLI**: The corresponding commands (`specs`, `plans`, `tasks`, `task add/start/done/block/unblock`) are hidden from `remind --help` and unavailable
+- **MCP**: The corresponding tools (`list_specs`, `list_plans`, `task_add`, `task_update_status`, `list_tasks`) are not registered and won't appear in the tool list

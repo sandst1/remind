@@ -120,10 +120,10 @@ Inspection
 Episode types
   decisions    Show decision episodes
   questions    Show open question episodes
-  specs        Show spec episodes (requirements)
-  plans        Show plan episodes
+  specs        Show spec episodes (requires spec type enabled)
+  plans        Show plan episodes (requires plan type enabled)
 
-Task management
+Task management (requires task type enabled)
   tasks               List tasks grouped by status
   task add            Create a task (--priority, --plan, --spec, --depends-on)
   task update         Update a task's linkage, priority, or description (--plan, --spec, --depends-on, --priority)

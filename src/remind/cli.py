@@ -1040,9 +1040,10 @@ def questions(ctx, limit: int):
 
 # ============================================================================
 # Spec, Plan, and Task Commands
+# (registered conditionally based on episode_types config)
 # ============================================================================
 
-@main.command("specs")
+@click.command("specs")
 @click.option("--limit", "-n", default=20, help="Number of specs to show")
 @click.option("--entity", "-e", help="Filter by entity ID")
 @click.option("--status", "-s", help="Filter by status (draft, approved, implemented, deprecated)")
@@ -1085,7 +1086,7 @@ def specs(ctx, limit: int, entity: Optional[str], status: Optional[str]):
     console.print(table)
 
 
-@main.command("plans")
+@click.command("plans")
 @click.option("--limit", "-n", default=20, help="Number of plans to show")
 @click.option("--entity", "-e", help="Filter by entity ID")
 @click.option("--status", "-s", help="Filter by status (draft, active, completed, superseded)")
@@ -1128,7 +1129,7 @@ def plans(ctx, limit: int, entity: Optional[str], status: Optional[str]):
     console.print(table)
 
 
-@main.command("tasks")
+@click.command("tasks")
 @click.option("--status", "-s", help="Filter by status (todo, in_progress, done, blocked)")
 @click.option("--entity", "-e", help="Filter by entity ID")
 @click.option("--plan", "-p", help="Filter by plan episode ID")
@@ -1195,13 +1196,10 @@ def tasks(ctx, status: Optional[str], entity: Optional[str], plan: Optional[str]
         console.print()
 
 
-@main.group("task")
+@click.group("task")
 def task_group():
     """Manage tasks (add, start, done, block, unblock)."""
     pass
-
-
-main.add_command(task_group)
 
 
 @task_group.command("add")
@@ -1351,6 +1349,23 @@ def task_unblock(ctx, task_id: str):
         console.print(f"[green]✓[/green] Unblocked task [cyan]{task_id}[/cyan]")
     else:
         console.print(f"[red]Task {task_id} not found[/red]")
+
+
+# Conditionally register spec/plan/task commands based on configured episode_types
+def _register_episode_type_commands():
+    from remind.config import load_config
+    config = load_config(project_dir=Path.cwd())
+    types = set(config.episode_types)
+
+    if "spec" in types:
+        main.add_command(specs)
+    if "plan" in types:
+        main.add_command(plans)
+    if "task" in types:
+        main.add_command(tasks)
+        main.add_command(task_group)
+
+_register_episode_type_commands()
 
 
 @main.command("extract-relations")

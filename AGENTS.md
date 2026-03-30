@@ -183,6 +183,8 @@ class RemindConfig:
     ingest_min_density: float = 0.4
     # Logging
     logging_enabled: bool = False
+    # Episode types (controls which types are valid + gates CLI/MCP features)
+    episode_types: list[str] = field(default_factory=lambda: list(DEFAULT_EPISODE_TYPES))
     # Nested provider configs
     anthropic: AnthropicConfig
     openai: OpenAIConfig
@@ -293,6 +295,8 @@ pytest -v                   # Verbose
 2. Update extraction prompt in `extraction.py`
 3. Update consolidation prompts in `consolidation.py`
 4. Add MCP tool if type-specific querying is useful
+
+**Note**: `episode_types` config controls which types are active. Custom types (strings not in `EpisodeType` enum) are also supported. When `spec`, `plan`, or `task` are not in `episode_types`, their CLI commands and MCP tools are hidden automatically (conditional registration in `cli.py` and `mcp_server.py`).
 
 ### Adding a New Entity Type
 

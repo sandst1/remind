@@ -24,6 +24,13 @@ External memory layer that persists across sessions and generalizes experiences 
 | `delete_concept(concept_id)` | Soft delete concept |
 | `restore_concept(concept_id)` | Restore deleted concept |
 | `list_deleted([item_type])` | List soft-deleted items |
+| `task_add(content, [entities], [priority], [plan_id], [spec_ids], [depends_on])` | Create a task * |
+| `task_update_status(task_id, status, [reason])` | Transition task status * |
+| `list_tasks([status], [entity], [plan_id], [include_done])` | List tasks * |
+| `list_specs([entity], [status], [limit])` | List spec episodes * |
+| `list_plans([entity], [status], [limit])` | List plan episodes * |
+
+\* Only available when the corresponding episode type (`task`, `spec`, `plan`) is enabled in `episode_types` config. All types are enabled by default.
 
 ## remember
 
@@ -32,7 +39,7 @@ remember(content="User prefers TypeScript over JavaScript")
 remember(content="Use Redis for caching", episode_type="decision", entities="tool:redis,concept:caching")
 ```
 
-**Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
+**Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`, `fact`
 
 **When to use**: User preferences, project context, decisions+rationale, open questions, corrections, specific facts
 **Skip**: Trivial info, already-captured knowledge, raw conversation logs

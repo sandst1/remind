@@ -188,7 +188,13 @@ list_deleted(item_type="episode")
 list_deleted(item_type="concept")
 ```
 
-## task_add
+## task_add / task_update_status / list_tasks / list_specs / list_plans
+
+::: tip Conditional tools
+These tools are only registered when the corresponding episode type (`task`, `spec`, `plan`) is enabled in your [configuration](/guide/configuration#episode-types). All types are enabled by default.
+:::
+
+### task_add
 
 Create a new task.
 
@@ -206,7 +212,7 @@ task_add(content="Write tests", depends_on="task-id-1", plan="plan-id")
 | `spec` | string | No | Spec episode ID |
 | `depends_on` | string | No | Dependency task ID |
 
-## task_update_status
+### task_update_status
 
 Transition a task's status.
 
@@ -221,7 +227,7 @@ task_update_status(task_id="abc123", status="blocked", reason="Waiting on API ke
 | `status` | string | Yes | `todo`, `in_progress`, `done`, `blocked` |
 | `reason` | string | No | Block reason (for `blocked` status) |
 
-## list_tasks / list_specs / list_plans
+### list_tasks / list_specs / list_plans
 
 List filtered episodes by type.
 
