@@ -1,13 +1,39 @@
 """Memory storage backends."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from contextlib import contextmanager
+from datetime import datetime, timedelta
 from typing import Optional
-import sqlite3
 import json
 import logging
 import numpy as np
 from pathlib import Path
+
+from sqlalchemy import (
+    create_engine,
+    MetaData,
+    Table,
+    Column,
+    String,
+    Text,
+    Float,
+    Boolean,
+    LargeBinary,
+    DateTime,
+    Integer,
+    JSON,
+    ForeignKey,
+    Index,
+    PrimaryKeyConstraint,
+    func,
+    select,
+    insert,
+    update,
+    delete,
+    text,
+    inspect,
+)
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from remind.models import (
     Concept, Episode, Relation, RelationType,
@@ -20,27 +46,27 @@ logger = logging.getLogger(__name__)
 class MemoryStore(ABC):
     """
     Abstract base class for memory storage.
-    
+
     Defines the interface for storing and retrieving concepts, episodes,
-    and their relationships. Implementations can use SQLite, Neo4j, etc.
+    and their relationships. Implementations can use SQLite, PostgreSQL, etc.
     """
-    
+
     # Concept operations
     @abstractmethod
     def add_concept(self, concept: Concept) -> str:
         """Add a concept and return its ID."""
         ...
-    
+
     @abstractmethod
     def get_concept(self, id: str) -> Optional[Concept]:
         """Get a concept by ID."""
         ...
-    
+
     @abstractmethod
     def update_concept(self, concept: Concept) -> None:
         """Update an existing concept."""
         ...
-    
+
     @abstractmethod
     def delete_concept(self, id: str) -> bool:
         """Soft delete a concept (set deleted_at timestamp).
@@ -74,12 +100,12 @@ class MemoryStore(ABC):
     def get_all_concepts(self) -> list[Concept]:
         """Get all concepts."""
         ...
-    
+
     @abstractmethod
     def get_concepts_summary(self) -> list[dict]:
         """Get a lightweight summary of all concepts (for consolidation prompts)."""
         ...
-    
+
     # Embedding-based retrieval
     @abstractmethod
     def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
@@ -90,18 +116,18 @@ class MemoryStore(ABC):
     def find_episodes_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple["Episode", float]]:
         """Find episodes by embedding similarity. Returns (episode, similarity) pairs."""
         ...
-    
+
     # Graph traversal
     @abstractmethod
     def get_related(
-        self, 
-        concept_id: str, 
+        self,
+        concept_id: str,
         relation_types: Optional[list[RelationType]] = None,
         depth: int = 1
     ) -> list[tuple[Concept, Relation]]:
         """Get related concepts with their relations."""
         ...
-    
+
     @abstractmethod
     def get_incoming_relations(
         self,
@@ -121,7 +147,7 @@ class MemoryStore(ABC):
     def add_episode(self, episode: Episode) -> str:
         """Add an episode and return its ID."""
         ...
-    
+
     @abstractmethod
     def add_episodes_batch(self, episodes: list[Episode]) -> list[str]:
         """Add multiple episodes in a single transaction.
@@ -201,7 +227,7 @@ class MemoryStore(ABC):
     def get_recent_episodes(self, limit: int = 10) -> list[Episode]:
         """Get most recent episodes."""
         ...
-    
+
     @abstractmethod
     def get_episodes_by_date_range(
         self,
@@ -217,17 +243,17 @@ class MemoryStore(ABC):
     def add_entity(self, entity: Entity) -> str:
         """Add an entity and return its ID. Updates if exists."""
         ...
-    
+
     @abstractmethod
     def get_entity(self, id: str) -> Optional[Entity]:
         """Get an entity by ID."""
         ...
-    
+
     @abstractmethod
     def get_entities_by_type(self, entity_type: EntityType) -> list[Entity]:
         """Get all entities of a given type."""
         ...
-    
+
     @abstractmethod
     def get_all_entities(self) -> list[Entity]:
         """Get all entities."""
@@ -274,7 +300,7 @@ class MemoryStore(ABC):
     def add_mention(self, episode_id: str, entity_id: str) -> None:
         """Create a mention link between episode and entity."""
         ...
-    
+
     @abstractmethod
     def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
         """Get all episodes that mention an entity."""
@@ -303,7 +329,7 @@ class MemoryStore(ABC):
     def get_entities_mentioned_in(self, episode_id: str) -> list[Entity]:
         """Get all entities mentioned in an episode."""
         ...
-    
+
     @abstractmethod
     def delete_mentions_for_episode(self, episode_id: str) -> int:
         """Delete all mention records for an episode. Returns count deleted."""
@@ -313,7 +339,7 @@ class MemoryStore(ABC):
     def get_unextracted_episodes(self, limit: int = 100) -> list[Episode]:
         """Get episodes that haven't had entity extraction performed."""
         ...
-    
+
     @abstractmethod
     def get_episodes_by_type(self, episode_type: str, limit: int = 50) -> list[Episode]:
         """Get episodes of a specific type."""
@@ -401,12 +427,12 @@ class MemoryStore(ABC):
     def get_metadata(self, key: str) -> Optional[str]:
         """Get a metadata value by key. Returns None if not found."""
         ...
-    
+
     @abstractmethod
     def set_metadata(self, key: str, value: str) -> None:
         """Set a metadata value. Updates if key exists."""
         ...
-    
+
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -418,1110 +444,909 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two vectors."""
     a_arr = np.array(a)
     b_arr = np.array(b)
-    
+
     norm_a = np.linalg.norm(a_arr)
     norm_b = np.linalg.norm(b_arr)
-    
+
     if norm_a == 0 or norm_b == 0:
         return 0.0
-    
+
     return float(np.dot(a_arr, b_arr) / (norm_a * norm_b))
 
 
-class SQLiteMemoryStore(MemoryStore):
+# ---------------------------------------------------------------------------
+# Table definitions
+# ---------------------------------------------------------------------------
+
+metadata_obj = MetaData()
+
+concepts_table = Table(
+    "concepts", metadata_obj,
+    Column("id", String, primary_key=True),
+    Column("title", Text, nullable=True),
+    Column("summary", Text, nullable=True),
+    Column("data", JSON, nullable=False),
+    Column("embedding", LargeBinary, nullable=True),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now()),
+    Column("topic", Text, nullable=True),
+)
+
+episodes_table = Table(
+    "episodes", metadata_obj,
+    Column("id", String, primary_key=True),
+    Column("title", Text, nullable=True),
+    Column("content", Text, nullable=True),
+    Column("data", JSON, nullable=False),
+    Column("consolidated", Boolean, default=False),
+    Column("timestamp", DateTime, server_default=func.now()),
+    Column("embedding", LargeBinary, nullable=True),
+    Column("topic", Text, nullable=True),
+)
+
+relations_table = Table(
+    "relations", metadata_obj,
+    Column("source_id", String, ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False),
+    Column("target_id", String, ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False),
+    Column("type", String, nullable=False),
+    Column("strength", Float, default=0.5),
+    Column("context", Text, nullable=True),
+    PrimaryKeyConstraint("source_id", "target_id", "type"),
+)
+
+entities_table = Table(
+    "entities", metadata_obj,
+    Column("id", String, primary_key=True),
+    Column("type", String, nullable=False),
+    Column("display_name", Text, nullable=True),
+    Column("data", JSON, nullable=True),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
+mentions_table = Table(
+    "mentions", metadata_obj,
+    Column("episode_id", String, ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False),
+    Column("entity_id", String, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("created_at", DateTime, server_default=func.now()),
+    PrimaryKeyConstraint("episode_id", "entity_id"),
+)
+
+entity_relations_table = Table(
+    "entity_relations", metadata_obj,
+    Column("source_id", String, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("target_id", String, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("relation_type", String, nullable=False),
+    Column("strength", Float, default=0.5),
+    Column("context", Text, nullable=True),
+    Column("source_episode_id", String, ForeignKey("episodes.id", ondelete="SET NULL"), nullable=True),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("episode_count", Integer, default=1),
+    Column("source_episode_ids", Text, default="[]"),
+    PrimaryKeyConstraint("source_id", "target_id", "relation_type"),
+)
+
+metadata_table = Table(
+    "metadata", metadata_obj,
+    Column("key", String, primary_key=True),
+    Column("value", Text, nullable=True),
+)
+
+# Indexes defined separately to keep Table definitions clean
+Index("idx_episodes_consolidated", episodes_table.c.consolidated)
+Index("idx_episodes_timestamp", episodes_table.c.timestamp)
+Index("idx_episodes_topic", episodes_table.c.topic)
+Index("idx_concepts_topic", concepts_table.c.topic)
+Index("idx_relations_source", relations_table.c.source_id)
+Index("idx_relations_target", relations_table.c.target_id)
+Index("idx_relations_type", relations_table.c.type)
+Index("idx_entities_type", entities_table.c.type)
+Index("idx_mentions_episode", mentions_table.c.episode_id)
+Index("idx_mentions_entity", mentions_table.c.entity_id)
+Index("idx_entity_relations_source", entity_relations_table.c.source_id)
+Index("idx_entity_relations_target", entity_relations_table.c.target_id)
+Index("idx_entity_relations_episode", entity_relations_table.c.source_episode_id)
+
+
+def _is_sqlite(engine) -> bool:
+    return engine.dialect.name == "sqlite"
+
+
+def _embedding_to_bytes(embedding: Optional[list[float]]) -> Optional[bytes]:
+    if not embedding:
+        return None
+    return np.array(embedding, dtype=np.float32).tobytes()
+
+
+def _bytes_to_embedding(blob: Optional[bytes]) -> Optional[list[float]]:
+    if not blob:
+        return None
+    return np.frombuffer(blob, dtype=np.float32).tolist()
+
+
+def _parse_json(value) -> dict:
+    """Parse a JSON column value. SQLAlchemy returns dicts for native JSON
+    backends (PG, MySQL) but strings for SQLite."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        return value
+    return json.loads(value)
+
+
+def _dump_json(value) -> str:
+    """Always serialize to a string. SQLAlchemy JSON columns accept both
+    dicts and strings depending on the dialect, but strings work everywhere."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
+class SQLAlchemyMemoryStore(MemoryStore):
     """
-    SQLite-based memory store.
-    
-    Simple, portable, no external dependencies.
-    Uses JSON for flexible concept/episode storage while maintaining
-    a separate relations table for efficient graph queries.
+    SQLAlchemy-based memory store.
+
+    Supports SQLite (default), PostgreSQL, MySQL, and any database
+    backend supported by SQLAlchemy.
     """
-    
-    def __init__(self, db_path: str = "memory.db"):
-        self.db_path = Path(db_path)
+
+    def __init__(self, db_url: str = "sqlite:///memory.db"):
+        if db_url.endswith(".db") and "://" not in db_url:
+            db_url = f"sqlite:///{db_url}"
+
+        self.db_url = db_url
+        self.engine = create_engine(db_url)
         self._init_db()
-    
-    def _get_conn(self) -> sqlite3.Connection:
-        """Get a database connection."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-    
+
+    @contextmanager
+    def _connect(self):
+        """Context manager that yields a connection and auto-commits on success."""
+        with self.engine.connect() as conn:
+            yield conn
+            conn.commit()
+
     def _init_db(self):
-        """Initialize database schema with migration support."""
-        conn = self._get_conn()
-        try:
-            # Concepts table - stores full concept data as JSON
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS concepts (
-                    id TEXT PRIMARY KEY,
-                    title TEXT,
-                    summary TEXT,
-                    data JSON NOT NULL,
-                    embedding BLOB,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Episodes table
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS episodes (
-                    id TEXT PRIMARY KEY,
-                    content TEXT,
-                    data JSON NOT NULL,
-                    consolidated BOOLEAN DEFAULT FALSE,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Relations table for efficient graph queries
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS relations (
-                    source_id TEXT NOT NULL,
-                    target_id TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    strength REAL DEFAULT 0.5,
-                    context TEXT,
-                    PRIMARY KEY (source_id, target_id, type),
-                    FOREIGN KEY (source_id) REFERENCES concepts(id) ON DELETE CASCADE,
-                    FOREIGN KEY (target_id) REFERENCES concepts(id) ON DELETE CASCADE
-                )
-            """)
-            
-            # === NEW TABLES (v2 schema) ===
-            
-            # Entities table - external referents (files, functions, people, etc.)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS entities (
-                    id TEXT PRIMARY KEY,
-                    type TEXT NOT NULL,
-                    display_name TEXT,
-                    data JSON,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Mentions table - links episodes to entities
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS mentions (
-                    episode_id TEXT NOT NULL,
-                    entity_id TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (episode_id, entity_id),
-                    FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE,
-                    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
-                )
-            """)
+        """Create tables and run additive migrations."""
+        metadata_obj.create_all(self.engine)
+        self._run_migrations()
 
-            # Entity relations table - relationships between entities
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS entity_relations (
-                    source_id TEXT NOT NULL,
-                    target_id TEXT NOT NULL,
-                    relation_type TEXT NOT NULL,
-                    strength REAL DEFAULT 0.5,
-                    context TEXT,
-                    source_episode_id TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (source_id, target_id, relation_type),
-                    FOREIGN KEY (source_id) REFERENCES entities(id) ON DELETE CASCADE,
-                    FOREIGN KEY (target_id) REFERENCES entities(id) ON DELETE CASCADE,
-                    FOREIGN KEY (source_episode_id) REFERENCES episodes(id) ON DELETE SET NULL
-                )
-            """)
+    def _run_migrations(self):
+        """Run additive schema migrations for backwards compatibility."""
+        insp = inspect(self.engine)
 
-            # Metadata table - persistent key-value pairs
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            """)
+        def _has_column(table_name: str, col_name: str) -> bool:
+            cols = {c["name"] for c in insp.get_columns(table_name)}
+            return col_name in cols
 
-            # === INDEXES ===
-            
-            # Episode indexes
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_consolidated ON episodes(consolidated)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp)")
-            
-            # Relation indexes
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(type)")
-            
-            # Entity indexes
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)")
-            
-            # Mention indexes
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_mentions_episode ON mentions(episode_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_mentions_entity ON mentions(entity_id)")
+        with self.engine.connect() as conn:
+            if not _has_column("concepts", "title"):
+                conn.execute(text("ALTER TABLE concepts ADD COLUMN title TEXT"))
+                conn.commit()
+                logger.info("Migration: Added title column to concepts table")
 
-            # Entity relation indexes
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_source ON entity_relations(source_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(target_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_relations_episode ON entity_relations(source_episode_id)")
+            if not _has_column("episodes", "title"):
+                conn.execute(text("ALTER TABLE episodes ADD COLUMN title TEXT"))
+                conn.commit()
+                logger.info("Migration: Added title column to episodes table")
 
-            # Episode type index for task/spec/plan queries
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_type ON episodes(json_extract(data, '$.episode_type'))")
+            if not _has_column("entity_relations", "episode_count"):
+                conn.execute(text("ALTER TABLE entity_relations ADD COLUMN episode_count INTEGER DEFAULT 1"))
+                conn.commit()
+                logger.info("Migration: Added episode_count column to entity_relations table")
 
-            conn.commit()
-            
-            # Run migrations for existing databases
-            self._run_migrations(conn)
-            
-        finally:
-            conn.close()
-    
-    def _run_migrations(self, conn: sqlite3.Connection):
-        """Run schema migrations for backwards compatibility."""
-        # Check if episodes table has the entities_extracted indicator in data
-        # This is handled via JSON in the data column, so no schema migration needed
-        # The Episode.from_dict() handles missing fields with defaults
+            if not _has_column("entity_relations", "source_episode_ids"):
+                conn.execute(text("ALTER TABLE entity_relations ADD COLUMN source_episode_ids TEXT DEFAULT '[]'"))
+                conn.commit()
+                logger.info("Migration: Added source_episode_ids column to entity_relations table")
 
-        # Migration: Add title column to concepts table if it doesn't exist
-        try:
-            conn.execute("SELECT title FROM concepts LIMIT 1")
-        except sqlite3.OperationalError:
-            conn.execute("ALTER TABLE concepts ADD COLUMN title TEXT")
-            conn.commit()
-            logger.info("Migration: Added title column to concepts table")
+            if not _has_column("episodes", "embedding"):
+                conn.execute(text("ALTER TABLE episodes ADD COLUMN embedding BYTEA" if not _is_sqlite(self.engine) else "ALTER TABLE episodes ADD COLUMN embedding BLOB"))
+                conn.commit()
+                logger.info("Migration: Added embedding column to episodes table")
 
-        # Migration: Add title column to episodes table if it doesn't exist
-        try:
-            conn.execute("SELECT title FROM episodes LIMIT 1")
-        except sqlite3.OperationalError:
-            conn.execute("ALTER TABLE episodes ADD COLUMN title TEXT")
-            conn.commit()
-            logger.info("Migration: Added title column to episodes table")
+            if not _has_column("episodes", "topic"):
+                conn.execute(text("ALTER TABLE episodes ADD COLUMN topic TEXT"))
+                conn.commit()
+                logger.info("Migration: Added topic column to episodes table")
 
-        # Migration: Add aggregation columns to entity_relations if missing
-        existing_cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(entity_relations)").fetchall()
-        }
-        if "episode_count" not in existing_cols:
-            conn.execute("ALTER TABLE entity_relations ADD COLUMN episode_count INTEGER DEFAULT 1")
-            conn.commit()
-            logger.info("Migration: Added episode_count column to entity_relations table")
-        if "source_episode_ids" not in existing_cols:
-            conn.execute("ALTER TABLE entity_relations ADD COLUMN source_episode_ids TEXT DEFAULT '[]'")
-            conn.commit()
-            logger.info("Migration: Added source_episode_ids column to entity_relations table")
+            if not _has_column("concepts", "topic"):
+                conn.execute(text("ALTER TABLE concepts ADD COLUMN topic TEXT"))
+                conn.commit()
+                logger.info("Migration: Added topic column to concepts table")
 
-        # Migration: Add embedding column to episodes table if it doesn't exist
-        ep_cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(episodes)").fetchall()
-        }
-        if "embedding" not in ep_cols:
-            conn.execute("ALTER TABLE episodes ADD COLUMN embedding BLOB")
-            conn.commit()
-            logger.info("Migration: Added embedding column to episodes table")
+            try:
+                entity_count = conn.execute(text("SELECT COUNT(*) FROM entities")).scalar()
+                mention_count = conn.execute(text("SELECT COUNT(*) FROM mentions")).scalar()
+                logger.debug(f"Schema v2: {entity_count} entities, {mention_count} mentions")
+            except OperationalError:
+                logger.warning("Entity tables not found, will be created on next init")
 
-        # Migration: Add topic column to episodes table if it doesn't exist
-        if "topic" not in ep_cols:
-            conn.execute("ALTER TABLE episodes ADD COLUMN topic TEXT")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_topic ON episodes(topic)")
-            conn.commit()
-            logger.info("Migration: Added topic column to episodes table")
-
-        # Migration: Add topic column to concepts table if it doesn't exist
-        concept_cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(concepts)").fetchall()
-        }
-        if "topic" not in concept_cols:
-            conn.execute("ALTER TABLE concepts ADD COLUMN topic TEXT")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_concepts_topic ON concepts(topic)")
-            conn.commit()
-            logger.info("Migration: Added topic column to concepts table")
-
-        # Log migration status
-        try:
-            entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
-            mention_count = conn.execute("SELECT COUNT(*) FROM mentions").fetchone()[0]
-            logger.debug(f"Schema v2: {entity_count} entities, {mention_count} mentions")
-        except sqlite3.OperationalError:
-            # Tables don't exist yet (shouldn't happen, but handle gracefully)
-            logger.warning("Entity tables not found, will be created on next init")
-    
+    # ------------------------------------------------------------------
     # Concept operations
-    
+    # ------------------------------------------------------------------
+
     def add_concept(self, concept: Concept) -> str:
-        """Add a concept and return its ID."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             data = concept.to_dict()
-            embedding_blob = None
-            if concept.embedding:
-                embedding_blob = np.array(concept.embedding, dtype=np.float32).tobytes()
-            
             conn.execute(
-                """
-                INSERT INTO concepts (id, title, summary, data, embedding, created_at, updated_at, topic)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    concept.id,
-                    concept.title,
-                    concept.summary,
-                    json.dumps(data),
-                    embedding_blob,
-                    concept.created_at.isoformat(),
-                    concept.updated_at.isoformat(),
-                    concept.topic,
+                concepts_table.insert().values(
+                    id=concept.id,
+                    title=concept.title,
+                    summary=concept.summary,
+                    data=_dump_json(data),
+                    embedding=_embedding_to_bytes(concept.embedding),
+                    created_at=concept.created_at,
+                    updated_at=concept.updated_at,
+                    topic=concept.topic,
                 )
             )
-            
-            # Add relations to relations table
             self._sync_relations(conn, concept)
-            
-            conn.commit()
-            return concept.id
-        finally:
-            conn.close()
-    
-    def _sync_relations(self, conn: sqlite3.Connection, concept: Concept):
-        """Sync concept's relations to the relations table."""
-        # Delete existing relations from this concept
-        conn.execute("DELETE FROM relations WHERE source_id = ?", (concept.id,))
-        
-        # Insert current relations
+        return concept.id
+
+    def _sync_relations(self, conn, concept: Concept):
+        conn.execute(
+            relations_table.delete().where(relations_table.c.source_id == concept.id)
+        )
         for rel in concept.relations:
             conn.execute(
-                """
-                INSERT OR REPLACE INTO relations (source_id, target_id, type, strength, context)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (concept.id, rel.target_id, rel.type.value, rel.strength, rel.context)
-            )
-    
-    def get_concept(self, id: str) -> Optional[Concept]:
-        """Get a concept by ID (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
-            row = conn.execute(
-                """
-                SELECT data, embedding FROM concepts
-                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL
-                """,
-                (id,)
-            ).fetchone()
-
-            if not row:
-                return None
-
-            data = json.loads(row["data"])
-
-            # Restore embedding from blob
-            if row["embedding"]:
-                data["embedding"] = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
-
-            return Concept.from_dict(data)
-        finally:
-            conn.close()
-    
-    def update_concept(self, concept: Concept) -> None:
-        """Update an existing concept."""
-        conn = self._get_conn()
-        try:
-            data = concept.to_dict()
-            embedding_blob = None
-            if concept.embedding:
-                embedding_blob = np.array(concept.embedding, dtype=np.float32).tobytes()
-            
-            conn.execute(
-                """
-                UPDATE concepts
-                SET title = ?, summary = ?, data = ?, embedding = ?, updated_at = ?, topic = ?
-                WHERE id = ?
-                """,
-                (
-                    concept.title,
-                    concept.summary,
-                    json.dumps(data),
-                    embedding_blob,
-                    concept.updated_at.isoformat(),
-                    concept.topic,
-                    concept.id,
+                relations_table.insert().values(
+                    source_id=concept.id,
+                    target_id=rel.target_id,
+                    type=rel.type.value,
+                    strength=rel.strength,
+                    context=rel.context,
                 )
             )
-            
-            # Sync relations
-            self._sync_relations(conn, concept)
-            
-            conn.commit()
-        finally:
-            conn.close()
-    
-    def delete_concept(self, id: str) -> bool:
-        """Soft delete a concept. Returns True if deleted."""
-        conn = self._get_conn()
-        try:
-            now = datetime.now().isoformat()
-            cursor = conn.execute(
-                """
-                UPDATE concepts
-                SET data = json_set(data, '$.deleted_at', ?)
-                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL
-                """,
-                (now, id)
+
+    def get_concept(self, id: str) -> Optional[Concept]:
+        with self._connect() as conn:
+            row = conn.execute(
+                select(concepts_table.c.data, concepts_table.c.embedding)
+                .where(concepts_table.c.id == id)
+            ).fetchone()
+            if not row:
+                return None
+            data = _parse_json(row.data)
+            if data.get("deleted_at"):
+                return None
+            if row.embedding:
+                data["embedding"] = _bytes_to_embedding(row.embedding)
+            return Concept.from_dict(data)
+
+    def update_concept(self, concept: Concept) -> None:
+        with self._connect() as conn:
+            data = concept.to_dict()
+            conn.execute(
+                concepts_table.update()
+                .where(concepts_table.c.id == concept.id)
+                .values(
+                    title=concept.title,
+                    summary=concept.summary,
+                    data=_dump_json(data),
+                    embedding=_embedding_to_bytes(concept.embedding),
+                    updated_at=concept.updated_at,
+                    topic=concept.topic,
+                )
             )
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
+            self._sync_relations(conn, concept)
+
+    def delete_concept(self, id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                select(concepts_table.c.data).where(concepts_table.c.id == id)
+            ).fetchone()
+            if not row:
+                return False
+            data = _parse_json(row.data)
+            if data.get("deleted_at"):
+                return False
+            data["deleted_at"] = datetime.now().isoformat()
+            conn.execute(
+                concepts_table.update()
+                .where(concepts_table.c.id == id)
+                .values(data=_dump_json(data))
+            )
+            return True
 
     def restore_concept(self, id: str) -> bool:
-        """Restore a soft-deleted concept. Returns True if restored."""
-        conn = self._get_conn()
-        try:
-            cursor = conn.execute(
-                """
-                UPDATE concepts
-                SET data = json_remove(data, '$.deleted_at')
-                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NOT NULL
-                """,
-                (id,)
+        with self._connect() as conn:
+            row = conn.execute(
+                select(concepts_table.c.data).where(concepts_table.c.id == id)
+            ).fetchone()
+            if not row:
+                return False
+            data = _parse_json(row.data)
+            if not data.get("deleted_at"):
+                return False
+            data.pop("deleted_at", None)
+            conn.execute(
+                concepts_table.update()
+                .where(concepts_table.c.id == id)
+                .values(data=_dump_json(data))
             )
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
+            return True
 
     def purge_concept(self, id: str) -> bool:
-        """Permanently delete a concept. Returns True if deleted."""
-        conn = self._get_conn()
-        try:
-            cursor = conn.execute("DELETE FROM concepts WHERE id = ?", (id,))
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
+        with self._connect() as conn:
+            result = conn.execute(
+                concepts_table.delete().where(concepts_table.c.id == id)
+            )
+            return result.rowcount > 0
 
     def get_deleted_concepts(self) -> list[Concept]:
-        """Get soft-deleted concepts."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data, embedding FROM concepts
-                WHERE json_extract(data, '$.deleted_at') IS NOT NULL
-                ORDER BY json_extract(data, '$.deleted_at') DESC
-                """
+                select(concepts_table.c.data, concepts_table.c.embedding)
             ).fetchall()
             concepts = []
             for row in rows:
-                data = json.loads(row["data"])
-                if row["embedding"]:
-                    data["embedding"] = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
+                data = _parse_json(row.data)
+                if not data.get("deleted_at"):
+                    continue
+                if row.embedding:
+                    data["embedding"] = _bytes_to_embedding(row.embedding)
                 concepts.append(Concept.from_dict(data))
+            concepts.sort(key=lambda c: c.deleted_at or "", reverse=True)
             return concepts
-        finally:
-            conn.close()
 
     def get_all_concepts(self) -> list[Concept]:
-        """Get all concepts (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data, embedding FROM concepts
-                WHERE json_extract(data, '$.deleted_at') IS NULL
-                """
+                select(concepts_table.c.data, concepts_table.c.embedding)
             ).fetchall()
             concepts = []
             for row in rows:
-                data = json.loads(row["data"])
-                if row["embedding"]:
-                    data["embedding"] = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                if row.embedding:
+                    data["embedding"] = _bytes_to_embedding(row.embedding)
                 concepts.append(Concept.from_dict(data))
             return concepts
-        finally:
-            conn.close()
-    
-    def get_concepts_summary(self) -> list[dict]:
-        """Get a lightweight summary of all concepts (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
-            rows = conn.execute(
-                """
-                SELECT id, title, summary, topic,
-                       json_extract(data, '$.confidence') as confidence,
-                       json_extract(data, '$.instance_count') as instance_count,
-                       json_extract(data, '$.tags') as tags
-                FROM concepts
-                WHERE json_extract(data, '$.deleted_at') IS NULL
-                """
-            ).fetchall()
 
-            return [
-                {
-                    "id": row["id"],
-                    "title": row["title"],
-                    "summary": row["summary"],
-                    "topic": row["topic"],
-                    "confidence": row["confidence"],
-                    "instance_count": row["instance_count"],
-                    "tags": json.loads(row["tags"]) if row["tags"] else [],
-                }
-                for row in rows
-            ]
-        finally:
-            conn.close()
-    
-    # Embedding-based retrieval
-    
-    def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
-        """Find concepts by embedding similarity (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
+    def get_concepts_summary(self) -> list[dict]:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data, embedding FROM concepts
-                WHERE embedding IS NOT NULL
-                AND json_extract(data, '$.deleted_at') IS NULL
-                """
+                select(
+                    concepts_table.c.id,
+                    concepts_table.c.title,
+                    concepts_table.c.summary,
+                    concepts_table.c.topic,
+                    concepts_table.c.data,
+                )
             ).fetchall()
-            
             results = []
             for row in rows:
-                if not row["embedding"]:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
                     continue
-                
-                stored_embedding = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
-                similarity = cosine_similarity(embedding, stored_embedding)
-                
-                data = json.loads(row["data"])
-                data["embedding"] = stored_embedding
-                concept = Concept.from_dict(data)
-                
-                results.append((concept, similarity))
-            
-            # Sort by similarity descending and take top k
+                results.append({
+                    "id": row.id,
+                    "title": row.title,
+                    "summary": row.summary,
+                    "topic": row.topic,
+                    "confidence": data.get("confidence"),
+                    "instance_count": data.get("instance_count"),
+                    "tags": data.get("tags", []),
+                })
+            return results
+
+    # ------------------------------------------------------------------
+    # Embedding-based retrieval
+    # ------------------------------------------------------------------
+
+    def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(concepts_table.c.data, concepts_table.c.embedding)
+                .where(concepts_table.c.embedding.isnot(None))
+            ).fetchall()
+
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                if not row.embedding:
+                    continue
+                stored = _bytes_to_embedding(row.embedding)
+                sim = cosine_similarity(embedding, stored)
+                data["embedding"] = stored
+                results.append((Concept.from_dict(data), sim))
+
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:k]
-        finally:
-            conn.close()
 
     def find_episodes_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Episode, float]]:
-        """Find episodes by embedding similarity (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data, embedding FROM episodes
-                WHERE embedding IS NOT NULL
-                AND json_extract(data, '$.deleted_at') IS NULL
-                """
+                select(episodes_table.c.data, episodes_table.c.embedding)
+                .where(episodes_table.c.embedding.isnot(None))
             ).fetchall()
 
             results = []
             for row in rows:
-                if not row["embedding"]:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
                     continue
-
-                stored_embedding = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
-                similarity = cosine_similarity(embedding, stored_embedding)
-
-                episode = Episode.from_dict(json.loads(row["data"]))
-                episode.embedding = stored_embedding
-
-                results.append((episode, similarity))
+                if not row.embedding:
+                    continue
+                stored = _bytes_to_embedding(row.embedding)
+                sim = cosine_similarity(embedding, stored)
+                ep = Episode.from_dict(data)
+                ep.embedding = stored
+                results.append((ep, sim))
 
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:k]
-        finally:
-            conn.close()
 
+    # ------------------------------------------------------------------
     # Graph traversal
-    
+    # ------------------------------------------------------------------
+
     def get_related(
         self,
         concept_id: str,
         relation_types: Optional[list[RelationType]] = None,
         depth: int = 1
     ) -> list[tuple[Concept, Relation]]:
-        """Get related concepts with their relations."""
-        conn = self._get_conn()
-        try:
-            visited = set()
-            results = []
-            
+        with self._connect() as conn:
+            visited: set[str] = set()
+            results: list[tuple[Concept, Relation]] = []
             self._traverse_relations(conn, concept_id, relation_types, depth, visited, results)
-            
             return results
-        finally:
-            conn.close()
-    
-    def _traverse_relations(
-        self,
-        conn: sqlite3.Connection,
-        concept_id: str,
-        relation_types: Optional[list[RelationType]],
-        remaining_depth: int,
-        visited: set,
-        results: list
-    ):
-        """Recursively traverse relations."""
+
+    def _traverse_relations(self, conn, concept_id, relation_types, remaining_depth, visited, results):
         if remaining_depth <= 0 or concept_id in visited:
             return
-        
         visited.add(concept_id)
-        
-        # Build query
-        query = "SELECT target_id, type, strength, context FROM relations WHERE source_id = ?"
-        params = [concept_id]
-        
+
+        stmt = select(
+            relations_table.c.target_id,
+            relations_table.c.type,
+            relations_table.c.strength,
+            relations_table.c.context,
+        ).where(relations_table.c.source_id == concept_id)
+
         if relation_types:
-            placeholders = ",".join("?" * len(relation_types))
-            query += f" AND type IN ({placeholders})"
-            params.extend(rt.value for rt in relation_types)
-        
-        rows = conn.execute(query, params).fetchall()
-        
+            stmt = stmt.where(relations_table.c.type.in_([rt.value for rt in relation_types]))
+
+        rows = conn.execute(stmt).fetchall()
+
         for row in rows:
-            target_id = row["target_id"]
-            
-            # Skip if already visited
+            target_id = row.target_id
             if target_id in visited:
                 continue
-            
-            # Get the target concept
+
             concept_row = conn.execute(
-                "SELECT data, embedding FROM concepts WHERE id = ?",
-                (target_id,)
+                select(concepts_table.c.data, concepts_table.c.embedding)
+                .where(concepts_table.c.id == target_id)
             ).fetchone()
-            
             if not concept_row:
                 continue
-            
-            data = json.loads(concept_row["data"])
-            if concept_row["embedding"]:
-                data["embedding"] = np.frombuffer(concept_row["embedding"], dtype=np.float32).tolist()
-            
+
+            data = _parse_json(concept_row.data)
+            if concept_row.embedding:
+                data["embedding"] = _bytes_to_embedding(concept_row.embedding)
+
             concept = Concept.from_dict(data)
             relation = Relation(
-                type=RelationType(row["type"]),
+                type=RelationType(row.type),
                 target_id=target_id,
-                strength=row["strength"],
-                context=row["context"],
+                strength=row.strength,
+                context=row.context,
             )
-            
             results.append((concept, relation))
-            
-            # Recurse if we have more depth
+
             if remaining_depth > 1:
-                self._traverse_relations(
-                    conn, target_id, relation_types, remaining_depth - 1, visited, results
-                )
-    
+                self._traverse_relations(conn, target_id, relation_types, remaining_depth - 1, visited, results)
+
     def get_incoming_relations(
         self,
         concept_id: str,
         relation_type: RelationType,
     ) -> list[tuple[Concept, Relation]]:
-        """Get concepts that have a relation pointing *to* this concept."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                "SELECT source_id, type, strength, context FROM relations WHERE target_id = ? AND type = ?",
-                (concept_id, relation_type.value),
+                select(
+                    relations_table.c.source_id,
+                    relations_table.c.type,
+                    relations_table.c.strength,
+                    relations_table.c.context,
+                )
+                .where(relations_table.c.target_id == concept_id)
+                .where(relations_table.c.type == relation_type.value)
             ).fetchall()
 
             results: list[tuple[Concept, Relation]] = []
             for row in rows:
-                source_id = row["source_id"]
                 concept_row = conn.execute(
-                    """SELECT data, embedding FROM concepts
-                       WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL""",
-                    (source_id,),
+                    select(concepts_table.c.data, concepts_table.c.embedding)
+                    .where(concepts_table.c.id == row.source_id)
                 ).fetchone()
                 if not concept_row:
                     continue
 
-                data = json.loads(concept_row["data"])
-                if concept_row["embedding"]:
-                    data["embedding"] = np.frombuffer(concept_row["embedding"], dtype=np.float32).tolist()
+                data = _parse_json(concept_row.data)
+                if data.get("deleted_at"):
+                    continue
+                if concept_row.embedding:
+                    data["embedding"] = _bytes_to_embedding(concept_row.embedding)
 
                 concept = Concept.from_dict(data)
                 relation = Relation(
-                    type=RelationType(row["type"]),
+                    type=RelationType(row.type),
                     target_id=concept_id,
-                    strength=row["strength"],
-                    context=row["context"],
+                    strength=row.strength,
+                    context=row.context,
                 )
                 results.append((concept, relation))
 
             return results
-        finally:
-            conn.close()
 
+    # ------------------------------------------------------------------
     # Episode operations
-    
-    def add_episode(self, episode: Episode) -> str:
-        """Add an episode and return its ID."""
-        conn = self._get_conn()
-        try:
-            data = episode.to_dict()
-            embedding_blob = None
-            if episode.embedding:
-                embedding_blob = np.array(episode.embedding, dtype=np.float32).tobytes()
+    # ------------------------------------------------------------------
 
+    def add_episode(self, episode: Episode) -> str:
+        with self._connect() as conn:
+            data = episode.to_dict()
             conn.execute(
-                """
-                INSERT INTO episodes (id, title, content, data, consolidated, timestamp, embedding, topic)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    episode.id,
-                    episode.title,
-                    episode.content,
-                    json.dumps(data),
-                    episode.consolidated,
-                    episode.timestamp.isoformat(),
-                    embedding_blob,
-                    episode.topic,
+                episodes_table.insert().values(
+                    id=episode.id,
+                    title=episode.title,
+                    content=episode.content,
+                    data=_dump_json(data),
+                    consolidated=episode.consolidated,
+                    timestamp=episode.timestamp,
+                    embedding=_embedding_to_bytes(episode.embedding),
+                    topic=episode.topic,
                 )
             )
-            conn.commit()
-            return episode.id
-        finally:
-            conn.close()
-    
+        return episode.id
+
     def add_episodes_batch(self, episodes: list[Episode]) -> list[str]:
-        """Add multiple episodes in a single transaction."""
         if not episodes:
             return []
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             ids = []
             for episode in episodes:
                 data = episode.to_dict()
-                embedding_blob = None
-                if episode.embedding:
-                    embedding_blob = np.array(episode.embedding, dtype=np.float32).tobytes()
                 conn.execute(
-                    """
-                    INSERT INTO episodes (id, title, content, data, consolidated, timestamp, embedding, topic)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        episode.id,
-                        episode.title,
-                        episode.content,
-                        json.dumps(data),
-                        episode.consolidated,
-                        episode.timestamp.isoformat(),
-                        embedding_blob,
-                        episode.topic,
+                    episodes_table.insert().values(
+                        id=episode.id,
+                        title=episode.title,
+                        content=episode.content,
+                        data=_dump_json(data),
+                        consolidated=episode.consolidated,
+                        timestamp=episode.timestamp,
+                        embedding=_embedding_to_bytes(episode.embedding),
+                        topic=episode.topic,
                     )
                 )
                 ids.append(episode.id)
-            conn.commit()
             return ids
-        finally:
-            conn.close()
 
     def get_episode(self, id: str) -> Optional[Episode]:
-        """Get an episode by ID (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             row = conn.execute(
-                """
-                SELECT data, embedding FROM episodes
-                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL
-                """,
-                (id,)
+                select(episodes_table.c.data, episodes_table.c.embedding)
+                .where(episodes_table.c.id == id)
             ).fetchone()
             if not row:
                 return None
-            episode = Episode.from_dict(json.loads(row["data"]))
-            if row["embedding"]:
-                episode.embedding = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
-            return episode
-        finally:
-            conn.close()
+            data = _parse_json(row.data)
+            if data.get("deleted_at"):
+                return None
+            ep = Episode.from_dict(data)
+            if row.embedding:
+                ep.embedding = _bytes_to_embedding(row.embedding)
+            return ep
 
     def get_episodes_batch(self, ids: list[str]) -> list[Episode]:
-        """Get multiple episodes by ID in a single query."""
         if not ids:
             return []
-        conn = self._get_conn()
-        try:
-            placeholders = ",".join("?" for _ in ids)
+        with self._connect() as conn:
             rows = conn.execute(
-                f"""
-                SELECT data, embedding FROM episodes
-                WHERE id IN ({placeholders})
-                AND json_extract(data, '$.deleted_at') IS NULL
-                """,
-                tuple(ids),
+                select(episodes_table.c.data, episodes_table.c.embedding)
+                .where(episodes_table.c.id.in_(ids))
+            ).fetchall()
+
+            episodes = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                ep = Episode.from_dict(data)
+                if row.embedding:
+                    ep.embedding = _bytes_to_embedding(row.embedding)
+                episodes.append(ep)
+            return episodes
+
+    def update_episode(self, episode: Episode) -> None:
+        with self._connect() as conn:
+            data = episode.to_dict()
+            conn.execute(
+                episodes_table.update()
+                .where(episodes_table.c.id == episode.id)
+                .values(
+                    title=episode.title,
+                    content=episode.content,
+                    data=_dump_json(data),
+                    consolidated=episode.consolidated,
+                    timestamp=episode.timestamp,
+                    embedding=_embedding_to_bytes(episode.embedding),
+                    topic=episode.topic,
+                )
+            )
+
+    def delete_episode(self, id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                select(episodes_table.c.data).where(episodes_table.c.id == id)
+            ).fetchone()
+            if not row:
+                return False
+            data = _parse_json(row.data)
+            if data.get("deleted_at"):
+                return False
+            data["deleted_at"] = datetime.now().isoformat()
+            conn.execute(
+                episodes_table.update()
+                .where(episodes_table.c.id == id)
+                .values(data=_dump_json(data))
+            )
+            conn.execute(
+                entity_relations_table.delete()
+                .where(entity_relations_table.c.source_episode_id == id)
+            )
+            conn.execute(
+                mentions_table.delete()
+                .where(mentions_table.c.episode_id == id)
+            )
+            return True
+
+    def restore_episode(self, id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                select(episodes_table.c.data).where(episodes_table.c.id == id)
+            ).fetchone()
+            if not row:
+                return False
+            data = _parse_json(row.data)
+            if not data.get("deleted_at"):
+                return False
+            data.pop("deleted_at", None)
+            conn.execute(
+                episodes_table.update()
+                .where(episodes_table.c.id == id)
+                .values(data=_dump_json(data))
+            )
+            return True
+
+    def purge_episode(self, id: str) -> bool:
+        with self._connect() as conn:
+            conn.execute(
+                entity_relations_table.delete()
+                .where(entity_relations_table.c.source_episode_id == id)
+            )
+            conn.execute(
+                mentions_table.delete()
+                .where(mentions_table.c.episode_id == id)
+            )
+            result = conn.execute(
+                episodes_table.delete().where(episodes_table.c.id == id)
+            )
+            return result.rowcount > 0
+
+    def get_deleted_episodes(self, limit: int = 50) -> list[Episode]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(episodes_table.c.data)
+                .order_by(episodes_table.c.timestamp.desc())
             ).fetchall()
             episodes = []
             for row in rows:
-                ep = Episode.from_dict(json.loads(row["data"]))
-                if row["embedding"]:
-                    ep.embedding = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
-                episodes.append(ep)
+                data = _parse_json(row.data)
+                if not data.get("deleted_at"):
+                    continue
+                episodes.append(Episode.from_dict(data))
+                if len(episodes) >= limit:
+                    break
             return episodes
-        finally:
-            conn.close()
-
-    def update_episode(self, episode: Episode) -> None:
-        """Update an existing episode."""
-        conn = self._get_conn()
-        try:
-            data = episode.to_dict()
-            embedding_blob = None
-            if episode.embedding:
-                embedding_blob = np.array(episode.embedding, dtype=np.float32).tobytes()
-
-            conn.execute(
-                """
-                UPDATE episodes
-                SET title = ?, content = ?, data = ?, consolidated = ?, timestamp = ?, embedding = ?, topic = ?
-                WHERE id = ?
-                """,
-                (
-                    episode.title,
-                    episode.content,
-                    json.dumps(data),
-                    episode.consolidated,
-                    episode.timestamp.isoformat(),
-                    embedding_blob,
-                    episode.topic,
-                    episode.id,
-                )
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-    def delete_episode(self, id: str) -> bool:
-        """Soft delete an episode. Also cleans up mentions and entity relations."""
-        conn = self._get_conn()
-        try:
-            now = datetime.now().isoformat()
-            cursor = conn.execute(
-                """
-                UPDATE episodes
-                SET data = json_set(data, '$.deleted_at', ?)
-                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NULL
-                """,
-                (now, id)
-            )
-            if cursor.rowcount > 0:
-                conn.execute("DELETE FROM entity_relations WHERE source_episode_id = ?", (id,))
-                conn.execute("DELETE FROM mentions WHERE episode_id = ?", (id,))
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
-
-    def restore_episode(self, id: str) -> bool:
-        """Restore a soft-deleted episode. Returns True if restored."""
-        conn = self._get_conn()
-        try:
-            cursor = conn.execute(
-                """
-                UPDATE episodes
-                SET data = json_remove(data, '$.deleted_at')
-                WHERE id = ? AND json_extract(data, '$.deleted_at') IS NOT NULL
-                """,
-                (id,)
-            )
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
-
-    def purge_episode(self, id: str) -> bool:
-        """Permanently delete an episode. Returns True if deleted."""
-        conn = self._get_conn()
-        try:
-            # Delete entity relations derived from this episode
-            conn.execute(
-                "DELETE FROM entity_relations WHERE source_episode_id = ?",
-                (id,)
-            )
-            # Delete mentions
-            conn.execute(
-                "DELETE FROM mentions WHERE episode_id = ?",
-                (id,)
-            )
-            # Delete the episode
-            cursor = conn.execute("DELETE FROM episodes WHERE id = ?", (id,))
-            conn.commit()
-            return cursor.rowcount > 0
-        finally:
-            conn.close()
-
-    def get_deleted_episodes(self, limit: int = 50) -> list[Episode]:
-        """Get soft-deleted episodes."""
-        conn = self._get_conn()
-        try:
-            rows = conn.execute(
-                """
-                SELECT data FROM episodes
-                WHERE json_extract(data, '$.deleted_at') IS NOT NULL
-                ORDER BY json_extract(data, '$.deleted_at') DESC
-                LIMIT ?
-                """,
-                (limit,)
-            ).fetchall()
-            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
 
     def get_unconsolidated_episodes(self, limit: int = 10) -> list[Episode]:
-        """Get episodes that haven't been consolidated yet."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data FROM episodes
-                WHERE consolidated = FALSE
-                AND json_extract(data, '$.deleted_at') IS NULL
-                ORDER BY timestamp ASC
-                LIMIT ?
-                """,
-                (limit,)
+                select(episodes_table.c.data)
+                .where(episodes_table.c.consolidated == False)  # noqa: E712
+                .order_by(episodes_table.c.timestamp.asc())
+                .limit(limit)
             ).fetchall()
-            
-            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                results.append(Episode.from_dict(data))
+            return results
 
     def count_unconsolidated_episodes(self) -> int:
-        """Count episodes that haven't been consolidated yet (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
-            row = conn.execute(
-                """
-                SELECT COUNT(*) as count FROM episodes
-                WHERE consolidated = FALSE
-                AND json_extract(data, '$.deleted_at') IS NULL
-                """
-            ).fetchone()
-            return row["count"]
-        finally:
-            conn.close()
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(episodes_table.c.data)
+                .where(episodes_table.c.consolidated == False)  # noqa: E712
+            ).fetchall()
+            count = 0
+            for row in rows:
+                data = _parse_json(row.data)
+                if not data.get("deleted_at"):
+                    count += 1
+            return count
 
     def get_recent_episodes(self, limit: int = 10) -> list[Episode]:
-        """Get most recent episodes (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data FROM episodes
-                WHERE json_extract(data, '$.deleted_at') IS NULL
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (limit,)
+                select(episodes_table.c.data)
+                .order_by(episodes_table.c.timestamp.desc())
             ).fetchall()
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                results.append(Episode.from_dict(data))
+                if len(results) >= limit:
+                    break
+            return results
 
-            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
-    
     def get_episodes_by_date_range(
-        self, 
-        start_date: Optional[str] = None, 
+        self,
+        start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
     ) -> list[Episode]:
-        """Get episodes within a date range.
-        
-        Args:
-            start_date: ISO format datetime string (inclusive), e.g., "2024-01-01" or "2024-01-01T10:00:00"
-            end_date: ISO format datetime string (inclusive), e.g., "2024-12-31" or "2024-12-31T23:59:59"
-            limit: Maximum number of episodes to return
-            
-        Returns:
-            List of episodes sorted by timestamp (newest first)
-        """
-        conn = self._get_conn()
-        try:
-            query = "SELECT data FROM episodes WHERE json_extract(data, '$.deleted_at') IS NULL"
-            params = []
+        with self._connect() as conn:
+            stmt = select(episodes_table.c.data)
 
             if start_date:
-                query += " AND timestamp >= ?"
-                params.append(start_date)
-
+                stmt = stmt.where(episodes_table.c.timestamp >= start_date)
             if end_date:
-                query += " AND timestamp <= ?"
-                params.append(end_date)
+                stmt = stmt.where(episodes_table.c.timestamp <= end_date)
 
-            query += " ORDER BY timestamp DESC LIMIT ?"
-            params.append(limit)
+            stmt = stmt.order_by(episodes_table.c.timestamp.desc())
 
-            rows = conn.execute(query, params).fetchall()
-
-            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
+            rows = conn.execute(stmt).fetchall()
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                results.append(Episode.from_dict(data))
+                if len(results) >= limit:
+                    break
+            return results
 
     def get_unextracted_episodes(self, limit: int = 100) -> list[Episode]:
-        """Get episodes that haven't had entity extraction performed (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
-            # Check entities_extracted flag in JSON data
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data FROM episodes
-                WHERE (json_extract(data, '$.entities_extracted') IS NULL
-                   OR json_extract(data, '$.entities_extracted') = 0
-                   OR json_extract(data, '$.entities_extracted') = 'false')
-                AND json_extract(data, '$.deleted_at') IS NULL
-                ORDER BY timestamp ASC
-                LIMIT ?
-                """,
-                (limit,)
+                select(episodes_table.c.data)
+                .order_by(episodes_table.c.timestamp.asc())
             ).fetchall()
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                extracted = data.get("entities_extracted")
+                if extracted in (True, 1, "true"):
+                    continue
+                results.append(Episode.from_dict(data))
+                if len(results) >= limit:
+                    break
+            return results
 
-            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
-    
     def get_episodes_by_type(self, episode_type: str, limit: int = 50) -> list[Episode]:
-        """Get episodes of a specific type (excluding soft-deleted)."""
         type_str = episode_type.value if isinstance(episode_type, EpisodeType) else str(episode_type)
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data FROM episodes
-                WHERE json_extract(data, '$.episode_type') = ?
-                AND json_extract(data, '$.deleted_at') IS NULL
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (type_str, limit)
+                select(episodes_table.c.data)
+                .order_by(episodes_table.c.timestamp.desc())
             ).fetchall()
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                if data.get("episode_type") != type_str:
+                    continue
+                results.append(Episode.from_dict(data))
+                if len(results) >= limit:
+                    break
+            return results
 
-            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
-    
+    # ------------------------------------------------------------------
     # Entity operations
-    
+    # ------------------------------------------------------------------
+
     def add_entity(self, entity: Entity) -> str:
-        """Add an entity and return its ID. Updates if exists."""
-        conn = self._get_conn()
-        try:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO entities (id, type, display_name, data, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    entity.id,
-                    entity.type.value,
-                    entity.display_name,
-                    json.dumps(entity.to_dict()),
-                    entity.created_at.isoformat(),
+        with self._connect() as conn:
+            try:
+                conn.execute(
+                    entities_table.insert().values(
+                        id=entity.id,
+                        type=entity.type.value,
+                        display_name=entity.display_name,
+                        data=_dump_json(entity.to_dict()),
+                        created_at=entity.created_at,
+                    )
                 )
-            )
-            conn.commit()
-            return entity.id
-        finally:
-            conn.close()
-    
+            except IntegrityError:
+                conn.rollback()
+                conn.execute(
+                    entities_table.update()
+                    .where(entities_table.c.id == entity.id)
+                    .values(
+                        type=entity.type.value,
+                        display_name=entity.display_name,
+                        data=_dump_json(entity.to_dict()),
+                    )
+                )
+        return entity.id
+
     def get_entity(self, id: str) -> Optional[Entity]:
-        """Get an entity by ID."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             row = conn.execute(
-                "SELECT data FROM entities WHERE id = ?",
-                (id,)
+                select(entities_table.c.data).where(entities_table.c.id == id)
             ).fetchone()
-            
             if not row:
                 return None
-            
-            return Entity.from_dict(json.loads(row["data"]))
-        finally:
-            conn.close()
-    
-    def get_entities_by_type(self, entity_type: EntityType) -> list[Entity]:
-        """Get all entities of a given type."""
-        conn = self._get_conn()
-        try:
-            rows = conn.execute(
-                "SELECT data FROM entities WHERE type = ? ORDER BY created_at DESC",
-                (entity_type.value,)
-            ).fetchall()
-            
-            return [Entity.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
-    
-    def get_all_entities(self) -> list[Entity]:
-        """Get all entities."""
-        conn = self._get_conn()
-        try:
-            rows = conn.execute(
-                "SELECT data FROM entities ORDER BY type, created_at DESC"
-            ).fetchall()
+            return Entity.from_dict(_parse_json(row.data))
 
-            return [Entity.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
+    def get_entities_by_type(self, entity_type: EntityType) -> list[Entity]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(entities_table.c.data)
+                .where(entities_table.c.type == entity_type.value)
+                .order_by(entities_table.c.created_at.desc())
+            ).fetchall()
+            return [Entity.from_dict(_parse_json(row.data)) for row in rows]
+
+    def get_all_entities(self) -> list[Entity]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(entities_table.c.data)
+                .order_by(entities_table.c.type, entities_table.c.created_at.desc())
+            ).fetchall()
+            return [Entity.from_dict(_parse_json(row.data)) for row in rows]
 
     def find_entity_by_name(self, name: str) -> Optional[Entity]:
-        """Find an entity by display name, case-insensitive.
-
-        Uses LOWER() for case-insensitive comparison and TRIM() for whitespace.
-        Returns the first match if multiple entities have the same normalized name.
-
-        Args:
-            name: The entity name to search for
-
-        Returns:
-            Entity if found, None otherwise
-        """
         if not name:
             return None
-
-        # Normalize the search name
         normalized = " ".join(name.lower().split())
-
-        conn = self._get_conn()
-        try:
-            # Search by normalized display_name (case-insensitive, trimmed)
+        with self._connect() as conn:
             row = conn.execute(
-                """
-                SELECT data FROM entities
-                WHERE LOWER(TRIM(display_name)) = ?
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-                (normalized,)
+                select(entities_table.c.data)
+                .where(func.lower(func.trim(entities_table.c.display_name)) == normalized)
+                .order_by(entities_table.c.created_at.asc())
+                .limit(1)
             ).fetchone()
-
             if not row:
                 return None
-
-            return Entity.from_dict(json.loads(row["data"]))
-        finally:
-            conn.close()
+            return Entity.from_dict(_parse_json(row.data))
 
     def search_entities_by_words(
         self, words: list[str], limit: int = 10
     ) -> list[tuple[Entity, int]]:
         if not words:
             return []
-
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, data FROM entities"
+                select(entities_table.c.id, entities_table.c.data)
             ).fetchall()
 
             results: list[tuple[Entity, int]] = []
             for row in rows:
-                entity = Entity.from_dict(json.loads(row["data"]))
+                entity = Entity.from_dict(_parse_json(row.data))
                 searchable = f"{entity.id} {entity.display_name}".lower()
                 match_count = sum(1 for w in words if w in searchable)
                 if match_count > 0:
@@ -1529,784 +1354,652 @@ class SQLiteMemoryStore(MemoryStore):
 
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:limit]
-        finally:
-            conn.close()
 
+    # ------------------------------------------------------------------
     # Mention operations
-    
-    def add_mention(self, episode_id: str, entity_id: str) -> None:
-        """Create a mention link between episode and entity."""
-        conn = self._get_conn()
-        try:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO mentions (episode_id, entity_id)
-                VALUES (?, ?)
-                """,
-                (episode_id, entity_id)
-            )
-            conn.commit()
-        finally:
-            conn.close()
-    
-    def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
-        """Get all episodes that mention an entity (excluding soft-deleted)."""
-        conn = self._get_conn()
-        try:
-            rows = conn.execute(
-                """
-                SELECT e.data FROM episodes e
-                JOIN mentions m ON e.id = m.episode_id
-                WHERE m.entity_id = ?
-                AND json_extract(e.data, '$.deleted_at') IS NULL
-                ORDER BY e.timestamp DESC
-                LIMIT ?
-                """,
-                (entity_id, limit)
-            ).fetchall()
+    # ------------------------------------------------------------------
 
-            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
-    
+    def add_mention(self, episode_id: str, entity_id: str) -> None:
+        with self._connect() as conn:
+            try:
+                conn.execute(
+                    mentions_table.insert().values(
+                        episode_id=episode_id,
+                        entity_id=entity_id,
+                    )
+                )
+            except IntegrityError:
+                conn.rollback()
+
+    def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
+        with self._connect() as conn:
+            stmt = (
+                select(episodes_table.c.data)
+                .select_from(
+                    episodes_table.join(
+                        mentions_table,
+                        episodes_table.c.id == mentions_table.c.episode_id,
+                    )
+                )
+                .where(mentions_table.c.entity_id == entity_id)
+                .order_by(episodes_table.c.timestamp.desc())
+            )
+            rows = conn.execute(stmt).fetchall()
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                results.append(Episode.from_dict(data))
+                if len(results) >= limit:
+                    break
+            return results
+
     def find_episodes_by_entities(
         self,
         entity_ids: list[str],
         exclude_episode_ids: Optional[set[str]] = None,
         limit: int = 20,
     ) -> list[Episode]:
-        """Find episodes sharing any of the given entities, ordered by overlap count."""
         if not entity_ids:
             return []
-
         exclude = exclude_episode_ids or set()
-        conn = self._get_conn()
-        try:
-            placeholders = ",".join("?" for _ in entity_ids)
-            rows = conn.execute(
-                f"""
-                SELECT e.data, COUNT(DISTINCT m.entity_id) as overlap_count
-                FROM episodes e
-                JOIN mentions m ON e.id = m.episode_id
-                WHERE m.entity_id IN ({placeholders})
-                AND json_extract(e.data, '$.deleted_at') IS NULL
-                GROUP BY e.id
-                ORDER BY overlap_count DESC, e.timestamp DESC
-                LIMIT ?
-                """,
-                (*entity_ids, limit + len(exclude))
-            ).fetchall()
-
+        with self._connect() as conn:
+            stmt = (
+                select(
+                    episodes_table.c.data,
+                    func.count(func.distinct(mentions_table.c.entity_id)).label("overlap_count"),
+                )
+                .select_from(
+                    episodes_table.join(
+                        mentions_table,
+                        episodes_table.c.id == mentions_table.c.episode_id,
+                    )
+                )
+                .where(mentions_table.c.entity_id.in_(entity_ids))
+                .group_by(episodes_table.c.id, episodes_table.c.data)
+                .order_by(text("overlap_count DESC"), episodes_table.c.timestamp.desc())
+                .limit(limit + len(exclude))
+            )
+            rows = conn.execute(stmt).fetchall()
             results = []
             for row in rows:
-                ep = Episode.from_dict(json.loads(row["data"]))
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                ep = Episode.from_dict(data)
                 if ep.id not in exclude:
                     results.append(ep)
                     if len(results) >= limit:
                         break
             return results
-        finally:
-            conn.close()
 
     def get_entities_mentioned_in(self, episode_id: str) -> list[Entity]:
-        """Get all entities mentioned in an episode."""
-        conn = self._get_conn()
-        try:
-            rows = conn.execute(
-                """
-                SELECT ent.data FROM entities ent
-                JOIN mentions m ON ent.id = m.entity_id
-                WHERE m.episode_id = ?
-                ORDER BY ent.type, ent.display_name
-                """,
-                (episode_id,)
-            ).fetchall()
-            
-            return [Entity.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
-    
-    def delete_mentions_for_episode(self, episode_id: str) -> int:
-        """Delete all mention records for an episode. Returns count deleted."""
-        conn = self._get_conn()
-        try:
-            cursor = conn.execute(
-                "DELETE FROM mentions WHERE episode_id = ?",
-                (episode_id,)
+        with self._connect() as conn:
+            stmt = (
+                select(entities_table.c.data)
+                .select_from(
+                    entities_table.join(
+                        mentions_table,
+                        entities_table.c.id == mentions_table.c.entity_id,
+                    )
+                )
+                .where(mentions_table.c.episode_id == episode_id)
+                .order_by(entities_table.c.type, entities_table.c.display_name)
             )
-            conn.commit()
-            return cursor.rowcount
-        finally:
-            conn.close()
+            rows = conn.execute(stmt).fetchall()
+            return [Entity.from_dict(_parse_json(row.data)) for row in rows]
+
+    def delete_mentions_for_episode(self, episode_id: str) -> int:
+        with self._connect() as conn:
+            result = conn.execute(
+                mentions_table.delete().where(mentions_table.c.episode_id == episode_id)
+            )
+            return result.rowcount
 
     def get_entity_mention_counts(self) -> list[tuple[Entity, int]]:
-        """Get all entities with their mention counts, sorted by count desc."""
-        conn = self._get_conn()
-        try:
-            rows = conn.execute(
-                """
-                SELECT ent.data, COUNT(m.episode_id) as mention_count
-                FROM entities ent
-                LEFT JOIN mentions m ON ent.id = m.entity_id
-                GROUP BY ent.id
-                ORDER BY mention_count DESC, ent.type
-                """
-            ).fetchall()
-            
+        with self._connect() as conn:
+            stmt = (
+                select(
+                    entities_table.c.data,
+                    func.count(mentions_table.c.episode_id).label("mention_count"),
+                )
+                .select_from(
+                    entities_table.outerjoin(
+                        mentions_table,
+                        entities_table.c.id == mentions_table.c.entity_id,
+                    )
+                )
+                .group_by(entities_table.c.id, entities_table.c.data)
+                .order_by(text("mention_count DESC"), entities_table.c.type)
+            )
+            rows = conn.execute(stmt).fetchall()
             return [
-                (Entity.from_dict(json.loads(row["data"])), row["mention_count"])
+                (Entity.from_dict(_parse_json(row.data)), row.mention_count)
                 for row in rows
             ]
-        finally:
-            conn.close()
 
     def get_concepts_for_entity(self, entity_id: str, limit: int = 50) -> list[Concept]:
-        """Get concepts derived from episodes mentioning an entity.
-
-        Finds concepts whose source_episodes overlap with episodes that mention
-        this entity, sorted by relevance (number of overlapping episodes).
-
-        Args:
-            entity_id: The entity ID (e.g., "file:src/auth.ts")
-            limit: Maximum number of concepts to return
-
-        Returns:
-            List of concepts sorted by relevance
-        """
-        conn = self._get_conn()
-        try:
-            # Get episode IDs that mention this entity
+        with self._connect() as conn:
             episode_rows = conn.execute(
-                "SELECT episode_id FROM mentions WHERE entity_id = ?",
-                (entity_id,)
+                select(mentions_table.c.episode_id)
+                .where(mentions_table.c.entity_id == entity_id)
             ).fetchall()
-            episode_ids = {row["episode_id"] for row in episode_rows}
+            episode_ids = {row.episode_id for row in episode_rows}
 
             if not episode_ids:
                 return []
 
-            # Get all concepts and check which ones have overlapping source_episodes
-            all_concepts = self.get_all_concepts()
+        all_concepts = self.get_all_concepts()
+        matching = []
+        for concept in all_concepts:
+            overlap = set(concept.source_episodes) & episode_ids
+            if overlap:
+                matching.append((concept, len(overlap)))
+        matching.sort(key=lambda x: x[1], reverse=True)
+        return [c for c, _ in matching[:limit]]
 
-            matching_concepts = []
-            for concept in all_concepts:
-                overlap = set(concept.source_episodes) & episode_ids
-                if overlap:
-                    matching_concepts.append((concept, len(overlap)))
-
-            # Sort by number of overlapping episodes (most relevant first)
-            matching_concepts.sort(key=lambda x: x[1], reverse=True)
-
-            return [c for c, _ in matching_concepts[:limit]]
-        finally:
-            conn.close()
-
+    # ------------------------------------------------------------------
     # Entity relation operations
+    # ------------------------------------------------------------------
 
     def add_entity_relation(self, relation: EntityRelation) -> None:
-        """Add an entity relation with aggregation.
-
-        If a relation with the same (source_id, target_id, relation_type) already exists,
-        strengthens it and tracks all contributing episodes instead of overwriting.
-        """
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             existing = conn.execute(
-                """
-                SELECT strength, source_episode_id, episode_count, source_episode_ids
-                FROM entity_relations
-                WHERE source_id = ? AND target_id = ? AND relation_type = ?
-                """,
-                (relation.source_id, relation.target_id, relation.relation_type)
+                select(
+                    entity_relations_table.c.strength,
+                    entity_relations_table.c.source_episode_id,
+                    entity_relations_table.c.episode_count,
+                    entity_relations_table.c.source_episode_ids,
+                    entity_relations_table.c.context,
+                )
+                .where(entity_relations_table.c.source_id == relation.source_id)
+                .where(entity_relations_table.c.target_id == relation.target_id)
+                .where(entity_relations_table.c.relation_type == relation.relation_type)
             ).fetchone()
 
             if existing:
-                old_count = existing["episode_count"] or 1
-                old_ids_json = existing["source_episode_ids"] or "[]"
+                old_count = existing.episode_count or 1
+                old_ids_raw = existing.source_episode_ids or "[]"
                 try:
-                    old_ids = json.loads(old_ids_json)
+                    old_ids = json.loads(old_ids_raw) if isinstance(old_ids_raw, str) else (old_ids_raw or [])
                 except (json.JSONDecodeError, TypeError):
                     old_ids = []
-                    if existing["source_episode_id"]:
-                        old_ids = [existing["source_episode_id"]]
+                    if existing.source_episode_id:
+                        old_ids = [existing.source_episode_id]
 
                 new_ep_id = relation.source_episode_id
                 if new_ep_id and new_ep_id not in old_ids:
                     old_ids.append(new_ep_id)
                     new_count = old_count + 1
-                    boost = min(0.1, (1.0 - existing["strength"]) * 0.2)
-                    new_strength = min(1.0, existing["strength"] + boost)
+                    boost = min(0.1, (1.0 - existing.strength) * 0.2)
+                    new_strength = min(1.0, existing.strength + boost)
                 else:
                     new_count = old_count
-                    new_strength = max(existing["strength"], relation.strength)
+                    new_strength = max(existing.strength, relation.strength)
 
                 conn.execute(
-                    """
-                    UPDATE entity_relations
-                    SET strength = ?, context = ?, source_episode_id = ?,
-                        episode_count = ?, source_episode_ids = ?
-                    WHERE source_id = ? AND target_id = ? AND relation_type = ?
-                    """,
-                    (
-                        new_strength,
-                        relation.context or existing["context"],
-                        new_ep_id or existing["source_episode_id"],
-                        new_count,
-                        json.dumps(old_ids),
-                        relation.source_id,
-                        relation.target_id,
-                        relation.relation_type,
+                    entity_relations_table.update()
+                    .where(entity_relations_table.c.source_id == relation.source_id)
+                    .where(entity_relations_table.c.target_id == relation.target_id)
+                    .where(entity_relations_table.c.relation_type == relation.relation_type)
+                    .values(
+                        strength=new_strength,
+                        context=relation.context or existing.context,
+                        source_episode_id=new_ep_id or existing.source_episode_id,
+                        episode_count=new_count,
+                        source_episode_ids=json.dumps(old_ids),
                     )
                 )
             else:
                 ep_ids = [relation.source_episode_id] if relation.source_episode_id else []
                 conn.execute(
-                    """
-                    INSERT INTO entity_relations
-                    (source_id, target_id, relation_type, strength, context,
-                     source_episode_id, created_at, episode_count, source_episode_ids)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        relation.source_id,
-                        relation.target_id,
-                        relation.relation_type,
-                        relation.strength,
-                        relation.context,
-                        relation.source_episode_id,
-                        relation.created_at.isoformat(),
-                        1,
-                        json.dumps(ep_ids),
+                    entity_relations_table.insert().values(
+                        source_id=relation.source_id,
+                        target_id=relation.target_id,
+                        relation_type=relation.relation_type,
+                        strength=relation.strength,
+                        context=relation.context,
+                        source_episode_id=relation.source_episode_id,
+                        created_at=relation.created_at,
+                        episode_count=1,
+                        source_episode_ids=json.dumps(ep_ids),
                     )
                 )
-            conn.commit()
-        finally:
-            conn.close()
 
     def _entity_relation_from_row(self, row) -> EntityRelation:
-        """Build an EntityRelation from a database row."""
-        ep_ids_json = row["source_episode_ids"] if "source_episode_ids" in row.keys() else "[]"
+        ep_ids_raw = getattr(row, "source_episode_ids", "[]") or "[]"
         try:
-            ep_ids = json.loads(ep_ids_json) if ep_ids_json else []
+            ep_ids = json.loads(ep_ids_raw) if isinstance(ep_ids_raw, str) else (ep_ids_raw or [])
         except (json.JSONDecodeError, TypeError):
             ep_ids = []
-        ep_count = row["episode_count"] if "episode_count" in row.keys() else 1
+        ep_count = getattr(row, "episode_count", 1) or 1
+        created = row.created_at
+        if isinstance(created, str):
+            created = datetime.fromisoformat(created)
+        elif created is None:
+            created = datetime.now()
         return EntityRelation(
-            source_id=row["source_id"],
-            target_id=row["target_id"],
-            relation_type=row["relation_type"],
-            strength=row["strength"],
-            context=row["context"],
-            source_episode_id=row["source_episode_id"],
-            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),
-            episode_count=ep_count or 1,
+            source_id=row.source_id,
+            target_id=row.target_id,
+            relation_type=row.relation_type,
+            strength=row.strength,
+            context=row.context,
+            source_episode_id=row.source_episode_id,
+            created_at=created,
+            episode_count=ep_count,
             source_episode_ids=ep_ids,
         )
 
     def get_entity_relations(self, entity_id: str) -> list[EntityRelation]:
-        """Get all relations involving an entity (as source or target)."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT source_id, target_id, relation_type, strength, context,
-                       source_episode_id, created_at, episode_count, source_episode_ids
-                FROM entity_relations
-                WHERE source_id = ? OR target_id = ?
-                ORDER BY strength DESC, created_at DESC
-                """,
-                (entity_id, entity_id)
+                select(entity_relations_table)
+                .where(
+                    (entity_relations_table.c.source_id == entity_id)
+                    | (entity_relations_table.c.target_id == entity_id)
+                )
+                .order_by(entity_relations_table.c.strength.desc(), entity_relations_table.c.created_at.desc())
             ).fetchall()
             return [self._entity_relation_from_row(row) for row in rows]
-        finally:
-            conn.close()
 
     def get_entity_relations_from(self, entity_id: str) -> list[EntityRelation]:
-        """Get relations where entity is the source (outgoing relations)."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT source_id, target_id, relation_type, strength, context,
-                       source_episode_id, created_at, episode_count, source_episode_ids
-                FROM entity_relations
-                WHERE source_id = ?
-                ORDER BY strength DESC, created_at DESC
-                """,
-                (entity_id,)
+                select(entity_relations_table)
+                .where(entity_relations_table.c.source_id == entity_id)
+                .order_by(entity_relations_table.c.strength.desc(), entity_relations_table.c.created_at.desc())
             ).fetchall()
             return [self._entity_relation_from_row(row) for row in rows]
-        finally:
-            conn.close()
 
     def delete_entity_relations_from_episode(self, episode_id: str) -> int:
-        """Delete all entity relations derived from an episode. Returns count deleted."""
-        conn = self._get_conn()
-        try:
-            cursor = conn.execute(
-                "DELETE FROM entity_relations WHERE source_episode_id = ?",
-                (episode_id,)
+        with self._connect() as conn:
+            result = conn.execute(
+                entity_relations_table.delete()
+                .where(entity_relations_table.c.source_episode_id == episode_id)
             )
-            conn.commit()
-            return cursor.rowcount
-        finally:
-            conn.close()
+            return result.rowcount
 
     def get_existing_relation_pairs(self, entity_ids: list[str]) -> set[tuple[str, str]]:
-        """Get pairs of entities that already have relations between them."""
         if len(entity_ids) < 2:
             return set()
-
-        conn = self._get_conn()
-        try:
-            placeholders = ",".join("?" * len(entity_ids))
+        with self._connect() as conn:
             rows = conn.execute(
-                f"""
-                SELECT DISTINCT source_id, target_id
-                FROM entity_relations
-                WHERE source_id IN ({placeholders})
-                  AND target_id IN ({placeholders})
-                """,
-                entity_ids + entity_ids
+                select(
+                    entity_relations_table.c.source_id,
+                    entity_relations_table.c.target_id,
+                ).distinct()
+                .where(entity_relations_table.c.source_id.in_(entity_ids))
+                .where(entity_relations_table.c.target_id.in_(entity_ids))
             ).fetchall()
-            return {(row["source_id"], row["target_id"]) for row in rows}
-        finally:
-            conn.close()
+            return {(row.source_id, row.target_id) for row in rows}
 
     def get_unextracted_relation_episodes(self, limit: int = 100) -> list[Episode]:
-        """Get episodes that have entities but haven't had relation extraction performed (excluding soft-deleted).
-
-        Only returns episodes with 2+ entities (need at least 2 for a relationship).
-        """
-        conn = self._get_conn()
-        try:
-            # Get episodes where:
-            # - entities_extracted = true (has entities)
-            # - relations_extracted is false or null
-            # - has at least 2 entity_ids
-            # - not soft-deleted
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data FROM episodes
-                WHERE (json_extract(data, '$.entities_extracted') = 1
-                       OR json_extract(data, '$.entities_extracted') = 'true')
-                  AND (json_extract(data, '$.relations_extracted') IS NULL
-                       OR json_extract(data, '$.relations_extracted') = 0
-                       OR json_extract(data, '$.relations_extracted') = 'false')
-                  AND json_array_length(json_extract(data, '$.entity_ids')) >= 2
-                  AND json_extract(data, '$.deleted_at') IS NULL
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (limit,)
+                select(episodes_table.c.data)
+                .order_by(episodes_table.c.timestamp.desc())
             ).fetchall()
-            return [Episode.from_dict(json.loads(row["data"])) for row in rows]
-        finally:
-            conn.close()
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                extracted = data.get("entities_extracted")
+                if extracted not in (True, 1, "true"):
+                    continue
+                rel_extracted = data.get("relations_extracted")
+                if rel_extracted in (True, 1, "true"):
+                    continue
+                entity_ids = data.get("entity_ids", [])
+                if len(entity_ids) < 2:
+                    continue
+                results.append(Episode.from_dict(data))
+                if len(results) >= limit:
+                    break
+            return results
 
+    # ------------------------------------------------------------------
     # Bulk operations for reconsolidation
+    # ------------------------------------------------------------------
 
     def delete_all_concepts(self) -> int:
-        """Delete all concepts and their relations. Returns count deleted."""
-        conn = self._get_conn()
-        try:
-            # Delete relations first (foreign key constraint)
-            conn.execute("DELETE FROM relations")
-            # Delete concepts
-            cursor = conn.execute("DELETE FROM concepts")
-            conn.commit()
-            return cursor.rowcount
-        finally:
-            conn.close()
+        with self._connect() as conn:
+            conn.execute(relations_table.delete())
+            result = conn.execute(concepts_table.delete())
+            return result.rowcount
 
     def delete_all_entities(self) -> int:
-        """Delete all entities, mentions, and entity relations. Returns count deleted."""
-        conn = self._get_conn()
-        try:
-            # Delete in order of foreign key dependencies
-            conn.execute("DELETE FROM entity_relations")
-            conn.execute("DELETE FROM mentions")
-            cursor = conn.execute("DELETE FROM entities")
-            conn.commit()
-            return cursor.rowcount
-        finally:
-            conn.close()
+        with self._connect() as conn:
+            conn.execute(entity_relations_table.delete())
+            conn.execute(mentions_table.delete())
+            result = conn.execute(entities_table.delete())
+            return result.rowcount
 
     def reset_episode_flags(self) -> int:
-        """Reset consolidated, entities_extracted, and relations_extracted flags on all episodes.
-
-        Also clears entity_ids and concepts_activated lists.
-        Returns count of episodes reset.
-        """
-        conn = self._get_conn()
-        try:
-            # Get all episodes
-            rows = conn.execute("SELECT id, data FROM episodes").fetchall()
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(episodes_table.c.id, episodes_table.c.data)
+            ).fetchall()
 
             count = 0
             for row in rows:
-                data = json.loads(row["data"])
-                # Reset flags
+                data = _parse_json(row.data)
                 data["consolidated"] = False
                 data["entities_extracted"] = False
                 data["relations_extracted"] = False
-                # Clear derived data
                 data["entity_ids"] = []
                 data["concepts_activated"] = []
-
                 conn.execute(
-                    "UPDATE episodes SET data = ?, consolidated = ? WHERE id = ?",
-                    (json.dumps(data), False, row["id"])
+                    episodes_table.update()
+                    .where(episodes_table.c.id == row.id)
+                    .values(data=_dump_json(data), consolidated=False)
                 )
                 count += 1
-
-            conn.commit()
             return count
-        finally:
-            conn.close()
 
+    # ------------------------------------------------------------------
     # Decay operations
+    # ------------------------------------------------------------------
 
     def decay_concepts(
         self,
         decay_rate: float,
         skip_recently_accessed_seconds: int = 60,
     ) -> int:
-        """Apply linear decay to all concepts using SQL-level update.
+        cutoff = datetime.now() - timedelta(seconds=skip_recently_accessed_seconds)
 
-        Applies linear decay formula: new_decay_factor = max(0.0, old_decay_factor - decay_rate)
-        Each concept decays independently based on its own decay_factor.
-        Concepts accessed within skip_recently_accessed_seconds are skipped so that
-        just-recalled concepts are not immediately penalised.
-        Uses a single SQL UPDATE for O(1) performance regardless of concept count.
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(concepts_table.c.id, concepts_table.c.data)
+            ).fetchall()
 
-        Args:
-            decay_rate: How much decay_factor decreases per interval
-            skip_recently_accessed_seconds: Grace period in seconds; concepts whose
-                last_accessed timestamp is within this window are not decayed.
+            affected = 0
+            for row in rows:
+                data = _parse_json(row.data)
+                decay_factor = data.get("decay_factor", 1.0)
+                if decay_factor is None:
+                    decay_factor = 1.0
+                if decay_factor <= 0:
+                    continue
 
-        Returns:
-            Count of concepts that were decayed
-        """
-        conn = self._get_conn()
-        try:
-            # Grace period expressed as fractional days for julianday arithmetic
-            grace_days = skip_recently_accessed_seconds / 86400.0
+                last_accessed_str = data.get("last_accessed")
+                if last_accessed_str:
+                    try:
+                        last_accessed = datetime.fromisoformat(last_accessed_str)
+                        if last_accessed > cutoff:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
 
-            # Timestamps are stored as local-time ISO strings (datetime.now().isoformat()).
-            # SQLite's julianday('now') is UTC, so we use julianday('now', 'localtime') to
-            # match. Microseconds are stripped with SUBSTR/REPLACE since julianday() doesn't
-            # handle them.
-            cursor = conn.execute(
-                """
-                UPDATE concepts
-                SET data = json_set(
-                    data,
-                    '$.decay_factor',
-                    max(0, json_extract(data, '$.decay_factor') - ?)
-                ),
-                updated_at = CURRENT_TIMESTAMP
-                WHERE json_extract(data, '$.decay_factor') > 0
-                  AND (
-                    json_extract(data, '$.last_accessed') IS NULL
-                    OR julianday('now', 'localtime')
-                       - julianday(SUBSTR(REPLACE(json_extract(data, '$.last_accessed'), 'T', ' '), 1, 19))
-                       > ?
-                  )
-                """,
-                (decay_rate, grace_days),
-            )
+                new_factor = max(0.0, decay_factor - decay_rate)
+                data["decay_factor"] = new_factor
+                conn.execute(
+                    concepts_table.update()
+                    .where(concepts_table.c.id == row.id)
+                    .values(data=_dump_json(data), updated_at=datetime.now())
+                )
+                affected += 1
 
-            affected_count = cursor.rowcount
-            conn.commit()
+            logger.info(f"Decay complete: {affected} concepts decayed")
+            return affected
 
-            logger.info(f"Decay complete: {affected_count} concepts decayed")
-            return affected_count
-
-        finally:
-            conn.close()
-
+    # ------------------------------------------------------------------
     # Metadata operations
+    # ------------------------------------------------------------------
 
     def get_metadata(self, key: str) -> Optional[str]:
-        """Get a metadata value by key. Returns None if not found."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             row = conn.execute(
-                "SELECT value FROM metadata WHERE key = ?",
-                (key,)
+                select(metadata_table.c.value).where(metadata_table.c.key == key)
             ).fetchone()
-            return row["value"] if row else None
-        finally:
-            conn.close()
+            return row.value if row else None
 
     def set_metadata(self, key: str, value: str) -> None:
-        """Set a metadata value. Updates if key exists."""
-        conn = self._get_conn()
-        try:
-            conn.execute(
-                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                (key, value)
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        with self._connect() as conn:
+            try:
+                conn.execute(
+                    metadata_table.insert().values(key=key, value=value)
+                )
+            except IntegrityError:
+                conn.rollback()
+                conn.execute(
+                    metadata_table.update()
+                    .where(metadata_table.c.key == key)
+                    .values(value=value)
+                )
 
+    # ------------------------------------------------------------------
     # Statistics
+    # ------------------------------------------------------------------
 
     def get_stats(self) -> dict:
-        """Get storage statistics."""
-        conn = self._get_conn()
-        try:
-            concept_count = conn.execute("SELECT COUNT(*) FROM concepts").fetchone()[0]
-            episode_count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+        with self._connect() as conn:
+            concept_count = conn.execute(select(func.count()).select_from(concepts_table)).scalar()
+            episode_count = conn.execute(select(func.count()).select_from(episodes_table)).scalar()
             unconsolidated_count = conn.execute(
-                "SELECT COUNT(*) FROM episodes WHERE consolidated = FALSE"
-            ).fetchone()[0]
-            relation_count = conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
-            
-            # Get relation type distribution
+                select(func.count()).select_from(episodes_table)
+                .where(episodes_table.c.consolidated == False)  # noqa: E712
+            ).scalar()
+            relation_count = conn.execute(select(func.count()).select_from(relations_table)).scalar()
+
             relation_types = conn.execute(
-                "SELECT type, COUNT(*) as count FROM relations GROUP BY type"
+                select(relations_table.c.type, func.count().label("count"))
+                .group_by(relations_table.c.type)
             ).fetchall()
-            
-            # Entity/mention stats (v2 schema)
-            entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
-            mention_count = conn.execute("SELECT COUNT(*) FROM mentions").fetchone()[0]
-            entity_relation_count = conn.execute("SELECT COUNT(*) FROM entity_relations").fetchone()[0]
 
-            # Entity relation type distribution
+            entity_count = conn.execute(select(func.count()).select_from(entities_table)).scalar()
+            mention_count = conn.execute(select(func.count()).select_from(mentions_table)).scalar()
+            entity_relation_count = conn.execute(
+                select(func.count()).select_from(entity_relations_table)
+            ).scalar()
+
             entity_relation_types = conn.execute(
-                "SELECT relation_type, COUNT(*) as count FROM entity_relations GROUP BY relation_type"
+                select(entity_relations_table.c.relation_type, func.count().label("count"))
+                .group_by(entity_relations_table.c.relation_type)
             ).fetchall()
-            
-            # Episode type distribution
-            episode_types = conn.execute(
-                """
-                SELECT json_extract(data, '$.episode_type') as type, COUNT(*) as count 
-                FROM episodes 
-                GROUP BY json_extract(data, '$.episode_type')
-                """
-            ).fetchall()
-            
-            # Entity type distribution
+
             entity_types = conn.execute(
-                "SELECT type, COUNT(*) as count FROM entities GROUP BY type"
+                select(entities_table.c.type, func.count().label("count"))
+                .group_by(entities_table.c.type)
             ).fetchall()
-            
-            # Count unextracted episodes
-            unextracted_count = conn.execute(
-                """
-                SELECT COUNT(*) FROM episodes 
-                WHERE json_extract(data, '$.entities_extracted') IS NULL 
-                   OR json_extract(data, '$.entities_extracted') = 0
-                   OR json_extract(data, '$.entities_extracted') = 'false'
-                """
-            ).fetchone()[0]
-            
-            # Decay statistics - use SQL queries for performance (O(1) vs O(n))
-            # Count concepts with decay_factor < 1.0
-            concepts_with_decay_row = conn.execute(
-                """
-                SELECT COUNT(*) FROM concepts 
-                WHERE json_extract(data, '$.decay_factor') < 1.0
-                """
-            ).fetchone()
-            concepts_with_decay = concepts_with_decay_row[0]
-            
-            # Get average decay_factor (COALESCE handles NULL/missing values)
-            avg_decay_row = conn.execute(
-                """
-                SELECT COALESCE(AVG(json_extract(data, '$.decay_factor')), 1.0) 
-                FROM concepts
-                """
-            ).fetchone()
-            avg_decay_factor = round(avg_decay_row[0], 3)
-            
-            # Get minimum decay_factor (COALESCE handles NULL/missing values)
-            min_decay_row = conn.execute(
-                """
-                SELECT COALESCE(MIN(json_extract(data, '$.decay_factor')), 1.0) 
-                FROM concepts
-                """
-            ).fetchone()
-            min_decay_factor = round(min_decay_row[0], 3)
-            
-            return {
-                "concepts": concept_count,
-                "episodes": episode_count,
-                "entities": entity_count,
-                "mentions": mention_count,
-                "relations": relation_count,
-                "entity_relations": entity_relation_count,
-                "unconsolidated_episodes": unconsolidated_count,
-                "unextracted_episodes": unextracted_count,
-                "relation_types": {row["type"]: row["count"] for row in relation_types},
-                "entity_relation_types": {row["relation_type"]: row["count"] for row in entity_relation_types},
-                "entity_types": {row["type"]: row["count"] for row in entity_types},
-                "episode_types": {
-                    (row["type"] or "observation"): row["count"]
-                    for row in episode_types
-                },
-                "concepts_with_decay": concepts_with_decay,
-                "avg_decay_factor": avg_decay_factor,
-                "min_decay_factor": min_decay_factor,
-            }
-        finally:
-            conn.close()
-    
+
+        # Episode type and extraction stats require parsing JSON data
+        all_ep_data = []
+        with self._connect() as conn:
+            rows = conn.execute(select(episodes_table.c.data)).fetchall()
+            all_ep_data = [_parse_json(row.data) for row in rows]
+
+        all_concept_data = []
+        with self._connect() as conn:
+            rows = conn.execute(select(concepts_table.c.data)).fetchall()
+            all_concept_data = [_parse_json(row.data) for row in rows]
+
+        ep_type_counts: dict[str, int] = {}
+        unextracted_count = 0
+        for data in all_ep_data:
+            ep_type = data.get("episode_type") or "observation"
+            ep_type_counts[ep_type] = ep_type_counts.get(ep_type, 0) + 1
+            extracted = data.get("entities_extracted")
+            if extracted not in (True, 1, "true"):
+                unextracted_count += 1
+
+        concepts_with_decay = 0
+        total_decay = 0.0
+        min_decay = 1.0
+        for data in all_concept_data:
+            df = data.get("decay_factor", 1.0)
+            if df is None:
+                df = 1.0
+            total_decay += df
+            if df < 1.0:
+                concepts_with_decay += 1
+            min_decay = min(min_decay, df)
+
+        avg_decay = round(total_decay / max(len(all_concept_data), 1), 3)
+
+        return {
+            "concepts": concept_count,
+            "episodes": episode_count,
+            "entities": entity_count,
+            "mentions": mention_count,
+            "relations": relation_count,
+            "entity_relations": entity_relation_count,
+            "unconsolidated_episodes": unconsolidated_count,
+            "unextracted_episodes": unextracted_count,
+            "relation_types": {row.type: row.count for row in relation_types},
+            "entity_relation_types": {row.relation_type: row.count for row in entity_relation_types},
+            "entity_types": {row.type: row.count for row in entity_types},
+            "episode_types": ep_type_counts,
+            "concepts_with_decay": concepts_with_decay,
+            "avg_decay_factor": avg_decay,
+            "min_decay_factor": round(min_decay, 3),
+        }
+
+    # ------------------------------------------------------------------
+    # Extra methods (not on MemoryStore ABC)
+    # ------------------------------------------------------------------
+
     def list_topics(self) -> list[dict]:
-        """List all topics with episode/concept counts and latest activity."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT
-                    topic,
-                    COUNT(*) as episode_count,
-                    MAX(timestamp) as latest_activity
-                FROM episodes
-                WHERE topic IS NOT NULL
-                  AND json_extract(data, '$.deleted_at') IS NULL
-                GROUP BY topic
-                ORDER BY latest_activity DESC
-                """
+                select(episodes_table.c.data, episodes_table.c.topic, episodes_table.c.timestamp)
+                .where(episodes_table.c.topic.isnot(None))
             ).fetchall()
 
-            concept_counts = {}
+            topic_map: dict[str, dict] = {}
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                topic = row.topic
+                if topic not in topic_map:
+                    topic_map[topic] = {"episode_count": 0, "latest_activity": None}
+                topic_map[topic]["episode_count"] += 1
+                ts = row.timestamp
+                if isinstance(ts, datetime):
+                    ts = ts.isoformat()
+                elif ts is None:
+                    ts = ""
+                cur = topic_map[topic]["latest_activity"]
+                if cur is None or str(ts) > str(cur):
+                    topic_map[topic]["latest_activity"] = ts
+
             concept_rows = conn.execute(
-                """
-                SELECT topic, COUNT(*) as count
-                FROM concepts
-                WHERE topic IS NOT NULL
-                  AND json_extract(data, '$.deleted_at') IS NULL
-                GROUP BY topic
-                """
+                select(concepts_table.c.data, concepts_table.c.topic)
+                .where(concepts_table.c.topic.isnot(None))
             ).fetchall()
-            for row in concept_rows:
-                concept_counts[row["topic"]] = row["count"]
 
-            return [
-                {
-                    "topic": row["topic"],
-                    "episode_count": row["episode_count"],
-                    "concept_count": concept_counts.get(row["topic"], 0),
-                    "latest_activity": row["latest_activity"],
-                }
-                for row in rows
-            ]
-        finally:
-            conn.close()
+            concept_counts: dict[str, int] = {}
+            for row in concept_rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                t = row.topic
+                concept_counts[t] = concept_counts.get(t, 0) + 1
+
+        results = []
+        for topic, info in sorted(topic_map.items(), key=lambda x: x[1]["latest_activity"] or "", reverse=True):
+            results.append({
+                "topic": topic,
+                "episode_count": info["episode_count"],
+                "concept_count": concept_counts.get(topic, 0),
+                "latest_activity": info["latest_activity"],
+            })
+        return results
 
     def get_concepts_by_topic(self, topic: str) -> list[Concept]:
-        """Get all concepts for a given topic, ordered by confidence * instance_count."""
-        conn = self._get_conn()
-        try:
+        with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT data, embedding FROM concepts
-                WHERE topic = ?
-                  AND json_extract(data, '$.deleted_at') IS NULL
-                ORDER BY json_extract(data, '$.confidence') * json_extract(data, '$.instance_count') DESC
-                """,
-                (topic,)
+                select(concepts_table.c.data, concepts_table.c.embedding)
+                .where(concepts_table.c.topic == topic)
             ).fetchall()
             concepts = []
             for row in rows:
-                data = json.loads(row["data"])
-                if row["embedding"]:
-                    data["embedding"] = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                if row.embedding:
+                    data["embedding"] = _bytes_to_embedding(row.embedding)
                 concepts.append(Concept.from_dict(data))
+            concepts.sort(
+                key=lambda c: (c.confidence or 0) * (c.instance_count or 0),
+                reverse=True,
+            )
             return concepts
-        finally:
-            conn.close()
 
     def export_data(self) -> dict:
-        """Export all data for backup."""
-        conn = self._get_conn()
-        try:
-            # Export mentions as list of (episode_id, entity_id) tuples
-            mentions = conn.execute(
-                "SELECT episode_id, entity_id FROM mentions"
+        with self._connect() as conn:
+            mention_rows = conn.execute(
+                select(mentions_table.c.episode_id, mentions_table.c.entity_id)
             ).fetchall()
 
-            # Export entity relations
-            entity_relations = conn.execute(
-                """SELECT source_id, target_id, relation_type, strength, context,
-                          source_episode_id, created_at, episode_count, source_episode_ids
-                   FROM entity_relations"""
+            er_rows = conn.execute(
+                select(entity_relations_table)
             ).fetchall()
 
-            return {
-                "version": 3,
-                "concepts": [c.to_dict() for c in self.get_all_concepts()],
-                "episodes": [e.to_dict() for e in self.get_recent_episodes(limit=10000)],
-                "entities": [e.to_dict() for e in self.get_all_entities()],
-                "mentions": [
-                    {"episode_id": row["episode_id"], "entity_id": row["entity_id"]}
-                    for row in mentions
-                ],
-                "entity_relations": [
-                    {
-                        "source_id": row["source_id"],
-                        "target_id": row["target_id"],
-                        "relation_type": row["relation_type"],
-                        "strength": row["strength"],
-                        "context": row["context"],
-                        "source_episode_id": row["source_episode_id"],
-                        "created_at": row["created_at"],
-                        "episode_count": row["episode_count"] or 1,
-                        "source_episode_ids": json.loads(row["source_episode_ids"] or "[]"),
-                    }
-                    for row in entity_relations
-                ],
-            }
-        finally:
-            conn.close()
-    
+        return {
+            "version": 3,
+            "concepts": [c.to_dict() for c in self.get_all_concepts()],
+            "episodes": [e.to_dict() for e in self.get_recent_episodes(limit=10000)],
+            "entities": [e.to_dict() for e in self.get_all_entities()],
+            "mentions": [
+                {"episode_id": row.episode_id, "entity_id": row.entity_id}
+                for row in mention_rows
+            ],
+            "entity_relations": [
+                {
+                    "source_id": row.source_id,
+                    "target_id": row.target_id,
+                    "relation_type": row.relation_type,
+                    "strength": row.strength,
+                    "context": row.context,
+                    "source_episode_id": row.source_episode_id,
+                    "created_at": row.created_at.isoformat() if isinstance(row.created_at, datetime) else row.created_at,
+                    "episode_count": row.episode_count or 1,
+                    "source_episode_ids": json.loads(row.source_episode_ids or "[]") if isinstance(row.source_episode_ids, str) else (row.source_episode_ids or []),
+                }
+                for row in er_rows
+            ],
+        }
+
     def import_data(self, data: dict) -> dict:
-        """Import data from backup. Returns counts."""
         concepts_imported = 0
         episodes_imported = 0
         entities_imported = 0
         mentions_imported = 0
-        
+
         for concept_data in data.get("concepts", []):
             concept = Concept.from_dict(concept_data)
             try:
                 self.add_concept(concept)
                 concepts_imported += 1
-            except sqlite3.IntegrityError:
-                # Already exists, update instead
+            except IntegrityError:
                 self.update_concept(concept)
                 concepts_imported += 1
-        
+
         for episode_data in data.get("episodes", []):
             episode = Episode.from_dict(episode_data)
             try:
                 self.add_episode(episode)
                 episodes_imported += 1
-            except sqlite3.IntegrityError:
-                # Already exists, update instead
+            except IntegrityError:
                 self.update_episode(episode)
                 episodes_imported += 1
-        
-        # Import entities (v2 schema)
+
         for entity_data in data.get("entities", []):
             entity = Entity.from_dict(entity_data)
-            self.add_entity(entity)  # Uses INSERT OR REPLACE
+            self.add_entity(entity)
             entities_imported += 1
-        
-        # Import mentions (v2 schema)
+
         for mention in data.get("mentions", []):
             self.add_mention(mention["episode_id"], mention["entity_id"])
             mentions_imported += 1
 
-        # Import entity relations (v3 schema)
         entity_relations_imported = 0
         for rel_data in data.get("entity_relations", []):
             relation = EntityRelation.from_dict(rel_data)
-            self.add_entity_relation(relation)  # Uses INSERT OR REPLACE
+            self.add_entity_relation(relation)
             entity_relations_imported += 1
 
         return {
@@ -2317,3 +2010,6 @@ class SQLiteMemoryStore(MemoryStore):
             "entity_relations_imported": entity_relations_imported,
         }
 
+
+# Backward compatibility alias
+SQLiteMemoryStore = SQLAlchemyMemoryStore

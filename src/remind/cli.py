@@ -51,7 +51,7 @@ def get_memory(db_path: str, llm: str, embedding: str):
     return create_memory(
         llm_provider=llm,
         embedding_provider=embedding,
-        db_path=db_path,
+        db_url=db_path,
     )
 
 
@@ -62,34 +62,33 @@ def run_async(coro):
 
 @click.group()
 @click.version_option(version=version("remind-mcp"), prog_name="remind")
-@click.option("--db", default=None, help="Database name (stored in ~/.remind/). If not provided, uses <cwd>/.remind/remind.db")
+@click.option("--db", default=None, help="Database name, path, or URL (e.g. 'myproject', '/path/to/db.db', 'postgresql+psycopg://user:pass@host/db'). Default: <cwd>/.remind/remind.db")
 @click.option("--llm", default=None, type=click.Choice(["anthropic", "openai", "azure_openai", "ollama"]))
 @click.option("--embedding", default=None, type=click.Choice(["openai", "azure_openai", "ollama"]))
 @click.pass_context
 def main(ctx, db: str, llm: str, embedding: str):
     """Remind - Generalization-capable memory for LLMs."""
-    from remind.config import load_config, resolve_db_path, setup_file_logging
+    from remind.config import load_config, resolve_db_url, _is_db_url, setup_file_logging
 
-    # Load config (priority: env vars > project-local config > global config > defaults)
     config = load_config(project_dir=Path.cwd())
 
-    # Resolve providers (CLI > Config)
     llm = llm or config.llm_provider
     embedding = embedding or config.embedding_provider
 
-    # Resolve database path
-    # If --db provided: use ~/.remind/{name}.db
-    # If not provided: use <cwd>/.remind/remind.db (project-aware)
-    if db:
-        db_path = resolve_db_path(db)
+    if db and _is_db_url(db):
+        db_url = db
+    elif config.db_url:
+        db_url = config.db_url if not db else resolve_db_url(db)
+    elif db:
+        db_url = resolve_db_url(db)
     else:
-        db_path = resolve_db_path(None, project_aware=True)
+        db_url = resolve_db_url(None, project_aware=True)
 
     if config.logging_enabled:
-        setup_file_logging(db_path)
+        setup_file_logging(db_url)
 
     ctx.ensure_object(dict)
-    ctx.obj["db"] = db_path
+    ctx.obj["db"] = db_url
     ctx.obj["llm"] = llm
     ctx.obj["embedding"] = embedding
 
@@ -151,7 +150,7 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
         from remind.background import spawn_background_consolidation
 
         if spawn_background_consolidation(
-            db_path=ctx.obj["db"],
+            db_url=ctx.obj["db"],
             llm_provider=ctx.obj["llm"],
             embedding_provider=ctx.obj["embedding"],
         ):
@@ -411,10 +410,10 @@ def reconsolidate(ctx):
     Useful when consolidation prompts change or to fix accumulated errors.
     Episodes are preserved - only derived data is cleared.
     """
-    from remind.store import SQLiteMemoryStore
+    from remind.store import SQLAlchemyMemoryStore
 
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
 
     console.print("[bold cyan]Reconsolidating memory...[/bold cyan]\n")
 
@@ -540,7 +539,7 @@ def ingest(ctx, content: Optional[str], source: str, foreground: bool):
         memory = create_memory(
             llm_provider=ctx.obj["llm"],
             embedding_provider=ctx.obj["embedding"],
-            db_path=ctx.obj["db"],
+            db_url=ctx.obj["db"],
             ingest_background=False,
         )
         with console.status("[bold cyan]Running triage and consolidation..."):
@@ -558,12 +557,12 @@ def ingest(ctx, content: Optional[str], source: str, foreground: bool):
         from remind.background import enqueue_ingest_chunk, spawn_ingest_worker
 
         enqueue_ingest_chunk(
-            db_path=ctx.obj["db"],
+            db_url=ctx.obj["db"],
             chunk=content,
             source=source,
         )
         spawned = spawn_ingest_worker(
-            db_path=ctx.obj["db"],
+            db_url=ctx.obj["db"],
             llm_provider=ctx.obj["llm"],
             embedding_provider=ctx.obj["embedding"],
         )
@@ -610,8 +609,8 @@ def flush_ingest(ctx):
 @click.pass_context
 def inspect(ctx, concept_id: Optional[str], episodes: bool, limit: int):
     """Inspect concepts or episodes."""
-    from remind.store import SQLiteMemoryStore
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    from remind.store import SQLAlchemyMemoryStore
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
     
     if episodes:
         # Show recent episodes
@@ -909,8 +908,8 @@ def import_cmd(ctx, file: str):
 @click.pass_context
 def search(ctx, query: str):
     """Search concepts by tag or keyword."""
-    from remind.store import SQLiteMemoryStore
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    from remind.store import SQLAlchemyMemoryStore
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
     
     concepts = store.get_all_concepts()
     query_lower = query.lower()
@@ -957,9 +956,9 @@ def search(ctx, query: str):
 @click.pass_context
 def entities(ctx, entity_id: Optional[str], entity_type: Optional[str]):
     """List entities or show details for a specific entity."""
-    from remind.store import SQLiteMemoryStore
+    from remind.store import SQLAlchemyMemoryStore
     from remind.models import EntityType
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
     
     if entity_id:
         # Show specific entity and its mentions
@@ -1027,8 +1026,8 @@ def entities(ctx, entity_id: Optional[str], entity_type: Optional[str]):
 @click.pass_context
 def mentions(ctx, entity_id: str):
     """Show all episodes mentioning an entity."""
-    from remind.store import SQLiteMemoryStore
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    from remind.store import SQLAlchemyMemoryStore
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
     
     episodes = store.get_episodes_mentioning(entity_id, limit=50)
     
@@ -1059,9 +1058,9 @@ def mentions(ctx, entity_id: str):
 @click.pass_context
 def decisions(ctx, limit: int):
     """Show decision-type episodes."""
-    from remind.store import SQLiteMemoryStore
+    from remind.store import SQLAlchemyMemoryStore
     from remind.models import EpisodeType
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
     
     episodes = store.get_episodes_by_type(EpisodeType.DECISION.value, limit=limit)
     
@@ -1088,9 +1087,9 @@ def decisions(ctx, limit: int):
 @click.pass_context
 def questions(ctx, limit: int):
     """Show question-type episodes (open questions, uncertainties)."""
-    from remind.store import SQLiteMemoryStore
+    from remind.store import SQLAlchemyMemoryStore
     from remind.models import EpisodeType
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
 
     episodes = store.get_episodes_by_type(EpisodeType.QUESTION.value, limit=limit)
 
@@ -1124,9 +1123,9 @@ def questions(ctx, limit: int):
 @click.pass_context
 def specs(ctx, limit: int, entity: Optional[str], status: Optional[str]):
     """Show spec-type episodes (requirements, acceptance criteria)."""
-    from remind.store import SQLiteMemoryStore
+    from remind.store import SQLAlchemyMemoryStore
     from remind.models import EpisodeType
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
 
     episodes = store.get_episodes_by_type(EpisodeType.SPEC.value, limit=1000)
 
@@ -1167,9 +1166,9 @@ def specs(ctx, limit: int, entity: Optional[str], status: Optional[str]):
 @click.pass_context
 def plans(ctx, limit: int, entity: Optional[str], status: Optional[str]):
     """Show plan-type episodes (implementation plans, roadmaps)."""
-    from remind.store import SQLiteMemoryStore
+    from remind.store import SQLAlchemyMemoryStore
     from remind.models import EpisodeType
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
 
     episodes = store.get_episodes_by_type(EpisodeType.PLAN.value, limit=1000)
 
@@ -1505,8 +1504,8 @@ def extract_relations(ctx, batch_size: int, force: bool):
 @click.pass_context
 def entity_relations(ctx, entity_id: str):
     """Show relationships for a specific entity."""
-    from remind.store import SQLiteMemoryStore
-    store = SQLiteMemoryStore(ctx.obj["db"])
+    from remind.store import SQLAlchemyMemoryStore
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
 
     entity = store.get_entity(entity_id)
     if not entity:

@@ -60,6 +60,8 @@ Create `~/.remind/remind.config.json`:
   "ingest_buffer_size": 4000,
   "ingest_min_density": 0.4,
 
+  "db_url": null,
+
   "logging_enabled": false,
 
   "episode_types": ["observation", "decision", "question", "meta", "preference",
@@ -124,6 +126,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `AUTO_CONSOLIDATE` | `auto_consolidate` | bool | `true` |
 | `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
 | `INGEST_MIN_DENSITY` | `ingest_min_density` | float | `0.4` |
+| `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
 | `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
 
@@ -217,13 +220,41 @@ export LLM_PROVIDER=ollama
 export EMBEDDING_PROVIDER=ollama
 ```
 
-## Database location
+## Database
+
+Remind uses SQLite by default but supports any database backend via SQLAlchemy (PostgreSQL, MySQL, etc.).
+
+### Database location (SQLite)
 
 | Context | Default path |
 |---------|-------------|
 | CLI (no `--db` flag) | `<cwd>/.remind/remind.db` (project-local) |
 | CLI with `--db name` | `~/.remind/name.db` |
 | MCP Server / Python API | `~/.remind/{name}.db` |
+
+### Using PostgreSQL or MySQL
+
+Set `db_url` in config, the `REMIND_DB_URL` environment variable, or use the `--db` CLI flag with a full URL:
+
+```bash
+# Via environment variable
+export REMIND_DB_URL="postgresql+psycopg://user:pass@localhost:5432/remind"
+
+# Via CLI flag
+remind --db "postgresql+psycopg://user:pass@localhost:5432/remind" remember "hello"
+
+# Via config file
+{
+  "db_url": "postgresql+psycopg://user:pass@localhost:5432/remind"
+}
+```
+
+Install the appropriate driver extra:
+
+```bash
+pip install "remind-mcp[postgres]"   # PostgreSQL (psycopg)
+pip install "remind-mcp[mysql]"      # MySQL (PyMySQL)
+```
 
 ## Memory decay
 

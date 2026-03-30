@@ -19,7 +19,7 @@ from remind.models import (
     Entity, EntityType, EpisodeType, TaskStatus, Relation, RelationType,
     normalize_entity_name,
 )
-from remind.store import MemoryStore, SQLiteMemoryStore
+from remind.store import MemoryStore, SQLAlchemyMemoryStore, SQLiteMemoryStore
 from remind.providers.base import LLMProvider, EmbeddingProvider
 from remind.consolidation import Consolidator
 from remind.retrieval import MemoryRetriever, ActivatedConcept
@@ -79,6 +79,7 @@ class MemoryInterface:
         llm: LLMProvider,
         embedding: EmbeddingProvider,
         store: Optional[MemoryStore] = None,
+        db_url: Optional[str] = None,
         db_path: str = "memory.db",
         # Consolidation settings
         consolidation_threshold: int = 5,  # episodes before auto-consolidation
@@ -100,7 +101,12 @@ class MemoryInterface:
     ):
         self.llm = llm
         self.embedding = embedding
-        self.store = store or SQLiteMemoryStore(db_path)
+        if store:
+            self.store = store
+        elif db_url:
+            self.store = SQLAlchemyMemoryStore(db_url)
+        else:
+            self.store = SQLAlchemyMemoryStore(db_path)
         
         # Initialize components
         self.consolidator = Consolidator(
@@ -455,42 +461,26 @@ class MemoryInterface:
             logger.warning("No embedding provider configured, cannot embed episodes")
             return 0
 
-        conn = self.store._get_conn() if hasattr(self.store, '_get_conn') else None
-        if not conn:
-            logger.warning("embed_episodes requires SQLiteMemoryStore")
-            return 0
+        all_episodes = self.store.get_recent_episodes(limit=100000)
+        unembedded = [ep for ep in all_episodes if ep.embedding is None]
 
-        try:
-            rows = conn.execute(
-                """
-                SELECT id, content FROM episodes
-                WHERE embedding IS NULL
-                AND json_extract(data, '$.deleted_at') IS NULL
-                ORDER BY timestamp ASC
-                """
-            ).fetchall()
-        finally:
-            conn.close()
-
-        if not rows:
+        if not unembedded:
             return 0
 
         total_embedded = 0
-        for i in range(0, len(rows), batch_size):
-            batch = rows[i:i + batch_size]
-            texts = [row["content"] for row in batch]
+        for i in range(0, len(unembedded), batch_size):
+            batch = unembedded[i:i + batch_size]
+            texts = [ep.content for ep in batch]
             try:
                 embeddings = await self.embedding.embed_batch(texts)
             except Exception as e:
                 logger.error(f"Failed to embed batch: {e}")
                 continue
 
-            for row, emb in zip(batch, embeddings):
-                episode = self.store.get_episode(row["id"])
-                if episode:
-                    episode.embedding = emb
-                    self.store.update_episode(episode)
-                    total_embedded += 1
+            for ep, emb in zip(batch, embeddings):
+                ep.embedding = emb
+                self.store.update_episode(ep)
+                total_embedded += 1
 
         logger.info(f"Embedded {total_embedded} episodes")
         return total_embedded
@@ -1249,6 +1239,7 @@ def create_memory(
     llm_provider: Optional[str] = None,
     embedding_provider: Optional[str] = None,
     db_path: str = "memory",
+    db_url: Optional[str] = None,
     project_dir: Optional[Path] = None,
     **kwargs,
 ) -> MemoryInterface:
@@ -1258,7 +1249,9 @@ def create_memory(
     Args:
         llm_provider: "anthropic", "openai", "azure_openai", or "ollama"
         embedding_provider: "openai", "azure_openai", or "ollama"
-        db_path: Database name (stored in ~/.remind/)
+        db_path: Database name (stored in ~/.remind/). Ignored when db_url is set.
+        db_url: Full SQLAlchemy database URL (e.g. "postgresql+psycopg://...").
+                When set, takes precedence over db_path.
         project_dir: Optional project directory for loading project-local config
         **kwargs: Additional arguments passed to MemoryInterface
 
@@ -1266,16 +1259,23 @@ def create_memory(
         Configured MemoryInterface
     """
     import os
-    from remind.config import load_config, resolve_db_path
+    from remind.config import load_config, resolve_db_url, _is_db_url
 
     config = load_config(project_dir=project_dir)
 
-    # Resolve database name to full path (skip if already absolute)
-    if not os.path.isabs(db_path):
-        db_path = resolve_db_path(db_path)
+    # Resolve database URL: explicit arg > config > resolve from db_path
+    if not db_url:
+        db_url = config.db_url
+    if not db_url:
+        if _is_db_url(db_path):
+            db_url = db_path
+        elif os.path.isabs(db_path):
+            db_url = f"sqlite:///{db_path}"
+        else:
+            db_url = resolve_db_url(db_path)
 
     if config.logging_enabled:
-        setup_file_logging(db_path)
+        setup_file_logging(db_url)
 
     # Use config values if not explicitly provided
     llm_provider = llm_provider or config.llm_provider
@@ -1364,7 +1364,7 @@ def create_memory(
     return MemoryInterface(
         llm=llm,
         embedding=embedding,
-        db_path=db_path,
+        db_url=db_url,
         triage_llm=triage_llm,
         **kwargs,
     )

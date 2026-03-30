@@ -76,7 +76,7 @@ def run_consolidation(args, logger):
         memory = create_memory(
             llm_provider=args.llm,
             embedding_provider=args.embedding,
-            db_path=args.db,
+            db_url=args.db,
             ingest_background=False,
         )
 
@@ -127,7 +127,7 @@ def run_ingest(args, logger):
         memory = create_memory(
             llm_provider=args.llm,
             embedding_provider=args.embedding,
-            db_path=args.db,
+            db_url=args.db,
             ingest_background=False,
         )
 
@@ -192,7 +192,7 @@ def run_ingest_worker(args, logger):
         memory = create_memory(
             llm_provider=args.llm,
             embedding_provider=args.embedding,
-            db_path=args.db,
+            db_url=args.db,
             ingest_background=False,
         )
 
@@ -245,7 +245,7 @@ def run_ingest_worker(args, logger):
 
 def main():
     parser = argparse.ArgumentParser(description="Background worker for consolidation and ingestion")
-    parser.add_argument("--db", required=True, help="Database path")
+    parser.add_argument("--db", required=True, help="Database URL or path")
     parser.add_argument("--llm", required=True, help="LLM provider")
     parser.add_argument("--embedding", required=True, help="Embedding provider")
     parser.add_argument("--ingest-worker", action="store_true", help="Run as queue-draining ingest worker")

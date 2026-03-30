@@ -112,6 +112,9 @@ class RemindConfig:
     # Episode types
     episode_types: list[str] = field(default_factory=lambda: list(DEFAULT_EPISODE_TYPES))
 
+    # Database URL (overrides db_path when set)
+    db_url: Optional[str] = None
+
     # Logging
     logging_enabled: bool = False
 
@@ -177,6 +180,10 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         raw = file_config["episode_types"]
         if isinstance(raw, list):
             config.episode_types = [str(t).strip().lower() for t in raw if str(t).strip()]
+
+    # Database URL
+    if "db_url" in file_config:
+        config.db_url = str(file_config["db_url"])
 
     # Logging
     if "logging_enabled" in file_config:
@@ -329,6 +336,10 @@ def _apply_env_vars(config: RemindConfig) -> None:
         if parsed:
             config.episode_types = parsed
 
+    # Database URL
+    if db_url := os.environ.get("REMIND_DB_URL"):
+        config.db_url = db_url
+
     # Logging
     if logging_enabled := os.environ.get("REMIND_LOGGING_ENABLED"):
         config.logging_enabled = logging_enabled.lower() in ("true", "1", "yes")
@@ -397,20 +408,66 @@ def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
         return str(REMIND_DIR / "memory.db")
 
 
+_DB_URL_SCHEMES = ("sqlite://", "postgresql://", "postgresql+", "mysql://", "mysql+")
+
+
+def _is_db_url(value: str) -> bool:
+    """Check if a string looks like a database URL."""
+    return any(value.startswith(s) for s in _DB_URL_SCHEMES)
+
+
+def resolve_db_url(
+    db_name: Optional[str] = None,
+    project_aware: bool = False,
+) -> str:
+    """Resolve a database name, path, or URL to a SQLAlchemy database URL.
+
+    If *db_name* is already a full database URL (e.g. ``postgresql://...``)
+    it is returned as-is.  Otherwise it goes through the same resolution
+    logic as ``resolve_db_path`` and wraps the result with ``sqlite:///``.
+
+    Args:
+        db_name: Database name, absolute file path, or full database URL.
+        project_aware: If True and db_name is None, uses <cwd>/.remind/remind.db.
+
+    Returns:
+        A SQLAlchemy-compatible database URL string.
+
+    Examples:
+        resolve_db_url("myproject") → "sqlite:///~/.remind/myproject.db"
+        resolve_db_url("/tmp/memory.db") → "sqlite:////tmp/memory.db"
+        resolve_db_url("postgresql://u:p@host/db") → "postgresql://u:p@host/db"
+        resolve_db_url(None, project_aware=True) → "sqlite:///<cwd>/.remind/remind.db"
+    """
+    if db_name and _is_db_url(db_name):
+        return db_name
+
+    file_path = resolve_db_path(db_name, project_aware=project_aware)
+    return f"sqlite:///{file_path}"
+
+
 _file_logging_configured: set[str] = set()
 
 
-def setup_file_logging(db_path: str) -> None:
+def setup_file_logging(db_path_or_url: str) -> None:
     """Configure file logging to remind.log in the same directory as the database.
 
     Attaches a FileHandler to the ``remind`` package logger so all
     sub-module loggers (remind.interface, remind.consolidation, etc.)
     propagate their output to the log file at DEBUG level.
 
+    For non-SQLite database URLs the log goes to ~/.remind/remind.log.
+
     Safe to call multiple times -- duplicate handlers for the same
     directory are skipped.
     """
-    log_dir = str(Path(db_path).parent)
+    if _is_db_url(db_path_or_url) and not db_path_or_url.startswith("sqlite"):
+        log_dir = str(REMIND_DIR)
+    else:
+        path = db_path_or_url
+        if path.startswith("sqlite:///"):
+            path = path[len("sqlite:///"):]
+        log_dir = str(Path(path).parent)
     if log_dir in _file_logging_configured:
         return
 

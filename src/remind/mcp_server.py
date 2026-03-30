@@ -26,7 +26,7 @@ load_dotenv()
 
 from remind.interface import create_memory, MemoryInterface
 from remind.models import Entity, normalize_entity_name
-from remind.config import REMIND_DIR, resolve_db_path, load_config
+from remind.config import REMIND_DIR, resolve_db_path, resolve_db_url, _is_db_url, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -43,18 +43,16 @@ _global_lock = asyncio.Lock()
 
 
 async def get_memory_for_db(db_path: str) -> MemoryInterface:
-    """Get or create a MemoryInterface for the given database path.
+    """Get or create a MemoryInterface for the given database URL or path.
 
-    Note: db_path should already be resolved via resolve_db_path() by the caller.
+    Note: db_path should already be resolved via resolve_db_url() by the caller.
     """
 
-    # Get or create lock for this db
     async with _global_lock:
         if db_path not in _memory_locks:
             _memory_locks[db_path] = asyncio.Lock()
         lock = _memory_locks[db_path]
 
-    # Get or create memory instance
     async with lock:
         if db_path not in _memory_instances:
             config = load_config()
@@ -62,7 +60,7 @@ async def get_memory_for_db(db_path: str) -> MemoryInterface:
             _memory_instances[db_path] = create_memory(
                 llm_provider=config.llm_provider,
                 embedding_provider=config.embedding_provider,
-                db_path=db_path,
+                db_url=db_path,
                 auto_consolidate=config.auto_consolidate,
                 consolidation_threshold=config.consolidation_threshold,
             )
@@ -1568,7 +1566,8 @@ def run_server_sse(host: str = "127.0.0.1", port: int = 8765):
             
             # Case 1: db param provided directly (initial SSE connection)
             if db_list:
-                db_path = resolve_db_path(db_list[0])
+                raw_db = db_list[0]
+                db_path = raw_db if _is_db_url(raw_db) else resolve_db_url(raw_db)
                 logger.info(f"Request with db param: {db_path}")
             
             # Case 2: session_id provided, look up db from session map

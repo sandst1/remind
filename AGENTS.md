@@ -126,13 +126,16 @@ Key class: `MemoryRetriever` with `ActivatedConcept` results.
 
 ### Store (`store.py`)
 
-SQLite-based persistence. Tables:
+Multi-database persistence via SQLAlchemy Core. Supports SQLite (default), PostgreSQL, and MySQL. Tables:
 - `concepts` - Stores concepts with JSON-serialized relations
 - `episodes` - Raw episodes with consolidation status
 - `entities` - Entity registry
 - `mentions` - Episode-entity junction table
+- `relations` - Concept-to-concept graph edges
+- `entity_relations` - Entity-to-entity relationships
+- `metadata` - Persistent key-value store
 
-The `MemoryStore` protocol defines the interface for alternative storage backends.
+The `MemoryStore` ABC defines the interface. `SQLAlchemyMemoryStore` is the concrete implementation (aliased as `SQLiteMemoryStore` for backward compatibility).
 
 ### Configuration (`config.py`)
 
@@ -178,6 +181,8 @@ class RemindConfig:
     embedding_provider: str = "openai"
     consolidation_threshold: int = 5
     auto_consolidate: bool = True
+    # Database URL (SQLAlchemy format; None = SQLite default)
+    db_url: Optional[str] = None
     # Auto-ingest settings
     ingest_buffer_size: int = 4000
     ingest_min_density: float = 0.4
@@ -194,13 +199,22 @@ class RemindConfig:
 def load_config() -> RemindConfig:
     """Priority: env vars > config file > defaults"""
 
+def resolve_db_url(db_name: Optional[str], project_aware: bool = False) -> str:
+    """Resolve a database name/path/URL to a SQLAlchemy database URL.
+    - Full URL (postgresql://..., mysql://...): returned as-is
+    - db_name provided: sqlite:///~/.remind/{name}.db
+    - db_name=None + project_aware=True: sqlite:///<cwd>/.remind/remind.db
+    - db_name=None + project_aware=False: sqlite:///~/.remind/memory.db
+    """
+
 def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
-    """
-    - db_name provided: ~/.remind/{name}.db
-    - db_name=None + project_aware=True: <cwd>/.remind/remind.db
-    - db_name=None + project_aware=False: ~/.remind/memory.db
-    """
+    """Legacy function - resolves to a file path (SQLite only)."""
 ```
+
+**Database URL** (`db_url`): Supports any SQLAlchemy-compatible database URL. Env var: `REMIND_DB_URL`. Examples:
+- SQLite (default): `sqlite:///~/.remind/memory.db`
+- PostgreSQL: `postgresql+psycopg://user:pass@localhost:5432/remind`
+- MySQL: `mysql+pymysql://user:pass@localhost:3306/remind`
 
 **Config file format** (`~/.remind/remind.config.json`):
 ```json
@@ -210,6 +224,7 @@ def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
   "consolidation_threshold": 5,
   "auto_consolidate": true,
   "logging_enabled": false,
+  "db_url": null,
   "anthropic": { "api_key": "sk-ant-..." },
   "openai": { "api_key": "sk-..." },
   "azure_openai": { "api_key": "...", "base_url": "..." },
@@ -420,7 +435,7 @@ When making changes, these files are most commonly modified together:
 - **MCP issues**: Check `db` query parameter in MCP URL, verify server is running
 - **Config issues**: Check `~/.remind/remind.config.json` exists and is valid JSON
 - **Background consolidation**: Check `~/.remind/logs/consolidation.log` for errors
-- **CLI database path**: Without `--db`, uses `<cwd>/.remind/remind.db` (project-aware)
+- **CLI database path**: Without `--db`, uses `<cwd>/.remind/remind.db` (project-aware). Accepts database URLs (e.g. `--db postgresql+psycopg://...`)
 
 ## Database Schema
 

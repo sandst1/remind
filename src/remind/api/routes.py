@@ -22,7 +22,7 @@ def _normalize_entity_param(raw: str) -> str:
     return Entity.make_id(type_str, normalize_entity_name(name))
 
 # Import config and memory instance cache
-from remind.config import resolve_db_path, REMIND_DIR
+from remind.config import resolve_db_url, _is_db_url, REMIND_DIR
 from remind.mcp_server import get_memory_for_db
 
 
@@ -36,8 +36,8 @@ async def _get_memory_from_request(request: Request):
         )
 
     try:
-        db_path = resolve_db_path(db_name)
-        memory = await get_memory_for_db(db_path)
+        db_url = db_name if _is_db_url(db_name) else resolve_db_url(db_name)
+        memory = await get_memory_for_db(db_url)
         return memory, None
     except ValueError as e:
         return None, JSONResponse({"error": str(e)}, status_code=400)
