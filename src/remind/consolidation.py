@@ -401,7 +401,7 @@ class Consolidator:
                         prompt=prompt,
                         system=CONSOLIDATION_SYSTEM_PROMPT,
                         temperature=0.3,
-                        max_tokens=8192,
+                        max_tokens=16384,
                     )
                 except Exception as e:
                     logger.error(f"LLM consolidation failed{topic_label}{sub_pass_label}: {e}")
