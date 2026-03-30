@@ -54,8 +54,9 @@
     mounted = true;
   });
 
-  // React to database changes
+  // React to database and topic filter (see EpisodeTimeline — topic must be read here).
   $: if (mounted && $currentDb) {
+    void $selectedTopic;
     loadAll();
     conceptPath.set([]);
   }

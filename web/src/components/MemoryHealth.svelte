@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { currentDb } from '../lib/stores';
+  import { currentDb, selectedTopic } from '../lib/stores';
   import { fetchConcepts } from '../lib/api';
   import type { Concept } from '../lib/types';
   import { ArrowUp, ArrowDown, Brain } from 'lucide-svelte';
@@ -34,6 +34,7 @@
   });
 
   $: if (mounted && $currentDb) {
+    void $selectedTopic;
     loadAll();
   }
 
@@ -56,7 +57,11 @@
       const collected: Concept[] = [];
 
       while (offset < total) {
-        const response = await fetchConcepts({ offset, limit: batchSize });
+        const response = await fetchConcepts({
+          offset,
+          limit: batchSize,
+          topic: $selectedTopic || undefined,
+        });
         if (gen !== loadGen) return;
         total = response.total;
         collected.push(...response.concepts);

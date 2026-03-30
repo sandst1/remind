@@ -25,11 +25,13 @@
 
   onMount(() => {
     mounted = true;
-    loadEpisodes();
   });
 
-  // React to database changes
+  // React to database and topic filter. ($selectedTopic must be read here — Svelte
+  // does not treat store subscriptions inside loadEpisodes() as dependencies.)
   $: if (mounted && $currentDb) {
+    void $selectedTopic;
+    page = 0;
     loadEpisodes();
   }
 
