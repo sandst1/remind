@@ -27,23 +27,20 @@ logger = logging.getLogger(__name__)
 CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your role is to:
 
 1. Analyze episodic memories (raw experiences/interactions)
-2. Extract generalized concepts and patterns
+2. Extract grounded, specific concepts (not abstract truisms)
 3. Identify relationships between concepts
 4. Update existing knowledge when new information refines it
-5. Flag contradictions that need resolution
+5. Flag contradictions and superseded knowledge
 
-You think like a cognitive scientist studying memory consolidation. 
-You look for:
-- Recurring patterns across experiences
-- Abstract principles that generalize beyond specific instances
-- Causal relationships and correlations
-- Hierarchical structure (specific → general)
-- Exceptions and boundary conditions
+CRITICAL — SPECIFICITY OVER ABSTRACTION:
+- If the source episodes are about a specific system, project, or domain, the concept
+  should reflect that specificity. Do NOT abstract away context that makes the concept useful.
+  GOOD: "We chose SQLite for zero-dependency local deploys"
+  BAD: "Storage decisions involve tradeoffs between simplicity and scalability"
+- Every concept summary must be falsifiable — it must be possible to say "this is wrong"
+  based on future evidence. Generic truisms ("teams make tradeoffs") are NOT valid concepts.
 
-Be precise and conservative. Only create concepts when there's clear evidence.
-Prefer updating existing concepts over creating redundant ones.
-
-For FACT episodes (type=fact), preserve specific details verbatim in concept summaries.
+For FACT episodes (type=fact), preserve specific details VERBATIM in concept summaries.
 Do NOT generalize away concrete values, names, configurations, dates, or version numbers.
 A fact episode like "Redis cache TTL is 300s" should appear in the concept summary as-is,
 not abstracted to "moderate TTL values." Multiple related facts can consolidate into a single
@@ -52,7 +49,12 @@ concept that lists all the concrete details.
 For OUTCOME episodes, look specifically for:
 - Strategy-outcome patterns: "strategy X tends to succeed/fail in context Y"
 - Use 'causes' relations to connect strategies to outcomes
-- Use 'contradicts' when a strategy that usually works fails, or vice versa"""
+- Use 'contradicts' when a strategy that usually works fails, or vice versa
+
+For SUPERSEDED knowledge:
+- When new information clearly replaces an older concept, use 'supersedes' relation type.
+  Example: "We switched from session cookies to JWT" → new concept supersedes the old one.
+- The superseded concept retains its history but is marked as replaced."""
 
 
 CONSOLIDATION_PROMPT_TEMPLATE = """## EXISTING CONCEPTUAL MEMORY
@@ -87,8 +89,9 @@ Respond with this exact JSON structure:
       "source_episodes": ["episode_id1", "episode_id2"],
       "add_exceptions": ["new exception if any"],
       "add_tags": ["new tag if any"],
+      "topic": "primary knowledge area or null to keep existing",
       "add_relations": [
-        {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
+        {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of|supersedes", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
       ],
       "reasoning": "why this update"
     }}
@@ -98,14 +101,15 @@ Respond with this exact JSON structure:
     {{
       "temp_id": "NEW_0",
       "title": "short descriptive title (5-10 words)",
-      "summary": "the generalized understanding - be specific and actionable",
+      "summary": "the grounded understanding - be specific and falsifiable, not abstract",
       "confidence": 0.6,
       "source_episodes": ["episode_id1", "episode_id2"],
       "conditions": "when/where this applies (or null if universal)",
       "exceptions": ["known exceptions"],
       "tags": ["categorization", "tags"],
+      "topic": "primary knowledge area (e.g. architecture, product, infra)",
       "relations": [
-        {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
+        {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of|supersedes", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
       ]
     }}
   ],
@@ -114,7 +118,7 @@ Respond with this exact JSON structure:
     {{
       "source_id": "existing_id or NEW_0",
       "target_id": "existing_id or NEW_1",
-      "type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of",
+      "type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of|supersedes",
       "strength": 0.7,
       "context": "when this relation holds"
     }}
@@ -258,8 +262,10 @@ class Consolidator:
         """
         Consolidate a single batch of unconsolidated episodes.
         
-        When there are more existing concepts than concepts_per_consolidation_pass,
-        runs multiple LLM sub-passes (one per concept chunk) and merges the
+        Episodes are grouped by topic and each topic group is consolidated
+        independently to prevent cross-topic concept bleed. When there are
+        more existing concepts than concepts_per_consolidation_pass, runs
+        multiple LLM sub-passes (one per concept chunk) and merges the
         operations before applying them once.
         
         Returns:
@@ -296,20 +302,70 @@ class Consolidator:
         result.episodes_processed = len(episodes)
         batch_label = f" (batch {batch_num + 1})" if batch_num > 0 else ""
         logger.info(f"Consolidating {len(episodes)} episodes{batch_label}")
-        
-        # Get existing concepts and partition into chunks
-        all_concepts = self.store.get_concepts_summary()
-        concept_chunks = self._partition_concepts(all_concepts)
-        chunk_ids = {c["id"] for chunk in concept_chunks for c in chunk}
 
+        # Group episodes by topic for independent consolidation
+        episodes_by_topic: dict[Optional[str], list[Episode]] = {}
+        for ep in episodes:
+            episodes_by_topic.setdefault(ep.topic, []).append(ep)
+
+        topic_count = len(episodes_by_topic)
+        if topic_count > 1:
+            topic_labels = [t or "(no topic)" for t in episodes_by_topic.keys()]
+            logger.info(f"Consolidating {topic_count} topic groups: {', '.join(topic_labels)}")
+
+        for topic, topic_episodes in episodes_by_topic.items():
+            topic_result = await self._consolidate_topic_group(
+                topic, topic_episodes, batch_num, batch_label
+            )
+            if topic_result:
+                result.concepts_created += topic_result.concepts_created
+                result.concepts_updated += topic_result.concepts_updated
+                result.contradictions_found += topic_result.contradictions_found
+                result.created_concept_ids.extend(topic_result.created_concept_ids)
+                result.updated_concept_ids.extend(topic_result.updated_concept_ids)
+                result.contradiction_details.extend(topic_result.contradiction_details)
+
+        # Mark episodes as consolidated
+        now = datetime.now()
+        for episode in episodes:
+            episode.consolidated = True
+            episode.updated_at = now
+            self.store.update_episode(episode)
+        
+        logger.info(
+            f"Consolidation batch complete: {result.concepts_created} created, "
+            f"{result.concepts_updated} updated, {result.contradictions_found} contradictions"
+        )
+        
+        return result
+
+    async def _consolidate_topic_group(
+        self,
+        topic: Optional[str],
+        episodes: list[Episode],
+        batch_num: int,
+        batch_label: str,
+    ) -> Optional[ConsolidationResult]:
+        """Consolidate a group of episodes belonging to the same topic."""
+        result = ConsolidationResult()
+        topic_label = f" [topic={topic}]" if topic else ""
+
+        # Get existing concepts — filter to same topic if set, plus untopiced
+        all_concepts = self.store.get_concepts_summary()
+        if topic:
+            relevant_concepts = [
+                c for c in all_concepts if c.get("topic") == topic or c.get("topic") is None
+            ]
+        else:
+            relevant_concepts = all_concepts
+
+        concept_chunks = self._partition_concepts(relevant_concepts)
         episodes_text = self._format_episodes(episodes)
 
-        # Run one LLM sub-pass per concept chunk, merge results
         merged_operations = self._empty_operations()
         num_chunks = len(concept_chunks)
 
         for chunk_idx, chunk in enumerate(concept_chunks):
-            # Build the "other concepts" index for out-of-chunk ids
             other_concepts = [c for c in all_concepts if c not in chunk]
             other_index = self._format_concept_index(other_concepts)
 
@@ -324,7 +380,7 @@ class Consolidator:
 
             sub_pass_label = f" (sub-pass {chunk_idx + 1}/{num_chunks})" if num_chunks > 1 else ""
             logger.debug(
-                f"Consolidation LLM request{sub_pass_label}:\n"
+                f"Consolidation LLM request{topic_label}{sub_pass_label}:\n"
                 f"  provider: {self.llm.name}\n"
                 f"  episodes: {len(episodes)}\n"
                 f"  chunk_concepts: {len(chunk)}\n"
@@ -341,40 +397,30 @@ class Consolidator:
                     max_tokens=8192,
                 )
             except Exception as e:
-                logger.error(f"LLM consolidation failed{sub_pass_label}: {e}")
+                logger.error(f"LLM consolidation failed{topic_label}{sub_pass_label}: {e}")
                 raise
 
-            logger.debug(f"Consolidation LLM response{sub_pass_label}: {json.dumps(operations, indent=2)}")
-
+            logger.debug(f"Consolidation LLM response{topic_label}{sub_pass_label}: {json.dumps(operations, indent=2)}")
             self._merge_operations(merged_operations, operations, chunk_idx)
 
         if num_chunks > 1:
             logger.info(
-                f"Merged {num_chunks} concept-chunk sub-passes: "
+                f"Merged {num_chunks} concept-chunk sub-passes{topic_label}: "
                 f"{len(merged_operations['updates'])} updates, "
                 f"{len(merged_operations['new_concepts'])} new concepts, "
                 f"{len(merged_operations['new_relations'])} relations"
             )
 
-        # Log the analysis
         if merged_operations.get("analysis"):
-            logger.info(f"Consolidation analysis: {merged_operations['analysis']}")
-        
-        # Apply merged operations
+            logger.info(f"Consolidation analysis{topic_label}: {merged_operations['analysis']}")
+
+        # Inject topic into new concepts if they don't specify one
+        if topic:
+            for nc in merged_operations.get("new_concepts", []):
+                if not nc.get("topic"):
+                    nc["topic"] = topic
+
         await self._apply_operations(merged_operations, result)
-        
-        # Mark episodes as consolidated
-        now = datetime.now()
-        for episode in episodes:
-            episode.consolidated = True
-            episode.updated_at = now
-            self.store.update_episode(episode)
-        
-        logger.info(
-            f"Consolidation batch complete: {result.concepts_created} created, "
-            f"{result.concepts_updated} updated, {result.contradictions_found} contradictions"
-        )
-        
         return result
 
     @staticmethod
@@ -575,7 +621,8 @@ class Consolidator:
             line = f"[{c['id']}] (conf: {c.get('confidence', 0.5):.2f}, n={c.get('instance_count', 1)})"
             if tags:
                 line += f" [{tags}]"
-            # Include title if present
+            if c.get("topic"):
+                line += f" topic={c['topic']}"
             if c.get("title"):
                 line += f"\n  Title: {c['title']}"
             line += f"\n  {c['summary']}"
@@ -644,6 +691,10 @@ class Consolidator:
             if tag not in concept.tags:
                 concept.tags.append(tag)
 
+        # Update topic if provided and concept doesn't have one
+        if update.get("topic") and not concept.topic:
+            concept.topic = update["topic"]
+
         # Add source episodes
         for ep_id in update.get("source_episodes", []):
             if ep_id not in concept.source_episodes:
@@ -672,6 +723,7 @@ class Consolidator:
             conditions=data.get("conditions"),
             exceptions=data.get("exceptions", []),
             tags=data.get("tags", []),
+            topic=data.get("topic"),
             relations=[],  # Relations added via _add_relation after all concepts created
             embedding=embedding,
         )

@@ -94,6 +94,8 @@ async def tool_remember(
     metadata: Optional[str] = None,
     episode_type: Optional[str] = None,
     entities: Optional[str] = None,
+    topic: Optional[str] = None,
+    source_type: Optional[str] = None,
 ) -> str:
     """Store an experience or observation in memory.
     
@@ -120,6 +122,8 @@ async def tool_remember(
         metadata=meta,
         episode_type=ep_type,
         entities=entity_list,
+        topic=topic,
+        source_type=source_type,
     )
     
     lines = [f"Remembered as episode {episode_id}"]
@@ -128,6 +132,10 @@ async def tool_remember(
         lines.append(f"  Type: {ep_type.value}")
     if entity_list:
         lines.append(f"  Entities: {', '.join(entity_list)}")
+    if topic:
+        lines.append(f"  Topic: {topic}")
+    if source_type:
+        lines.append(f"  Source: {source_type}")
     
     # Auto-consolidate if threshold reached and auto_consolidate is enabled
     if memory.auto_consolidate and memory.should_consolidate:
@@ -155,10 +163,52 @@ async def tool_recall(
     context: Optional[str] = None,
     entity: Optional[str] = None,
     episode_k: Optional[int] = None,
+    topic: Optional[str] = None,
 ) -> str:
     """Retrieve relevant memories for a query."""
     memory = await get_memory()
-    return await memory.recall(query=query, k=k, context=context, entity=entity, episode_k=episode_k)
+    return await memory.recall(query=query, k=k, context=context, entity=entity, episode_k=episode_k, topic=topic)
+
+
+async def tool_list_topics() -> str:
+    """List all topics with episode/concept counts and latest activity."""
+    memory = await get_memory()
+    topics = memory.list_topics()
+
+    if not topics:
+        return "No topics found. Use the 'topic' parameter when remembering to assign topics."
+
+    lines = ["TOPICS:\n"]
+    for t in topics:
+        lines.append(
+            f"  {t['topic']}: {t['episode_count']} episodes, "
+            f"{t['concept_count']} concepts, "
+            f"latest: {t['latest_activity']}"
+        )
+    return "\n".join(lines)
+
+
+async def tool_topic_overview(topic: str, k: int = 5) -> str:
+    """Get top concepts for a topic without needing a query."""
+    memory = await get_memory()
+    concepts = memory.get_topic_overview(topic, k=k)
+
+    if not concepts:
+        return f"No concepts found for topic '{topic}'."
+
+    lines = [f"TOPIC OVERVIEW: {topic}\n"]
+    for c in concepts:
+        updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
+        title = f"{c.title} " if c.title else ""
+        lines.append(
+            f"  [{c.id}] {title}(confidence: {c.confidence:.2f}, "
+            f"instances: {c.instance_count}, updated: {updated})"
+        )
+        lines.append(f"    {c.summary}")
+        if c.conditions:
+            lines.append(f"    → Applies when: {c.conditions}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 async def tool_consolidate(force: bool = False) -> str:
@@ -864,6 +914,8 @@ def create_mcp_server(config=None):
         metadata: Optional[str] = None,
         episode_type: Optional[str] = None,
         entities: Optional[str] = None,
+        topic: Optional[str] = None,
+        source_type: Optional[str] = None,
     ) -> str:
         """Store an experience or observation in memory.
         
@@ -886,11 +938,14 @@ def create_mcp_server(config=None):
                           Custom types are also accepted if configured. Auto-detected during consolidation if not provided.
             entities: Optional comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
                       (auto-detected during consolidation if not provided)
+            topic: Primary knowledge area this memory belongs to (e.g., "architecture", "product", "infra").
+                   Used to group related memories and scope retrieval.
+            source_type: Origin of this memory (e.g., "agent", "slack", "github", "manual").
         
         Returns:
             Confirmation with episode ID
         """
-        return await tool_remember(content, metadata, episode_type, entities)
+        return await tool_remember(content, metadata, episode_type, entities, topic, source_type)
     
     @mcp.tool()
     async def recall(
@@ -899,6 +954,7 @@ def create_mcp_server(config=None):
         context: Optional[str] = None,
         entity: Optional[str] = None,
         episode_k: Optional[int] = None,
+        topic: Optional[str] = None,
     ) -> str:
         """Retrieve relevant memories for a query.
 
@@ -915,12 +971,42 @@ def create_mcp_server(config=None):
             context: Optional additional context to improve retrieval
             entity: Optional entity ID to retrieve by (e.g., "file:src/auth.ts")
             episode_k: Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable.
+            topic: Restrict recall to this topic. Cross-topic results are penalized
+                   but not excluded. Use list_topics to see available topics.
         
         Returns:
             Formatted memory context for injection into prompts
         """
-        return await tool_recall(query, k, context, entity, episode_k=episode_k)
+        return await tool_recall(query, k, context, entity, episode_k=episode_k, topic=topic)
     
+    @mcp.tool()
+    async def list_topics() -> str:
+        """List all topics in memory with episode/concept counts.
+
+        Topics are knowledge areas that group related memories. Use this
+        to understand the structure of stored knowledge before recalling.
+
+        Returns:
+            List of topics with stats (episode count, concept count, latest activity)
+        """
+        return await tool_list_topics()
+
+    @mcp.tool()
+    async def topic_overview(topic: str, k: int = 5) -> str:
+        """Get an overview of a topic's top concepts without a specific query.
+
+        Use this to browse/explore what is known about a topic before drilling
+        down with a targeted recall query.
+
+        Args:
+            topic: The topic name to explore (e.g., "architecture", "product")
+            k: Number of top concepts to return (default: 5)
+
+        Returns:
+            Top concepts for the topic, ordered by confidence and evidence
+        """
+        return await tool_topic_overview(topic, k)
+
     @mcp.tool()
     async def consolidate(force: bool = False) -> str:
         """Process pending episodes into generalized concepts.

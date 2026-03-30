@@ -42,6 +42,12 @@ todo → in_progress → done
 
 Active tasks (todo, in_progress, blocked) are **excluded from consolidation**. They remain as live operational data. Only completed tasks contribute to the generalized knowledge graph.
 
+## Topics and source types
+
+Episodes can be tagged with a **topic** — a knowledge area that groups related memories (e.g., `"architecture"`, `"product"`, `"infra"`). Topics scope consolidation and retrieval, reducing noise in large memory graphs.
+
+Episodes can also carry a **source type** — the origin of the memory (e.g., `"agent"`, `"slack"`, `"github"`, `"manual"`). This tracks lineage without attributing to individuals.
+
 ## Storing episodes
 
 ::: code-group
@@ -50,17 +56,20 @@ Active tasks (todo, in_progress, blocked) are **excluded from consolidation**. T
 remind remember "User likes Python and Rust"
 remind remember "Chose PostgreSQL for the user store" -t decision
 remind remember "All API routes need authentication" -t spec -e module:auth
+remind remember "Use event sourcing for audit trail" --topic architecture --source-type agent
 ```
 
 ```python [Python]
 memory.remember("User likes Python and Rust")
 memory.remember("Chose PostgreSQL", episode_type=EpisodeType.DECISION)
 memory.remember("All API routes need auth", episode_type=EpisodeType.SPEC, entities=["module:auth"])
+memory.remember("Use event sourcing", topic="architecture", source_type="agent")
 ```
 
 ```text [MCP]
 remember(content="User likes Python and Rust")
 remember(content="Chose PostgreSQL", episode_type="decision")
+remember(content="Use event sourcing for audit trail", topic="architecture", source_type="agent")
 ```
 
 :::

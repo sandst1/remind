@@ -13,6 +13,7 @@ remind remember "content"
 remind remember "content" -t decision          # Typed
 remind remember "content" -e tool:redis        # With entity
 remind remember "content" -t spec -e module:auth -m '{"status":"approved"}'
+remind remember "content" --topic architecture --source-type agent
 ```
 
 | Flag | Description |
@@ -20,6 +21,8 @@ remind remember "content" -t spec -e module:auth -m '{"status":"approved"}'
 | `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome`, `fact` |
 | `-e, --entity` | Entity tag(s) in `type:name` format. Repeat for multiple. |
 | `-m, --metadata` | JSON metadata string |
+| `--topic` | Knowledge area (e.g., `architecture`, `product`). Scopes consolidation and retrieval. |
+| `--source-type` | Origin of the memory (e.g., `agent`, `slack`, `manual`). |
 | `--no-embed` | Skip embedding the episode (faster, no API call). Useful for bulk imports. |
 
 ### ingest
@@ -58,6 +61,7 @@ remind recall --entity file:src/auth.ts            # Entity-only (no query neede
 remind recall "query" -k 10                        # More results
 remind recall "query" --episode-k 10               # More direct episode matches
 remind recall "query" --episode-k 0                # Concepts only, no episode search
+remind recall "database design" --topic architecture  # Topic-scoped
 ```
 
 | Flag | Description |
@@ -65,6 +69,7 @@ remind recall "query" --episode-k 0                # Concepts only, no episode s
 | `--entity` | Scope retrieval to an entity (can be used without a query) |
 | `-k` | Number of concepts to return (default: 3) |
 | `--episode-k, -ek` | Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable. |
+| `--topic` | Filter to a knowledge area. Cross-topic concepts may still surface via spreading activation but are penalized. |
 
 ### consolidate
 
@@ -116,6 +121,14 @@ Search concepts by keyword.
 
 ```bash
 remind search "keyword"
+```
+
+## Topic management
+
+```bash
+remind topics list               # List all topics with stats
+remind topics overview <name>    # Top concepts for a topic
+remind topics overview <name> -k 10   # More results
 ```
 
 ## Episode filters

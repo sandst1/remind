@@ -8,8 +8,10 @@ External memory layer that persists across sessions and generalizes experiences 
 
 | Tool | Purpose |
 |------|---------|
-| `remember(content, [episode_type], [entities])` | Store experience (embeds by default, no LLM) |
-| `recall(query, [entity], [episode_k])` | Retrieve relevant memories (concepts + direct episodes) |
+| `remember(content, [episode_type], [entities], [topic], [source_type])` | Store experience (embeds by default, no LLM) |
+| `recall(query, [entity], [episode_k], [topic])` | Retrieve relevant memories (concepts + direct episodes) |
+| `list_topics()` | List all topics with stats |
+| `topic_overview(topic, [k])` | Top concepts for a topic (no query needed) |
 | `ingest(content, [source])` | Auto-ingest raw text with density scoring |
 | `flush_ingest()` | Force-flush ingestion buffer |
 | `consolidate([force])` | Extract entities + process episodes → concepts |
@@ -37,9 +39,14 @@ External memory layer that persists across sessions and generalizes experiences 
 ```
 remember(content="User prefers TypeScript over JavaScript")
 remember(content="Use Redis for caching", episode_type="decision", entities="tool:redis,concept:caching")
+remember(content="Chose SQLite for zero-dep deploys", topic="architecture", source_type="agent")
 ```
 
 **Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`, `fact`
+
+**Topics**: Knowledge areas that group related memories (e.g., `"architecture"`, `"product"`, `"infra"`). Scopes consolidation and retrieval. Use `list_topics()` to see what exists.
+
+**Source types**: Origin of the memory (e.g., `"agent"`, `"slack"`, `"github"`, `"manual"`).
 
 **When to use**: User preferences, project context, decisions+rationale, open questions, corrections, specific facts
 **Skip**: Trivial info, already-captured knowledge, raw conversation logs
@@ -70,11 +77,24 @@ recall(query="authentication issues")           # Semantic search
 recall(query="auth", entity="file:src/auth.ts") # Entity-specific
 recall(query="auth", episode_k=10)              # More direct episode matches
 recall(query="auth", episode_k=0)               # Concepts only, no episode search
+recall(query="database design", topic="architecture")  # Topic-scoped
 ```
 
 Recall returns two layers of results:
 - **RELEVANT EPISODES** — Direct episode matches via embedding similarity (controlled by `episode_k`, default: 5, set to 0 to disable)
-- **RELEVANT MEMORY** — Concept matches via spreading activation, each showing source episodes, entity context, and any contradicting concepts
+- **RELEVANT MEMORY** — Concept matches via spreading activation, each showing source episodes, entity context, contradicting concepts, and superseded/superseding concepts
+
+When `topic` is set, initial matches are filtered to that topic. Cross-topic results can still surface via spreading activation but are penalized.
+
+## Topics
+
+```
+list_topics()                           # See all topics with stats
+topic_overview(topic="architecture")    # Top concepts for a topic
+topic_overview(topic="product", k=10)   # More results
+```
+
+Use topics to browse memory structure before querying. Good workflow: `list_topics()` → `topic_overview(topic)` → `recall(query, topic=topic)`
 
 ## consolidate
 
@@ -101,8 +121,8 @@ recall("user preferences")
 
 **During work**:
 ```
-remember("Rate limiting is at gateway level")
-remember("User wants retry-after headers on 429s", episode_type="preference")
+remember("Rate limiting is at gateway level", topic="architecture")
+remember("User wants retry-after headers on 429s", episode_type="preference", topic="product")
 ```
 
 **Session end**:
@@ -114,7 +134,7 @@ consolidate(force=True)
 
 - **Episodes**: Raw experiences via `remember()` — temporary
 - **Concepts**: Generalized knowledge via `consolidate()` — persistent
-- **Relations**: `implies`, `contradicts`, `specializes`, `generalizes`, `causes`, `part_of`
+- **Relations**: `implies`, `contradicts`, `supersedes`, `specializes`, `generalizes`, `causes`, `part_of`
 - **Confidence**: 0.0-1.0 based on supporting episodes
 
 ## Managing Memory
@@ -211,3 +231,5 @@ Auto-ingest detects outcomes automatically from raw conversation data.
 9. Use `ingest()` for raw conversation logs instead of `remember()`
 10. Use `outcome` type to close the feedback loop on strategies
 11. Use `fact` type for concrete values, configs, and technical details that must not be generalized
+12. Assign `topic` to organize knowledge by domain — enables scoped retrieval and reduces noise
+13. Use `list_topics()` and `topic_overview()` to explore memory before targeted recall

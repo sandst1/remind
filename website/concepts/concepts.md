@@ -19,6 +19,7 @@ Each concept has:
 | `source_episodes` | Episode IDs this was derived from |
 | `embedding` | Dense vector for similarity retrieval |
 | `tags` | Searchable tags |
+| `topic` | Knowledge area this concept belongs to (e.g., `"architecture"`, `"product"`) |
 | `decay_factor` | Retrieval priority weight (affected by [memory decay](/concepts/memory-decay)) |
 
 ## How concepts differ from episodes
@@ -35,10 +36,17 @@ Each concept has:
 
 Good concepts are:
 
+- **Specific and falsifiable** — Making concrete claims, not abstract platitudes
 - **Generalized** — Not just restating a single episode, but abstracting across multiple
 - **Conditional** — Stating when they apply, not claiming universal truth
 - **Connected** — Linked to related concepts via typed relations
 - **Grounded** — Traceable back to source episodes
+
+## Topics
+
+Concepts can belong to a **topic** — a knowledge area like `"architecture"`, `"product"`, or `"infra"`. Topics scope consolidation (episodes are grouped by topic before processing) and retrieval (queries can be filtered to a specific topic).
+
+Concepts without a topic are treated as general knowledge accessible from any topic context.
 
 ## Managing concepts
 

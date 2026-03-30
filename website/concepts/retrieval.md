@@ -48,9 +48,21 @@ Direct episode results appear first in the recall output under a **RELEVANT EPIS
 
 Use `--episode-k 0` (CLI) or `episode_k=0` (Python/MCP) to disable direct episode search and use only concept-level retrieval.
 
-## Contradiction display
+## Topic-scoped retrieval
 
-Each concept in recall output now shows **inbound and outbound contradictions** — concepts that have a `contradicts` relation to or from the current concept. This surfaces conflicting knowledge directly in the retrieval context, so the consumer can see tensions without needing to inspect relations manually.
+When a `topic` is provided to recall, initial concept matches are filtered to that topic (plus untopiced general concepts). Cross-topic concepts can still surface through spreading activation, but receive a 0.4x penalty — they need stronger relation evidence to appear in results.
+
+This reduces noise when querying a specific knowledge area while still allowing relevant cross-domain insights to surface.
+
+## Contradiction and supersession display
+
+Each concept in recall output shows **inbound and outbound contradictions** — concepts that have a `contradicts` relation to or from the current concept. This surfaces conflicting knowledge directly in the retrieval context, so the consumer can see tensions without needing to inspect relations manually.
+
+Similarly, **supersedes** relations are surfaced explicitly:
+- `→ supersedes [old_id]: <old summary>` — this concept replaces an older one
+- `→ SUPERSEDED BY [new_id]: <new summary>` — this concept has been replaced
+
+This acts as a staleness signal: if a retrieved concept has been superseded, the consumer knows to prefer the newer version.
 
 ## Parameters
 
@@ -78,6 +90,7 @@ remind recall --entity module:auth           # Entity-only (no query needed)
 remind recall "performance" -k 10            # More results
 remind recall "auth" --episode-k 10          # More direct episode matches
 remind recall "auth" --episode-k 0           # Concepts only, no episodes
+remind recall "database design" --topic architecture  # Topic-scoped
 ```
 
 ```python [Python]
@@ -86,6 +99,7 @@ context = await memory.recall("auth", entity="module:auth")
 context = await memory.recall(entity="module:auth")       # Entity-only
 context = await memory.recall("auth", episode_k=10)       # More episode matches
 context = await memory.recall("auth", episode_k=0)        # Concepts only
+context = await memory.recall("database design", topic="architecture")  # Topic-scoped
 ```
 
 ```text [MCP]
@@ -94,6 +108,7 @@ recall(query="auth", entity="module:auth")
 recall(entity="module:auth")
 recall(query="auth", episode_k=10)
 recall(query="auth", episode_k=0)
+recall(query="database design", topic="architecture")
 ```
 
 :::

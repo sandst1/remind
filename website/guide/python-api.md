@@ -26,6 +26,10 @@ async def main():
     memory.remember("API must return JSON", episode_type=EpisodeType.SPEC)
     memory.remember("Build auth first, then billing", episode_type=EpisodeType.PLAN)
 
+    # Topic-scoped episodes
+    memory.remember("Use event sourcing for audit trail", topic="architecture")
+    memory.remember("Users want offline mode", topic="product", source_type="slack")
+
     # Run consolidation — this is where the LLM does its work
     result = await memory.consolidate(force=True)
     print(f"Created {result.concepts_created} concepts")
@@ -33,6 +37,13 @@ async def main():
     # Retrieve relevant concepts
     context = await memory.recall("What programming preferences?")
     print(context)
+
+    # Topic-scoped retrieval
+    context = await memory.recall("database design", topic="architecture")
+
+    # Explore topics
+    topics = memory.list_topics()
+    overview = await memory.get_topic_overview("architecture")
 
 asyncio.run(main())
 ```

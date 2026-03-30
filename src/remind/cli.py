@@ -101,10 +101,12 @@ def main(ctx, db: str, llm: str, embedding: str):
               help="Episode type (detected during consolidation if not provided)")
 @click.option("--entity", "-e", "entities", multiple=True, 
               help="Entity IDs (e.g., file:src/auth.ts, person:alice)")
+@click.option("--topic", help="Knowledge area (e.g., architecture, product, infra)")
+@click.option("--source-type", help="Origin of this memory (e.g., agent, slack, github, manual)")
 @click.option("--no-embed", is_flag=True, help="Skip embedding the episode (faster, no API call)")
 @click.pass_context
 def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[str], 
-             entities: tuple, no_embed: bool):
+             entities: tuple, topic: Optional[str], source_type: Optional[str], no_embed: bool):
     """Add an episode to memory.
     
     Embeds the episode by default for vector search during recall.
@@ -122,6 +124,8 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
             episode_type=episode_type,
             entities=entity_list,
             embed=not no_embed,
+            topic=topic,
+            source_type=source_type,
         )
 
     episode_id = run_async(_remember())
@@ -133,6 +137,10 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
         console.print(f"  Type: [yellow]{episode_type}[/yellow]")
     if entity_list:
         console.print(f"  Entities: {', '.join(entity_list)}")
+    if topic:
+        console.print(f"  Topic: [blue]{topic}[/blue]")
+    if source_type:
+        console.print(f"  Source: {source_type}")
 
     # Check if background consolidation should run
     stats = memory.get_stats()
@@ -160,17 +168,21 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
 @click.option("--episode-k", "-ek", default=5, help="Number of episodes to retrieve via direct vector search")
 @click.option("--context", "-c", help="Additional context for search")
 @click.option("--entity", "-e", help="Retrieve by entity ID instead of semantic search")
+@click.option("--topic", help="Restrict recall to this topic")
 @click.option("--raw", is_flag=True, help="Show raw concept data")
 @click.pass_context
-def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[str], entity: Optional[str], raw: bool):
+def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[str], 
+           entity: Optional[str], topic: Optional[str], raw: bool):
     """Retrieve relevant concepts for a query.
     
     By default, does semantic search across concepts. 
     Use --entity to retrieve by entity ID instead.
     Use --episode-k to also include direct episode vector matches.
+    Use --topic to restrict to a specific knowledge area.
     
     Examples:
         remind recall "authentication issues"
+        remind recall --topic architecture "database design"
         remind recall --episode-k 10 "authentication issues"
         remind recall --entity file:src/auth.ts
         remind recall -e "person:alice"
@@ -181,7 +193,7 @@ def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
     
     async def _recall():
-        return await memory.recall(query, k=k, context=context, entity=entity, raw=raw, episode_k=episode_k)
+        return await memory.recall(query, k=k, context=context, entity=entity, raw=raw, episode_k=episode_k, topic=topic)
     
     result = run_async(_recall())
     
@@ -223,6 +235,68 @@ Exceptions: {', '.join(c.exceptions) if c.exceptions else 'none'}"""
     else:
         # Show formatted output (markup=False so [observation] etc. aren't eaten by Rich)
         console.print(Panel(result, title="Retrieved Memory", border_style="cyan"), markup=False)
+
+
+@main.group()
+@click.pass_context
+def topics(ctx):
+    """Browse and manage knowledge topics."""
+    pass
+
+
+@topics.command("list")
+@click.pass_context
+def topics_list(ctx):
+    """List all topics with stats."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    topic_list = memory.list_topics()
+
+    if not topic_list:
+        console.print("[dim]No topics found. Use --topic when remembering to assign topics.[/dim]")
+        return
+
+    table = Table(title="Topics")
+    table.add_column("Topic", style="blue")
+    table.add_column("Episodes", justify="right")
+    table.add_column("Concepts", justify="right")
+    table.add_column("Latest Activity")
+
+    for t in topic_list:
+        table.add_row(
+            t["topic"],
+            str(t["episode_count"]),
+            str(t["concept_count"]),
+            t["latest_activity"] or "",
+        )
+
+    console.print(table)
+
+
+@topics.command("overview")
+@click.argument("name")
+@click.option("-k", default=5, help="Number of top concepts to show")
+@click.pass_context
+def topics_overview(ctx, name: str, k: int):
+    """Show top concepts for a topic."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    concepts = memory.get_topic_overview(name, k=k)
+
+    if not concepts:
+        console.print(f"[dim]No concepts found for topic '{name}'.[/dim]")
+        return
+
+    console.print(f"\n[bold blue]Topic: {name}[/bold blue]\n")
+    for c in concepts:
+        updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
+        title = f" {c.title}" if c.title else ""
+        console.print(
+            f"  [cyan][{c.id}][/cyan]{title} "
+            f"(confidence: {c.confidence:.2f}, instances: {c.instance_count}, updated: {updated})"
+        )
+        console.print(f"    {c.summary}")
+        if c.conditions:
+            console.print(f"    → Applies when: {c.conditions}")
+        console.print()
 
 
 @main.command()

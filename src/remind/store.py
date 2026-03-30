@@ -617,6 +617,23 @@ class SQLiteMemoryStore(MemoryStore):
             conn.commit()
             logger.info("Migration: Added embedding column to episodes table")
 
+        # Migration: Add topic column to episodes table if it doesn't exist
+        if "topic" not in ep_cols:
+            conn.execute("ALTER TABLE episodes ADD COLUMN topic TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_topic ON episodes(topic)")
+            conn.commit()
+            logger.info("Migration: Added topic column to episodes table")
+
+        # Migration: Add topic column to concepts table if it doesn't exist
+        concept_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(concepts)").fetchall()
+        }
+        if "topic" not in concept_cols:
+            conn.execute("ALTER TABLE concepts ADD COLUMN topic TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_concepts_topic ON concepts(topic)")
+            conn.commit()
+            logger.info("Migration: Added topic column to concepts table")
+
         # Log migration status
         try:
             entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
@@ -639,8 +656,8 @@ class SQLiteMemoryStore(MemoryStore):
             
             conn.execute(
                 """
-                INSERT INTO concepts (id, title, summary, data, embedding, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO concepts (id, title, summary, data, embedding, created_at, updated_at, topic)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     concept.id,
@@ -650,6 +667,7 @@ class SQLiteMemoryStore(MemoryStore):
                     embedding_blob,
                     concept.created_at.isoformat(),
                     concept.updated_at.isoformat(),
+                    concept.topic,
                 )
             )
             
@@ -713,7 +731,7 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute(
                 """
                 UPDATE concepts
-                SET title = ?, summary = ?, data = ?, embedding = ?, updated_at = ?
+                SET title = ?, summary = ?, data = ?, embedding = ?, updated_at = ?, topic = ?
                 WHERE id = ?
                 """,
                 (
@@ -722,6 +740,7 @@ class SQLiteMemoryStore(MemoryStore):
                     json.dumps(data),
                     embedding_blob,
                     concept.updated_at.isoformat(),
+                    concept.topic,
                     concept.id,
                 )
             )
@@ -825,7 +844,7 @@ class SQLiteMemoryStore(MemoryStore):
         try:
             rows = conn.execute(
                 """
-                SELECT id, title, summary,
+                SELECT id, title, summary, topic,
                        json_extract(data, '$.confidence') as confidence,
                        json_extract(data, '$.instance_count') as instance_count,
                        json_extract(data, '$.tags') as tags
@@ -839,6 +858,7 @@ class SQLiteMemoryStore(MemoryStore):
                     "id": row["id"],
                     "title": row["title"],
                     "summary": row["summary"],
+                    "topic": row["topic"],
                     "confidence": row["confidence"],
                     "instance_count": row["instance_count"],
                     "tags": json.loads(row["tags"]) if row["tags"] else [],
@@ -1048,8 +1068,8 @@ class SQLiteMemoryStore(MemoryStore):
 
             conn.execute(
                 """
-                INSERT INTO episodes (id, title, content, data, consolidated, timestamp, embedding)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO episodes (id, title, content, data, consolidated, timestamp, embedding, topic)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     episode.id,
@@ -1059,6 +1079,7 @@ class SQLiteMemoryStore(MemoryStore):
                     episode.consolidated,
                     episode.timestamp.isoformat(),
                     embedding_blob,
+                    episode.topic,
                 )
             )
             conn.commit()
@@ -1080,8 +1101,8 @@ class SQLiteMemoryStore(MemoryStore):
                     embedding_blob = np.array(episode.embedding, dtype=np.float32).tobytes()
                 conn.execute(
                     """
-                    INSERT INTO episodes (id, title, content, data, consolidated, timestamp, embedding)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO episodes (id, title, content, data, consolidated, timestamp, embedding, topic)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         episode.id,
@@ -1091,6 +1112,7 @@ class SQLiteMemoryStore(MemoryStore):
                         episode.consolidated,
                         episode.timestamp.isoformat(),
                         embedding_blob,
+                        episode.topic,
                     )
                 )
                 ids.append(episode.id)
@@ -1156,7 +1178,7 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute(
                 """
                 UPDATE episodes
-                SET title = ?, content = ?, data = ?, consolidated = ?, timestamp = ?, embedding = ?
+                SET title = ?, content = ?, data = ?, consolidated = ?, timestamp = ?, embedding = ?, topic = ?
                 WHERE id = ?
                 """,
                 (
@@ -1166,6 +1188,7 @@ class SQLiteMemoryStore(MemoryStore):
                     episode.consolidated,
                     episode.timestamp.isoformat(),
                     embedding_blob,
+                    episode.topic,
                     episode.id,
                 )
             )
@@ -2132,6 +2155,72 @@ class SQLiteMemoryStore(MemoryStore):
         finally:
             conn.close()
     
+    def list_topics(self) -> list[dict]:
+        """List all topics with episode/concept counts and latest activity."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    topic,
+                    COUNT(*) as episode_count,
+                    MAX(timestamp) as latest_activity
+                FROM episodes
+                WHERE topic IS NOT NULL
+                  AND json_extract(data, '$.deleted_at') IS NULL
+                GROUP BY topic
+                ORDER BY latest_activity DESC
+                """
+            ).fetchall()
+
+            concept_counts = {}
+            concept_rows = conn.execute(
+                """
+                SELECT topic, COUNT(*) as count
+                FROM concepts
+                WHERE topic IS NOT NULL
+                  AND json_extract(data, '$.deleted_at') IS NULL
+                GROUP BY topic
+                """
+            ).fetchall()
+            for row in concept_rows:
+                concept_counts[row["topic"]] = row["count"]
+
+            return [
+                {
+                    "topic": row["topic"],
+                    "episode_count": row["episode_count"],
+                    "concept_count": concept_counts.get(row["topic"], 0),
+                    "latest_activity": row["latest_activity"],
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def get_concepts_by_topic(self, topic: str) -> list[Concept]:
+        """Get all concepts for a given topic, ordered by confidence * instance_count."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT data, embedding FROM concepts
+                WHERE topic = ?
+                  AND json_extract(data, '$.deleted_at') IS NULL
+                ORDER BY json_extract(data, '$.confidence') * json_extract(data, '$.instance_count') DESC
+                """,
+                (topic,)
+            ).fetchall()
+            concepts = []
+            for row in rows:
+                data = json.loads(row["data"])
+                if row["embedding"]:
+                    data["embedding"] = np.frombuffer(row["embedding"], dtype=np.float32).tolist()
+                concepts.append(Concept.from_dict(data))
+            return concepts
+        finally:
+            conn.close()
+
     def export_data(self) -> dict:
         """Export all data for backup."""
         conn = self._get_conn()

@@ -183,6 +183,8 @@ class MemoryInterface:
         entities: Optional[list[str]] = None,
         confidence: float = 1.0,
         embed: bool = True,
+        topic: Optional[str] = None,
+        source_type: Optional[str] = None,
     ) -> str:
         """
         Log an experience/interaction to be consolidated later.
@@ -201,6 +203,8 @@ class MemoryInterface:
                         Lower values indicate uncertainty or weak signals.
             embed: Whether to generate an embedding for the episode (default True).
                    Set to False when batch-importing and planning to backfill later.
+            topic: Primary knowledge area (e.g. "architecture", "product", "infra").
+            source_type: Origin of this episode (e.g. "agent", "slack", "github", "manual").
 
         Returns:
             The episode ID
@@ -210,6 +214,8 @@ class MemoryInterface:
             content=content,
             metadata=metadata or {},
             confidence=max(0.0, min(1.0, confidence)),  # Clamp to valid range
+            topic=topic.lower().strip() if topic else None,
+            source_type=source_type.lower().strip() if source_type else None,
         )
         
         # Apply explicit type/entities if provided
@@ -325,6 +331,7 @@ class MemoryInterface:
         entity: Optional[str] = None,
         raw: bool = False,
         episode_k: Optional[int] = None,
+        topic: Optional[str] = None,
     ) -> str | list[ActivatedConcept] | list[Episode]:
         """
         Retrieve relevant memory for a query.
@@ -337,6 +344,8 @@ class MemoryInterface:
             raw: If True, return raw objects instead of formatted string
             episode_k: Number of episodes to retrieve via direct vector search.
                        Defaults to self.default_episode_k (5). Set to 0 to disable.
+            topic: If set, restrict recall to this topic (cross-topic results
+                   are penalized but not excluded).
             
         Returns:
             Formatted memory string for LLM injection, or raw objects if raw=True.
@@ -371,6 +380,7 @@ class MemoryInterface:
             query=query,
             k=k,
             context=context,
+            topic=topic,
         )
 
         # Direct episode vector search
@@ -779,6 +789,20 @@ class MemoryInterface:
             
             logger.debug(f"Rejuvenated concept {concept.id}: activation={ac.activation:.3f}, boost={activation_boost:.3f}, decay_factor={concept.decay_factor:.3f}, access_count={concept.access_count}, last_accessed={concept.last_accessed.isoformat()}")
     
+    # Topic operations
+
+    def list_topics(self) -> list[dict]:
+        """List all topics with episode/concept counts and latest activity."""
+        return self.store.list_topics()
+
+    def get_topic_overview(self, topic: str, k: int = 5) -> list[Concept]:
+        """Get top-k concepts for a topic, no query needed.
+
+        Returns concepts ordered by confidence * instance_count.
+        Useful for browsing/drill-down without a specific query.
+        """
+        return self.store.get_concepts_by_topic(topic)[:k]
+
     # Direct access methods
     
     def get_concept(self, concept_id: str) -> Optional[Concept]:
@@ -806,6 +830,7 @@ class MemoryInterface:
         episode_type: Optional[str] = None,
         entities: Optional[list[str]] = None,
         metadata: Optional[dict] = None,
+        topic: Optional[str] = None,
     ) -> Optional[Episode]:
         """
         Update an existing episode.
@@ -820,6 +845,7 @@ class MemoryInterface:
             episode_type: New type (if None, preserves existing)
             entities: New entity list (if None, preserves existing)
             metadata: Metadata keys to merge in (if None, preserves existing)
+            topic: New topic (if None, preserves existing)
 
         Returns:
             Updated Episode object, or None if not found
@@ -854,6 +880,9 @@ class MemoryInterface:
 
         if metadata is not None:
             episode.metadata = {**(episode.metadata or {}), **metadata}
+
+        if topic is not None:
+            episode.topic = topic.lower().strip() if topic else None
 
         episode.updated_at = datetime.now()
         self.store.update_episode(episode)

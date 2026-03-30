@@ -122,6 +122,7 @@ class MemoryRetriever:
             RelationType.CORRELATES: 0.6,    # Moderate spreading
             RelationType.CAUSES: 0.7,        # Causal link is meaningful
             RelationType.CONTRADICTS: 0.3,   # Weak spreading (but still useful)
+            RelationType.SUPERSEDES: 0.1,    # Very weak — superseded concepts shouldn't dominate
         }
     
     async def retrieve(
@@ -131,6 +132,7 @@ class MemoryRetriever:
         min_activation: float = 0.15,
         context: Optional[str] = None,
         include_weak: bool = False,
+        topic: Optional[str] = None,
     ) -> list[ActivatedConcept]:
         """
         Retrieve relevant concepts for a query.
@@ -142,6 +144,8 @@ class MemoryRetriever:
                 Concepts below this floor are dropped even if k budget remains.
             context: Optional additional context to include in embedding
             include_weak: If True, include lower-activation concepts
+            topic: If set, filter initial matches to this topic. Cross-topic
+                spreading still occurs but with a 0.4x activation penalty.
             
         Returns:
             List of ActivatedConcept objects, sorted by activation
@@ -159,6 +163,13 @@ class MemoryRetriever:
             query_embedding, 
             k=self.initial_k * 2  # Get more initially, we'll filter
         )
+
+        # Filter initial matches to topic if specified
+        if topic:
+            initial_matches = [
+                (c, sim) for c, sim in initial_matches
+                if c.topic == topic or c.topic is None
+            ]
         
         # Build activation map: concept_id -> (activation, source, hops)
         activation_map: dict[str, tuple[float, str, int]] = {}
@@ -176,7 +187,7 @@ class MemoryRetriever:
                 if decay_factor < 0.5:
                     logger.debug(f"Concept {concept.id} activation reduced by decay_factor {decay_factor:.2f}: {weighted_activation:.3f} -> {final_activation:.3f}")
         
-        logger.debug(f"Initial activation: {len(activation_map)} concepts")
+        logger.debug(f"Initial activation: {len(activation_map)} concepts (topic={topic})")
         
         # Step 2: Spreading activation
         for hop in range(self.spread_hops):
@@ -202,6 +213,11 @@ class MemoryRetriever:
                         * related_concept.confidence  # Weight by target's reliability
                         * target_decay  # Weight by target's decay factor
                     )
+
+                    # Cross-topic penalty: reduce activation when spreading
+                    # to a concept in a different topic
+                    if topic and related_concept.topic and related_concept.topic != topic:
+                        spread_activation *= 0.4
                     
                     if spread_activation < self.activation_threshold:
                         continue
@@ -386,6 +402,19 @@ class MemoryRetriever:
         scored.sort(key=lambda x: x[1], reverse=True)
         return [c for c, _ in scored[:k]]
     
+    async def retrieve_by_topic(
+        self,
+        topic: str,
+        k: int = 5,
+    ) -> list[Concept]:
+        """
+        Retrieve top concepts for a topic, no query needed.
+
+        Returns concepts ordered by confidence * instance_count,
+        suitable for topic overview / drill-down.
+        """
+        return self.store.get_concepts_by_topic(topic)[:k]
+
     async def retrieve_episodes_by_embedding(
         self,
         query: str,
@@ -718,11 +747,34 @@ class MemoryRetriever:
             else:
                 lines.append("  Contradictions: (none)")
 
-            # Other relations (contradicts excluded from budget)
+            # Supersedes (always shown, uncapped — like contradictions)
+            outbound_supersedes = [
+                rel for rel in c.relations if rel.type == RelationType.SUPERSEDES
+            ]
+            inbound_supersedes = self.store.get_incoming_relations(
+                c.id, RelationType.SUPERSEDES
+            )
+            if outbound_supersedes or inbound_supersedes:
+                for rel in outbound_supersedes:
+                    target = self.store.get_concept(rel.target_id)
+                    if target:
+                        label = f"  → supersedes [{target.id}]: {target.summary}"
+                        if rel.context:
+                            label += f" (context: {rel.context})"
+                        lines.append(label)
+                for source_concept, rel in inbound_supersedes:
+                    if source_concept.id == c.id:
+                        continue
+                    label = f"  → SUPERSEDED BY [{source_concept.id}]: {source_concept.summary}"
+                    if rel.context:
+                        label += f" (context: {rel.context})"
+                    lines.append(label)
+
+            # Other relations (contradicts and supersedes excluded from budget)
             if include_relations and c.relations:
                 shown = 0
                 for rel in c.relations:
-                    if rel.type == RelationType.CONTRADICTS:
+                    if rel.type in (RelationType.CONTRADICTS, RelationType.SUPERSEDES):
                         continue
                     if shown >= max_relations:
                         break

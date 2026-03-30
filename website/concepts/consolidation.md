@@ -19,12 +19,15 @@ For each unconsolidated episode:
 
 ### Phase 2: Generalization
 
-Across all pending episodes:
+Episodes are grouped by **topic** and each group is consolidated independently. This prevents cross-domain noise (e.g., product discussions polluting architecture concepts).
+
+Within each topic group:
 - **Pattern identification** — What recurs across episodes?
-- **Concept creation** — New generalized concepts with confidence scores
+- **Concept creation** — New generalized concepts with confidence scores, inheriting the topic from their source episodes
 - **Concept update** — Existing concepts are strengthened, refined, or given exceptions
-- **Relation establishment** — Typed edges between concepts (implies, contradicts, specializes, etc.)
+- **Relation establishment** — Typed edges between concepts (implies, contradicts, specializes, supersedes, etc.)
 - **Contradiction detection** — Flagging when new episodes conflict with existing knowledge
+- **Supersession detection** — When a concept is replaced by a newer understanding, a `supersedes` relation is created (distinct from `contradicts` — supersession is temporal replacement, contradiction is simultaneous tension)
 - **Causal pattern detection** — For outcome-typed episodes, identifying strategy-outcome patterns (e.g., "strategy X tends to fail in context Y") and connecting them with `causes` relations
 
 ## Triggering consolidation
@@ -73,6 +76,8 @@ Consolidation might produce:
 > - Source episodes: [ep_1, ep_2, ep_3, ep_4]
 
 This is understanding, not storage.
+
+Consolidation prioritizes specificity and falsifiability — concepts should be concrete enough to be validated against reality. For `fact` episodes, consolidation preserves details verbatim in concept summaries rather than abstracting them away.
 
 ## Immediate consolidation from auto-ingest
 

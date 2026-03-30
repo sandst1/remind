@@ -9,6 +9,7 @@ Store an experience as an episode.
 ```
 remember(content="User prefers TypeScript", episode_type="preference")
 remember(content="Use Redis for caching", episode_type="decision", entities="tool:redis,concept:caching")
+remember(content="Chose microservices", topic="architecture", source_type="agent")
 ```
 
 | Parameter | Type | Required | Description |
@@ -16,6 +17,8 @@ remember(content="Use Redis for caching", episode_type="decision", entities="too
 | `content` | string | Yes | The experience to store |
 | `episode_type` | string | No | `observation` (default), `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome`, `fact` |
 | `entities` | string | No | Comma-separated entity tags (`type:name`) |
+| `topic` | string | No | Knowledge area (e.g., `"architecture"`, `"product"`). Scopes consolidation and retrieval. |
+| `source_type` | string | No | Origin of the memory (e.g., `"agent"`, `"slack"`, `"manual"`) |
 
 ## ingest
 
@@ -51,6 +54,7 @@ Retrieve relevant memories.
 recall(query="authentication issues")
 recall(query="auth", entity="file:src/auth.ts")
 recall(entity="file:src/auth.ts")
+recall(query="database design", topic="architecture")
 ```
 
 | Parameter | Type | Required | Description |
@@ -60,6 +64,7 @@ recall(entity="file:src/auth.ts")
 | `context` | string | No | Additional context to improve retrieval |
 | `entity` | string | No | Scope to entity (can be used alone without a query) |
 | `episode_k` | integer | No | Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable. |
+| `topic` | string | No | Filter to a knowledge area. Cross-topic concepts may still surface via spreading activation but are penalized. |
 
 At least one of `query` or `entity` must be provided.
 
@@ -187,6 +192,30 @@ list_deleted()
 list_deleted(item_type="episode")
 list_deleted(item_type="concept")
 ```
+
+## list_topics
+
+List all topics with episode and concept counts.
+
+```
+list_topics()
+```
+
+Returns each topic's name, number of episodes, number of concepts, and when it was last active.
+
+## topic_overview
+
+Get top concepts for a specific topic — a quick way to see what Remind knows about a knowledge area without running a query.
+
+```
+topic_overview(topic="architecture")
+topic_overview(topic="product", k=10)
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `topic` | string | Yes | Topic name |
+| `k` | integer | No | Number of concepts to return (default: 5) |
 
 ## task_add / task_update_status / list_tasks / list_specs / list_plans
 

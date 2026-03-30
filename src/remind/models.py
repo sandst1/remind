@@ -19,6 +19,7 @@ class RelationType(Enum):
     CORRELATES = "correlates"     # A and B tend to co-occur
     PART_OF = "part_of"           # A is a component/aspect of B
     CONTEXT_OF = "context_of"     # A provides context for understanding B
+    SUPERSEDES = "supersedes"     # A replaces/supersedes B (staleness signal)
 
 
 class EpisodeType(Enum):
@@ -250,7 +251,10 @@ class Concept:
     # For retrieval
     embedding: Optional[list[float]] = None
     tags: list[str] = field(default_factory=list)
-    
+
+    # Primary knowledge area (e.g. "architecture", "product", "infra")
+    topic: Optional[str] = None
+
     # Decay tracking
     last_accessed: Optional[datetime] = None
     access_count: int = 0
@@ -275,6 +279,7 @@ class Concept:
             "exceptions": self.exceptions,
             "embedding": self.embedding,
             "tags": self.tags,
+            "topic": self.topic,
             "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
             "access_count": self.access_count,
             "decay_factor": self.decay_factor,
@@ -298,6 +303,7 @@ class Concept:
             exceptions=data.get("exceptions", []),
             embedding=data.get("embedding"),
             tags=data.get("tags", []),
+            topic=data.get("topic"),
             last_accessed=datetime.fromisoformat(data["last_accessed"]) if data.get("last_accessed") else None,
             access_count=data.get("access_count", 0),
             decay_factor=data.get("decay_factor", 1.0),
@@ -365,6 +371,12 @@ class Episode:
     # Optional metadata
     metadata: dict = field(default_factory=dict)
 
+    # Primary knowledge area (e.g. "architecture", "product", "infra")
+    topic: Optional[str] = None
+
+    # Origin of this episode (e.g. "agent", "slack", "github", "manual")
+    source_type: Optional[str] = None
+
     # For retrieval (stored as BLOB, not in JSON data)
     embedding: Optional[list[float]] = None
 
@@ -404,6 +416,8 @@ class Episode:
             "relations_extracted": self.relations_extracted,
             "confidence": self.confidence,
             "metadata": self.metadata,
+            "topic": self.topic,
+            "source_type": self.source_type,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
         }
     
@@ -442,6 +456,8 @@ class Episode:
             relations_extracted=data.get("relations_extracted", False),
             confidence=data.get("confidence", 1.0),
             metadata=data.get("metadata", {}),
+            topic=data.get("topic"),
+            source_type=data.get("source_type"),
             deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None,
         )
 

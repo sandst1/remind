@@ -4,6 +4,19 @@ All notable changes to Remind.
 
 ## [Unreleased]
 
+### Added
+- **Topics** — First-class `topic` field on episodes and concepts for partitioning knowledge areas (e.g., `"architecture"`, `"product"`, `"infra"`). Consolidation groups episodes by topic. Retrieval filters initial matches by topic with cross-topic spreading at a 0.4x penalty.
+- **Source type** — `source_type` field on episodes to track memory origin (`"agent"`, `"slack"`, `"github"`, etc.) for anonymous lineage.
+- **`supersedes` relation** — New relation type for marking when one concept replaces another. Explicitly surfaced in recall output as a staleness signal. Low spreading activation weight (0.1) prevents obsolete knowledge from polluting general recall.
+- **`list_topics` tool** — Lists all topics with episode/concept counts and last activity (CLI, MCP, Python API).
+- **`topic_overview` tool** — Returns top-k concepts for a topic without running a query (CLI, MCP, Python API).
+- **`--topic` flag** on `remember` and `recall` CLI commands.
+- **`--source-type` flag** on `remember` CLI command.
+
+### Changed
+- Consolidation now processes episodes in topic-grouped batches rather than all at once
+- Consolidation prompts tightened to prioritize specificity and falsifiability over abstract generalization
+
 ## [0.8.0] - 2026-03-23
 
 ### Added
