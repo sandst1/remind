@@ -4,18 +4,34 @@ All notable changes to Remind.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-31
+
 ### Added
-- **Topics** — First-class `topic` field on episodes and concepts for partitioning knowledge areas (e.g., `"architecture"`, `"product"`, `"infra"`). Consolidation groups episodes by topic. Retrieval filters initial matches by topic with cross-topic spreading at a 0.4x penalty.
-- **Source type** — `source_type` field on episodes to track memory origin (`"agent"`, `"slack"`, `"github"`, etc.) for anonymous lineage.
-- **`supersedes` relation** — New relation type for marking when one concept replaces another. Explicitly surfaced in recall output as a staleness signal. Low spreading activation weight (0.1) prevents obsolete knowledge from polluting general recall.
-- **`list_topics` tool** — Lists all topics with episode/concept counts and last activity (CLI, MCP, Python API).
-- **`topic_overview` tool** — Returns top-k concepts for a topic without running a query (CLI, MCP, Python API).
-- **`--topic` flag** on `remember` and `recall` CLI commands.
-- **`--source-type` flag** on `remember` CLI command.
+- **Topics** — First-class `topic` on episodes and concepts for partitioning knowledge (e.g. architecture, product, infra). Consolidation runs in topic-grouped batches. Retrieval prefers the active topic with cross-topic spreading at a reduced weight.
+- **Source type** — `source_type` on episodes to track memory origin (`agent`, `slack`, `github`, etc.).
+- **`supersedes` relation** — Marks when one concept replaces another; shown in recall as a staleness signal. Low spreading weight so obsolete knowledge does not dominate recall.
+- **`list_topics` / `topic_overview`** — List topics with counts and activity; inspect top concepts per topic (CLI, MCP, Python API).
+- **`--topic` / `--source-type`** — CLI flags on `remember` and `recall` (topic) / `remember` (source type).
+- **Ingest `instructions`** — Optional steer for the triage LLM on what to extract.
+- **Ingest topics** — Topic inference during auto-ingest when no topic is supplied.
+- **Configurable `episode_types`** — Plan/spec/task CLI and MCP surface only when those types are enabled.
+- **Project config** — Optional `.remind/remind.config.json` next to the project database.
+- **SQLAlchemy databases** — PostgreSQL and MySQL via `REMIND_DB_URL` / `db_url`, not SQLite-only.
+- **Parallel consolidation** — Faster batch consolidation via concurrency.
+- **Stats** — Episode types included in memory statistics.
 
 ### Changed
-- Consolidation now processes episodes in topic-grouped batches rather than all at once
-- Consolidation prompts tightened to prioritize specificity and falsifiability over abstract generalization
+- **Auto-ingest** — Removed density-threshold gating from config; improved chunking and text handling.
+- **Consolidation & extraction** — Prompts tuned for specificity; higher default max tokens; aligned batch defaults; performance and concurrency improvements.
+- **Entities** — Ensures LLM extraction runs when the pipeline requires it.
+- **Triage** — Respects custom episode types from configuration.
+- **Web UI** — Better database URL/path resolution, custom episode types and topics, task flows.
+
+### Fixed
+- Reconsolidation edge cases.
+- MCP episode argument parsing.
+- Task creation from the web UI.
+- Web UI and stats with PostgreSQL and other SQLAlchemy URLs.
 
 ## [0.8.0] - 2026-03-23
 

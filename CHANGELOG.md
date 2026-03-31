@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-31
+
+### Added
+- Topics: optional `topic` on episodes and concepts for partitioning knowledge; consolidation runs in topic-grouped batches; retrieval prefers the query topic with reduced-weight spreading to other topics
+- `source_type` on episodes to record memory origin (e.g. agent, slack, github)
+- `supersedes` concept relation for replacement and staleness; surfaced in recall output
+- `list_topics` and `get_topic_overview` / `topic_overview` (CLI, MCP, Python API)
+- `--topic` on `remember` and `recall`; `--source-type` on `remember`
+- Optional `instructions` on ingest / triage to steer what the triage LLM extracts
+- Topic inference during auto-ingest when no topic is passed explicitly
+- Configurable `episode_types`; plan/spec/task CLI commands and MCP tools register only when those types are enabled
+- Project-local Remind config (e.g. `.remind/remind.config.json`) alongside the project database
+- PostgreSQL and MySQL via SQLAlchemy (`REMIND_DB_URL` / `db_url`); storage is no longer SQLite-only
+- Parallel consolidation across batches for faster runs
+- Episode types shown in memory stats (CLI / API)
+
+### Changed
+- Auto-ingest: removed configurable density threshold gating; processing and text chunking improved
+- Consolidation and extraction prompts and performance tuned; larger default max tokens; shared defaults between extraction and consolidation batch sizes
+- Entity pipeline ensures LLM-based extraction runs when needed
+- Triage respects custom episode types from configuration
+- Web UI: database URL/path handling for non-SQLite stores, custom episode types and topics, task flows
+
+### Fixed
+- Reconsolidation reliability
+- MCP episode argument parsing
+- Task creation from the web UI
+- Web UI and stats when using PostgreSQL or other SQLAlchemy database URLs
+
 ## [0.8.0] - 2026-03-23
 
 ### Added
