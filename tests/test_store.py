@@ -4,7 +4,7 @@ import pytest
 import tempfile
 import os
 
-from remind.models import Concept, Episode, Relation, RelationType
+from remind.models import Concept, Episode, Relation, RelationType, Entity, EntityType, EntityRelation
 from remind.store import SQLiteMemoryStore, cosine_similarity
 
 
@@ -222,4 +222,37 @@ class TestSQLiteMemoryStore:
         assert len(new_store.get_all_concepts()) == 1
         
         os.unlink(path)
+
+    def test_merge_duplicate_entities_merges_mentions_and_relations(self, store):
+        canonical = Entity(id="other:act", type=EntityType.OTHER, display_name="act")
+        duplicate = Entity(id="legal_act:act", type=EntityType.OTHER, display_name="act")
+        target = Entity(id="subject:law", type=EntityType.SUBJECT, display_name="law")
+        store.add_entity(canonical)
+        store.add_entity(duplicate)
+        store.add_entity(target)
+
+        ep = Episode(content="Act reference")
+        store.add_episode(ep)
+        store.add_mention(ep.id, canonical.id)
+        store.add_mention(ep.id, duplicate.id)
+
+        store.add_entity_relation(
+            EntityRelation(
+                source_id=duplicate.id,
+                target_id=target.id,
+                relation_type="governs",
+                strength=0.8,
+                source_episode_id=ep.id,
+            )
+        )
+
+        stats = store.merge_duplicate_entities()
+
+        assert stats["groups_merged"] == 1
+        assert stats["entities_removed"] == 1
+        assert store.get_entity("legal_act:act") is None
+        episodes = store.get_episodes_mentioning("other:act")
+        assert len(episodes) == 1
+        rels = store.get_entity_relations("other:act")
+        assert any(r.target_id == "subject:law" for r in rels)
 

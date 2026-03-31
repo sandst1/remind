@@ -17,6 +17,10 @@ from typing import Callable, Optional
 import json
 import logging
 
+from remind.llm_protocol import (
+    ProtocolParseError,
+    parse_consolidation_csv,
+)
 from remind.models import Concept, Episode, EpisodeType, Relation, RelationType, ConsolidationResult, ExtractionResult
 from remind.store import MemoryStore
 from remind.providers.base import LLMProvider, EmbeddingProvider
@@ -76,69 +80,29 @@ Analyze these new episodes in the context of existing memory. Perform consolidat
 4. **Relations**: What relationships exist between concepts (implies, contradicts, specializes, causes, etc.)?
 5. **Contradictions**: Does any new information contradict existing concepts?
 
-Respond with this exact JSON structure:
+Return ONLY rows inside these tags:
+BEGIN CONSOLIDATION_OPS
+ANALYSIS,<analysis_text>
+UPDATE,<concept_id>,<new_title>,<new_summary>,<confidence_delta>,<topic_id>
+UPDATE_SOURCE,<concept_id>,<episode_id>
+UPDATE_EXCEPTION,<concept_id>,<exception>
+UPDATE_TAG,<concept_id>,<tag>
+UPDATE_RELATION,<source_concept_id>,<relation_type>,<target_id>,<strength>,<context>
+NEW_CONCEPT,<temp_id>,<title>,<summary>,<confidence>,<conditions>,<topic_id>
+NEW_SOURCE,<temp_id>,<episode_id>
+NEW_EXCEPTION,<temp_id>,<exception>
+NEW_TAG,<temp_id>,<tag>
+NEW_RELATION,<source_id>,<relation_type>,<target_id>,<strength>,<context>
+CONTRADICTION,<concept_id>,<evidence>,<resolution>
+END CONSOLIDATION_OPS
 
-{{
-  "analysis": "Brief narrative of what you observed across these episodes",
-  
-  "updates": [
-    {{
-      "concept_id": "existing concept ID",
-      "new_title": "updated short title (5-10 words) or null to keep existing",
-      "new_summary": "refined/updated summary (or null to keep existing)",
-      "confidence_delta": 0.1,
-      "source_episodes": ["episode_id1", "episode_id2"],
-      "add_exceptions": ["new exception if any"],
-      "add_tags": ["new tag if any"],
-      "topic_id": "primary knowledge area or null to keep existing",
-      "add_relations": [
-        {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of|supersedes", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
-      ],
-      "reasoning": "why this update"
-    }}
-  ],
+Relation types must be full words:
+implies, contradicts, specializes, generalizes, causes, correlates, part_of, context_of, supersedes
 
-  "new_concepts": [
-    {{
-      "temp_id": "NEW_0",
-      "title": "short descriptive title (5-10 words)",
-      "summary": "the grounded understanding - be specific and falsifiable, not abstract",
-      "confidence": 0.6,
-      "source_episodes": ["episode_id1", "episode_id2"],
-      "conditions": "when/where this applies (or null if universal)",
-      "exceptions": ["known exceptions"],
-      "tags": ["categorization", "tags"],
-      "topic_id": "primary knowledge area (e.g. architecture, product, infra)",
-      "relations": [
-        {{"type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of|supersedes", "target_id": "existing_id or NEW_1", "strength": 0.7, "context": "when this relation holds"}}
-      ]
-    }}
-  ],
-
-  "new_relations": [
-    {{
-      "source_id": "existing_id or NEW_0",
-      "target_id": "existing_id or NEW_1",
-      "type": "implies|contradicts|specializes|generalizes|causes|correlates|part_of|context_of|supersedes",
-      "strength": 0.7,
-      "context": "when this relation holds"
-    }}
-  ],
-  
-  "contradictions": [
-    {{
-      "concept_id": "id of concept that's contradicted",
-      "evidence": "what episode content contradicts it",
-      "resolution": "suggested resolution or null if unclear"
-    }}
-  ]
-}}
-
-IMPORTANT for new concepts: Use temp_id (NEW_0, NEW_1, etc.) to identify each new concept you create.
-When creating relations between new concepts, use these temp_ids as target_id or source_id.
-For relations to existing concepts, use the existing concept's ID from the EXISTING CONCEPTUAL MEMORY section.
-
-Be conservative: only include entries that have clear evidence. Empty arrays are fine."""
+Use temp IDs NEW_0, NEW_1, ... for new concepts.
+For relations to existing concepts, use IDs from EXISTING CONCEPTUAL MEMORY.
+Use CSV quoting when fields contain commas.
+Be conservative: only include entries with clear evidence."""
 
 
 class Consolidator:
@@ -179,6 +143,7 @@ class Consolidator:
         self,
         force: bool = False,
         on_batch_complete: Optional[Callable[[int, ConsolidationResult], None]] = None,
+        on_extraction_batch_complete: Optional[Callable[[dict], None]] = None,
     ) -> ConsolidationResult:
         """
         Run a full consolidation pass, processing all pending episodes in batches.
@@ -194,6 +159,8 @@ class Consolidator:
             force: If True, process even if there aren't many episodes
             on_batch_complete: Optional callback(batch_num, batch_result) called
                 after each generalization batch completes, for progress reporting.
+            on_extraction_batch_complete: Optional callback(progress_dict) called
+                after each extraction or relation-only extraction batch completes.
             
         Returns:
             ConsolidationResult with aggregate statistics across all batches
@@ -202,7 +169,9 @@ class Consolidator:
         
         # Phase 1: Extract entities and relationships from all unextracted episodes
         while True:
-            extraction_result = await self._run_extraction_phase()
+            extraction_result = await self._run_extraction_phase(
+                on_extraction_batch_complete=on_extraction_batch_complete
+            )
             if not extraction_result:
                 break
             logger.info(
@@ -328,7 +297,9 @@ class Consolidator:
         for topic_result in topic_results:
             if isinstance(topic_result, Exception):
                 logger.error(f"Topic group consolidation failed: {topic_result}")
-                continue
+                # Fail fast: callers expect consolidation errors to propagate,
+                # and episodes must remain unconsolidated on failure.
+                raise topic_result
             if topic_result:
                 result.concepts_created += topic_result.concepts_created
                 result.concepts_updated += topic_result.concepts_updated
@@ -402,11 +373,32 @@ class Consolidator:
 
             async with self._semaphore:
                 try:
-                    operations = await self.llm.complete_json(
+                    raw_response = await self.llm.complete_structured_text(
                         prompt=prompt,
                         system=CONSOLIDATION_SYSTEM_PROMPT,
                         temperature=0.3,
                         max_tokens=16384,
+                    )
+                    logger.debug(
+                        f"Consolidation structured response length{topic_label}{sub_pass_label}: {len(raw_response)}"
+                    )
+                    logger.debug(
+                        f"Consolidation structured response{topic_label}{sub_pass_label}:\n{raw_response}"
+                    )
+                    operations = parse_consolidation_csv(raw_response)
+                except (ProtocolParseError, ValueError, KeyError, IndexError) as parse_err:
+                    logger.debug(
+                        f"Consolidation CSV parse failed{topic_label}{sub_pass_label}, trying JSON fallback: {parse_err}"
+                    )
+                    operations = await self.llm.complete_json(
+                        prompt=prompt,
+                        system=CONSOLIDATION_SYSTEM_PROMPT + "\n\nRespond with valid JSON only.",
+                        temperature=0.3,
+                        max_tokens=16384,
+                    )
+                    logger.debug(
+                        f"Consolidation JSON fallback response{topic_label}{sub_pass_label}: "
+                        f"{json.dumps(operations, indent=2)}"
                     )
                 except Exception as e:
                     logger.error(f"LLM consolidation failed{topic_label}{sub_pass_label}: {e}")
@@ -575,7 +567,10 @@ class Consolidator:
             result.contradiction_details.append(contradiction)
             logger.warning(f"Contradiction found: {contradiction}")
     
-    async def _run_extraction_phase(self) -> dict:
+    async def _run_extraction_phase(
+        self,
+        on_extraction_batch_complete: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
         """
         Run entity extraction on episodes that haven't been processed yet.
         
@@ -617,14 +612,41 @@ class Consolidator:
             # Fall back to individual calls for batches that failed entirely
             fallback_episodes = []
             all_results: dict = {}
-            for batch, batch_result in zip(episode_batches, batch_results):
+            for batch_idx, (batch, batch_result) in enumerate(
+                zip(episode_batches, batch_results),
+                start=1,
+            ):
+                batch_episodes_processed = 0
+                batch_entities_created = 0
+                batch_relations_extracted = 0
+                status = "ok"
                 if isinstance(batch_result, Exception):
                     logger.warning(f"Batch extraction failed: {batch_result}")
                     fallback_episodes.extend(batch)
+                    status = "failed"
                 else:
                     all_results.update(batch_result)
                     missing = [ep for ep in batch if ep.id not in batch_result]
                     fallback_episodes.extend(missing)
+                    batch_episodes_processed = len(batch_result)
+                    for ep_result in batch_result.values():
+                        batch_entities_created += len(ep_result.entities)
+                        batch_relations_extracted += len(ep_result.entity_relations)
+                    if missing:
+                        status = "partial"
+                if on_extraction_batch_complete:
+                    on_extraction_batch_complete(
+                        {
+                            "phase": "entity_extraction",
+                            "batch_num": batch_idx,
+                            "total_batches": len(episode_batches),
+                            "batch_size": len(batch),
+                            "episodes_processed": batch_episodes_processed,
+                            "entities_created": batch_entities_created,
+                            "relations_extracted": batch_relations_extracted,
+                            "status": status,
+                        }
+                    )
 
             if fallback_episodes:
                 logger.info(f"Falling back to individual extraction for {len(fallback_episodes)} episodes")
@@ -660,14 +682,40 @@ class Consolidator:
                 return_exceptions=True,
             )
 
-            for item in rel_results:
+            for idx, item in enumerate(rel_results, start=1):
                 if isinstance(item, Exception):
                     logger.warning(f"Relation extraction failed: {item}")
+                    if on_extraction_batch_complete:
+                        on_extraction_batch_complete(
+                            {
+                                "phase": "relation_extraction",
+                                "batch_num": idx,
+                                "total_batches": len(unextracted_relations),
+                                "batch_size": 1,
+                                "episodes_processed": 0,
+                                "entities_created": 0,
+                                "relations_extracted": 0,
+                                "status": "failed",
+                            }
+                        )
                     continue
                 episode, relations = item
                 self.extractor.store_relations_result(episode, relations)
                 relations_extracted += len(relations)
                 episodes_processed += 1
+                if on_extraction_batch_complete:
+                    on_extraction_batch_complete(
+                        {
+                            "phase": "relation_extraction",
+                            "batch_num": idx,
+                            "total_batches": len(unextracted_relations),
+                            "batch_size": 1,
+                            "episodes_processed": 1,
+                            "entities_created": 0,
+                            "relations_extracted": len(relations),
+                            "status": "ok",
+                        }
+                    )
 
         if episodes_processed == 0:
             return None

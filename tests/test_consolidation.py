@@ -976,6 +976,41 @@ class TestParallelConsolidation:
         assert call_count == 3
 
     @pytest.mark.asyncio
+    async def test_extraction_progress_callback_reports_batches(
+        self, parallel_consolidator, memory_store, mock_llm
+    ):
+        """Extraction progress callback receives one event per extraction batch."""
+        for i in range(7):
+            memory_store.add_episode(Episode(content=f"Episode {i}"))
+
+        async def mock_batch_response(prompt, **kwargs):
+            import re
+
+            ids = re.findall(r'\[([a-f0-9-]+)\]', prompt)
+            return {
+                "results": {
+                    ep_id: {
+                        "type": "observation",
+                        "title": f"Title for {ep_id[:8]}",
+                        "entities": [],
+                        "entity_relationships": [],
+                    }
+                    for ep_id in ids
+                }
+            }
+
+        mock_llm.complete_json = mock_batch_response
+        progress_events = []
+
+        await parallel_consolidator._run_extraction_phase(
+            on_extraction_batch_complete=progress_events.append
+        )
+
+        assert len(progress_events) == 3
+        assert [event["batch_num"] for event in progress_events] == [1, 2, 3]
+        assert all(event["phase"] == "entity_extraction" for event in progress_events)
+
+    @pytest.mark.asyncio
     async def test_parallel_consolidate_with_force(
         self, parallel_consolidator, memory_store, mock_llm, mock_embedding
     ):

@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Optional
 import uuid
 import json
+import re
 
 
 class RelationType(Enum):
@@ -121,6 +122,50 @@ def normalize_entity_name(name: str) -> str:
     if not name:
         return "unknown"
     return " ".join(name.lower().split())
+
+
+_ENTITY_NAME_LABEL_PREFIXES = {
+    "entity",
+    "role",
+    "position",
+    "title",
+    "official",
+    "government official",
+    "job",
+}
+
+
+def canonicalize_entity_name(name: str) -> str:
+    """Normalize names and strip generic label prefixes for dedupe.
+
+    This helps merge noisy variants like:
+    - "Role: chancellor of justice"
+    - "Position: chancellor of justice"
+    - "Government Official: chancellor of justice"
+    into a single canonical name ("chancellor of justice").
+    """
+    return normalize_entity_name(strip_entity_label_prefix(name))
+
+
+def strip_entity_label_prefix(name: str) -> str:
+    """Strip generic labels like 'Role:' while preserving original casing."""
+    if not name:
+        return ""
+
+    cleaned = " ".join(str(name).split())
+    if ":" not in cleaned:
+        return cleaned
+
+    prefix_raw, rest_raw = cleaned.split(":", 1)
+    rest_raw = rest_raw.strip()
+    if not rest_raw:
+        return cleaned
+
+    prefix_norm = " ".join(re.sub(r"[^a-z0-9\s]+", " ", prefix_raw.lower()).split())
+    known_prefixes = _ENTITY_NAME_LABEL_PREFIXES | VALID_ENTITY_TYPE_PREFIXES
+    if prefix_norm in known_prefixes:
+        return rest_raw
+    return cleaned
 
 
 @dataclass
@@ -546,7 +591,8 @@ class ExtractionResult:
 
             # Get entity name and normalize it for ID generation
             raw_name = e.get("name", "")
-            normalized_name = normalize_entity_name(raw_name)
+            display_name = strip_entity_label_prefix(raw_name)
+            normalized_name = canonicalize_entity_name(raw_name)
 
             # Always generate entity ID from type:normalized_name
             # This ensures consistent IDs regardless of what the LLM provides
@@ -555,7 +601,7 @@ class ExtractionResult:
             entities.append(Entity(
                 id=entity_id,
                 type=entity_type,
-                display_name=raw_name or normalized_name,  # Preserve original casing for display
+                display_name=display_name or normalized_name,
             ))
 
         # Parse entity relationships
@@ -570,6 +616,14 @@ class ExtractionResult:
                 # This ensures relationships can be looked up correctly
                 source_type, source_name = Entity.parse_id(source)
                 target_type, target_name = Entity.parse_id(target)
+                try:
+                    source_type = EntityType(source_type).value
+                except ValueError:
+                    source_type = EntityType.OTHER.value
+                try:
+                    target_type = EntityType(target_type).value
+                except ValueError:
+                    target_type = EntityType.OTHER.value
                 normalized_source = Entity.make_id(source_type, normalize_entity_name(source_name))
                 normalized_target = Entity.make_id(target_type, normalize_entity_name(target_name))
 

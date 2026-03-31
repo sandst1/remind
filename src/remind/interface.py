@@ -19,6 +19,8 @@ from remind.models import (
     Entity, EntityType, EpisodeType, TaskStatus, Relation, RelationType,
     Topic, DEFAULT_TOPIC_ID, slugify,
     normalize_entity_name,
+    canonicalize_entity_name,
+    strip_entity_label_prefix,
 )
 from remind.store import MemoryStore, SQLAlchemyMemoryStore, SQLiteMemoryStore
 from remind.providers.base import LLMProvider, EmbeddingProvider
@@ -174,17 +176,19 @@ class MemoryInterface:
         Entity IDs are always normalized to lowercase.
         """
         type_str, name = Entity.parse_id(raw_entity_id)
-        existing = self.store.find_entity_by_name(name)
+        canonical_name = canonicalize_entity_name(name)
+        existing = self.store.find_entity_by_name(canonical_name)
         if existing:
             return existing.id
 
-        normalized_id = Entity.make_id(type_str, normalize_entity_name(name))
+        normalized_id = Entity.make_id(type_str, canonical_name)
         if not self.store.get_entity(normalized_id):
             try:
                 etype = EntityType(type_str)
             except ValueError:
                 etype = EntityType.OTHER
-            entity = Entity(id=normalized_id, type=etype, display_name=name)
+            display_name = strip_entity_label_prefix(name) or canonical_name
+            entity = Entity(id=normalized_id, type=etype, display_name=display_name)
             self.store.add_entity(entity)
         return normalized_id
 
@@ -422,6 +426,7 @@ class MemoryInterface:
         self,
         force: bool = False,
         on_batch_complete: Optional[Callable[[int, ConsolidationResult], None]] = None,
+        on_extraction_batch_complete: Optional[Callable[[dict], None]] = None,
     ) -> ConsolidationResult:
         """
         Run memory consolidation manually.
@@ -438,6 +443,8 @@ class MemoryInterface:
             force: If True, consolidate even with few episodes (< 3)
             on_batch_complete: Optional callback(batch_num, batch_result) called
                 after each batch completes, for progress reporting.
+            on_extraction_batch_complete: Optional callback(progress_dict) called
+                after each extraction batch completes, for progress reporting.
             
         Returns:
             ConsolidationResult with statistics
@@ -445,6 +452,7 @@ class MemoryInterface:
         result = await self.consolidator.consolidate(
             force=force,
             on_batch_complete=on_batch_complete,
+            on_extraction_batch_complete=on_extraction_batch_complete,
         )
         
         if result.episodes_processed > 0:

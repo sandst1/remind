@@ -499,6 +499,62 @@ class TestStoreExtractionResult:
         rels = memory_store.get_entity_relations("subject:government")
         assert any(r.target_id == "person:alice" for r in rels)
 
+    def test_entity_relation_stub_reuses_existing_entity_by_name(self, mock_llm, memory_store):
+        """Relation-only endpoints should not create zero-mention duplicate stubs."""
+        from remind.models import EntityRelation
+
+        memory_store.add_entity(
+            Entity(id="other:act", type=EntityType.OTHER, display_name="act")
+        )
+        ep = Episode(content="...")
+        memory_store.add_episode(ep)
+
+        result = ExtractionResult(
+            episode_type="observation",
+            entities=[],
+            entity_relations=[
+                EntityRelation(
+                    source_id="legal_act:act",
+                    target_id="subject:procedure",
+                    relation_type="governs",
+                    strength=0.7,
+                    source_episode_id=ep.id,
+                )
+            ],
+        )
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        extractor.store_extraction_result(ep, result)
+
+        assert memory_store.get_entity("legal_act:act") is None
+        rels = memory_store.get_entity_relations("other:act")
+        assert any(r.target_id == "subject:procedure" for r in rels)
+
+    def test_entity_label_prefixes_reuse_existing_entity(self, mock_llm, memory_store):
+        """Label variants like 'Role: X' should resolve to existing canonical entity."""
+        memory_store.add_entity(
+            Entity(id="other:chancellor of justice", type=EntityType.OTHER, display_name="chancellor of justice")
+        )
+        ep = Episode(content="...")
+        memory_store.add_episode(ep)
+
+        result = ExtractionResult(
+            episode_type="observation",
+            entities=[
+                Entity(
+                    id="other:role: chancellor of justice",
+                    type=EntityType.OTHER,
+                    display_name="Role: Chancellor of Justice",
+                )
+            ],
+        )
+
+        extractor = EntityExtractor(mock_llm, memory_store)
+        extractor.store_extraction_result(ep, result)
+
+        updated = memory_store.get_episode(ep.id)
+        assert updated.entity_ids == ["other:chancellor of justice"]
+
 
 class TestStoreRelationsResult:
     """Tests for store_relations_result."""

@@ -72,6 +72,25 @@ class LLMProvider(ABC):
         """Return the provider name."""
         ...
 
+    async def complete_structured_text(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+    ) -> str:
+        """Generate a structured plain-text response (e.g. tagged CSV).
+
+        Default behavior delegates to complete(). Callers handle parsing and
+        fallback strategies.
+        """
+        return await self.complete(
+            prompt=prompt,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
     async def complete_stream(
         self,
         messages: list[ChatMessage],

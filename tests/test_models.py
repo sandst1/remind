@@ -12,6 +12,7 @@ from remind.models import (
     ExtractionResult,
     EpisodeType,
     normalize_entity_name,
+    canonicalize_entity_name,
 )
 
 
@@ -276,6 +277,27 @@ class TestExtractionResult:
         assert rel.source_id == "subject:caching"
         assert rel.target_id == "subject:performance"
 
+    def test_entity_relationship_unknown_type_prefixes_fallback_to_other(self):
+        """Unknown relation endpoint types should normalize to other:* IDs."""
+        data = {
+            "type": "observation",
+            "entities": [],
+            "entity_relationships": [
+                {
+                    "source": "legal_act:Act",
+                    "target": "Legal Concept:Act",
+                    "relationship": "equivalent_to",
+                },
+            ],
+        }
+
+        result = ExtractionResult.from_dict(data)
+
+        assert len(result.entity_relations) == 1
+        rel = result.entity_relations[0]
+        assert rel.source_id == "other:act"
+        assert rel.target_id == "other:act"
+
     def test_normalize_entity_name(self):
         """Test the normalize_entity_name function."""
         assert normalize_entity_name("Alice") == "alice"
@@ -283,4 +305,15 @@ class TestExtractionResult:
         assert normalize_entity_name("Multiple   Spaces") == "multiple spaces"
         assert normalize_entity_name("") == "unknown"
         assert normalize_entity_name(None) == "unknown"
+
+    def test_canonicalize_entity_name_strips_generic_label_prefixes(self):
+        """Generic role/position labels should not create separate entities."""
+        assert canonicalize_entity_name("Role: Chancellor of Justice") == "chancellor of justice"
+        assert canonicalize_entity_name("Position: Chancellor of Justice") == "chancellor of justice"
+        assert canonicalize_entity_name("Government Official: Chancellor of Justice") == "chancellor of justice"
+        assert canonicalize_entity_name("Person: Alice") == "alice"
+
+    def test_canonicalize_entity_name_keeps_non_generic_colon_names(self):
+        """Domain labels like chapter names should remain intact."""
+        assert canonicalize_entity_name("Chapter 9: Administration of Justice") == "chapter 9: administration of justice"
 

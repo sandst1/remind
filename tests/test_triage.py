@@ -295,8 +295,8 @@ class TestIngestionTriager:
 
         # Verify the prompt included the concepts
         history = mock_llm.get_call_history()
-        assert len(history) == 1
-        assert "User prefers Python" in history[0]["prompt"]
+        assert len(history) >= 1
+        assert any("User prefers Python" in call["prompt"] for call in history)
 
     @pytest.mark.asyncio
     async def test_malformed_episode_skipped(self, triager, mock_llm):

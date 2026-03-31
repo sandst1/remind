@@ -14,6 +14,7 @@ from typing import Optional
 import json
 import logging
 
+from remind.llm_protocol import ProtocolParseError, parse_triage_csv
 from remind.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -39,46 +40,34 @@ def _build_triage_prompt(valid_types: list[str]) -> str:
 ## RAW CONVERSATION FRAGMENT
 {{chunk}}
 
-Score the INFORMATION DENSITY of this text from 0.0 to 1.0:
-- 0.0: Pure boilerplate, greetings, acknowledgments, routine narration
-- 0.3: Some context but nothing specific or actionable
-- 0.5: Contains some facts or context worth noting
-- 0.7: Contains decisions, preferences, or important facts
-- 1.0: Dense with critical decisions, corrections, or surprising outcomes
+Task:
+1) Score information density in [0.0, 1.0]
+2) If density >= {{min_density}}, extract distilled memory episodes
 
-Information already captured in EXISTING RELEVANT KNOWLEDGE does NOT count toward density unless it adds new nuance, corrections, or context.
+Guidelines:
+- Ignore filler/chitchat; prioritize new facts, decisions, preferences, corrections
+- Do not repeat already-known information unless corrected or refined
+- Each episode must be concise and standalone
+- Use type=outcome for action-result pairs
+- For outcome metadata include strategy, result(success|failure|partial), prediction_error(low|medium|high)
+- Use type=fact for concrete details (values, names, dates, versions, config)
 
-If density >= {{min_density}}, extract memory-worthy episodes as TIGHT, DISTILLED statements. Do NOT copy conversation verbatim. Compress and rewrite into information-dense factual statements. Strip conversational filler, hedging, and step-by-step narration. Each episode should be a single clear assertion that stands on its own.
+Output ONLY rows inside these tags:
+BEGIN TRIAGE_RESULTS
+DENSITY,<density>,<reasoning>
+TRIAGE_EPISODE,<episode_type>,<content>
+TRIAGE_ENTITY,<episode_idx>,<entity_id>
+TRIAGE_METADATA,<episode_idx>,<metadata_key>,<metadata_value>
+END TRIAGE_RESULTS
 
-Good: "Token expiry check in verify_credentials uses <= instead of <, causing tokens to be accepted one second past expiry"
-Bad:  "The assistant looked at the auth bug and found that the issue is in verify_credentials where the token expiry check uses <= instead of <"
-
-Additionally, detect ACTION-RESULT pairs: when a strategy, tool, or approach was tried and produced a result. Extract these as "outcome" type episodes with metadata fields: strategy (what was tried), result (success/failure/partial), prediction_error (low/medium/high - how surprising was the outcome).
-
-Use "fact" type for specific factual assertions: concrete values, configuration details, names, dates, version numbers, or technical details that would be lost if generalized. Facts are high-value and should not be paraphrased into vague summaries.
-
-Output JSON:
-{{{{
-  "density": 0.7,
-  "reasoning": "Brief explanation of density score",
-  "episodes": [
-    {{{{
-      "content": "tight, distilled factual statement",
-      "type": "{type_enum}",
-      "entities": ["type:name"],
-      "metadata": {{{{}}}}
-    }}}}
-  ]
-}}}}
-
-For outcome episodes, include metadata like:
-{{{{
-  "strategy": "what approach was used",
-  "result": "success|failure|partial",
-  "prediction_error": "low|medium|high"
-}}}}
-
-Episodes array should be empty if {{min_density}}.""".format(type_enum=type_enum)
+Rules:
+- Exactly one DENSITY row
+- TRIAGE_EPISODE row index is implicit 0-based order (first TRIAGE_EPISODE is episode_idx=0)
+- Use TRIAGE_ENTITY and TRIAGE_METADATA rows to attach entities/metadata to TRIAGE_EPISODE rows
+- Use CSV quoting when needed
+- If density < {{min_density}}, output only DENSITY row (no TRIAGE_EPISODE rows)
+- episode_type must be one of: {type_enum}
+- For outcome episodes, include TRIAGE_METADATA rows for strategy, result, prediction_error""".format(type_enum=type_enum)
 
 
 TRIAGE_PROMPT_TEMPLATE = _build_triage_prompt(_DEFAULT_TRIAGE_TYPES.split("|"))
@@ -272,11 +261,24 @@ class IngestionTriager:
         )
 
         try:
-            response = await self.llm.complete_json(
+            raw_response = await self.llm.complete_structured_text(
                 prompt=prompt,
                 system=TRIAGE_SYSTEM_PROMPT,
                 temperature=0.3,
             )
+            logger.debug(f"Triage structured response length: {len(raw_response)}")
+            response = parse_triage_csv(raw_response)
+        except (ProtocolParseError, ValueError, KeyError, IndexError) as parse_err:
+            logger.warning(f"Triage CSV parse failed: {parse_err}. Trying JSON fallback.")
+            try:
+                response = await self.llm.complete_json(
+                    prompt=prompt,
+                    system=TRIAGE_SYSTEM_PROMPT + "\n\nRespond with valid JSON only.",
+                    temperature=0.3,
+                )
+            except Exception as e:
+                logger.warning(f"Triage JSON fallback failed: {e}. Falling back to raw storage.")
+                return self._fallback_result(chunk, str(e))
         except Exception as e:
             logger.warning(f"Triage LLM call failed: {e}. Falling back to raw storage.")
             return self._fallback_result(chunk, str(e))

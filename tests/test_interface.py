@@ -125,6 +125,19 @@ class TestMemoryInterface:
         assert tool.type == EntityType.TOOL
 
     @pytest.mark.asyncio
+    async def test_remember_reuses_entity_across_label_variants(self, memory):
+        """Explicit entity hints should dedupe role/position label variants."""
+        await memory.remember("A", entities=["other:Role: Chancellor of Justice"])
+        await memory.remember("B", entities=["other:Position: Chancellor of Justice"])
+
+        entities = memory.store.get_all_entities()
+        matching = [e for e in entities if e.id == "other:chancellor of justice"]
+        assert len(matching) == 1
+
+        mentions = memory.get_episodes_mentioning("other:chancellor of justice")
+        assert len(mentions) == 2
+
+    @pytest.mark.asyncio
     async def test_extraction_merges_caller_and_llm_entities(self, memory):
         """Extraction should union-merge caller-supplied and LLM-discovered entities."""
         from remind.extraction import EntityExtractor, ExtractionResult

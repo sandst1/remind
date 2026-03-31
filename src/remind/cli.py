@@ -416,6 +416,8 @@ def consolidate(ctx, force: bool, background: bool):
 
         batch_size = memory.consolidator.batch_size
         total_batches = (unconsolidated + batch_size - 1) // batch_size
+        extraction_batch_size = memory.consolidator.entity_extraction_batch_size
+        total_extraction_batches = (unconsolidated + extraction_batch_size - 1) // extraction_batch_size
 
         def on_batch(batch_num, batch_result):
             if total_batches > 1:
@@ -426,8 +428,31 @@ def consolidate(ctx, force: bool, background: bool):
                     f"{batch_result.concepts_updated} updated"
                 )
 
+        def on_extraction_batch(progress):
+            if progress.get("phase") != "entity_extraction":
+                return
+            if total_extraction_batches <= 1:
+                return
+
+            status = progress.get("status", "ok")
+            if status == "failed":
+                status_text = "failed"
+            elif status == "partial":
+                status_text = "partial"
+            else:
+                status_text = f"{progress.get('entities_created', 0)} entities"
+            console.print(
+                f"  [dim]Extract {progress.get('batch_num', 0)}/{progress.get('total_batches', 0)}:[/dim] "
+                f"{progress.get('episodes_processed', 0)}/{progress.get('batch_size', 0)} episodes → "
+                f"{status_text}"
+            )
+
         async def _consolidate():
-            return await memory.consolidate(force=True, on_batch_complete=on_batch)
+            return await memory.consolidate(
+                force=True,
+                on_batch_complete=on_batch,
+                on_extraction_batch_complete=on_extraction_batch,
+            )
 
         result = run_async(_consolidate())
     finally:
@@ -507,6 +532,8 @@ def reconsolidate(ctx):
 
     batch_size = memory.consolidator.batch_size
     total_batches = (episode_count + batch_size - 1) // batch_size
+    extraction_batch_size = memory.consolidator.entity_extraction_batch_size
+    total_extraction_batches = (episode_count + extraction_batch_size - 1) // extraction_batch_size
 
     def on_batch(batch_num, batch_result):
         if total_batches > 1:
@@ -517,8 +544,31 @@ def reconsolidate(ctx):
                 f"{batch_result.concepts_updated} updated"
             )
 
+    def on_extraction_batch(progress):
+        if progress.get("phase") != "entity_extraction":
+            return
+        if total_extraction_batches <= 1:
+            return
+
+        status = progress.get("status", "ok")
+        if status == "failed":
+            status_text = "failed"
+        elif status == "partial":
+            status_text = "partial"
+        else:
+            status_text = f"{progress.get('entities_created', 0)} entities"
+        console.print(
+            f"  [dim]Extract {progress.get('batch_num', 0)}/{progress.get('total_batches', 0)}:[/dim] "
+            f"{progress.get('episodes_processed', 0)}/{progress.get('batch_size', 0)} episodes → "
+            f"{status_text}"
+        )
+
     async def _consolidate():
-        return await memory.consolidate(force=True, on_batch_complete=on_batch)
+        return await memory.consolidate(
+            force=True,
+            on_batch_complete=on_batch,
+            on_extraction_batch_complete=on_extraction_batch,
+        )
 
     result = run_async(_consolidate())
 

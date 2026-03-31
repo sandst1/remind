@@ -38,7 +38,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from remind.models import (
     Concept, Episode, Relation, RelationType,
     Entity, EntityType, EntityRelation, EpisodeType,
-    Topic, DEFAULT_TOPIC_ID,
+    Topic, DEFAULT_TOPIC_ID, canonicalize_entity_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -293,6 +293,15 @@ class MemoryStore(ABC):
         Returns:
             List of (entity, match_count) tuples where match_count is the number
             of query words found in the entity's name or ID.
+        """
+        ...
+
+    @abstractmethod
+    def merge_duplicate_entities(self) -> dict[str, int]:
+        """Merge duplicate entities that canonicalize to the same name.
+
+        Returns:
+            Stats including number of merged groups and rows reassigned/deleted.
         """
         ...
 
@@ -1339,7 +1348,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
     def find_entity_by_name(self, name: str) -> Optional[Entity]:
         if not name:
             return None
-        normalized = " ".join(name.lower().split())
+        normalized = canonicalize_entity_name(name)
         with self._connect() as conn:
             row = conn.execute(
                 select(entities_table.c.data)
@@ -1347,9 +1356,21 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 .order_by(entities_table.c.created_at.asc())
                 .limit(1)
             ).fetchone()
-            if not row:
-                return None
-            return Entity.from_dict(_parse_json(row.data))
+            if row:
+                return Entity.from_dict(_parse_json(row.data))
+
+            # Fallback: canonicalized scan catches label-variant duplicates
+            # (e.g. "Role: Alice" vs "Alice") without schema changes.
+            rows = conn.execute(
+                select(entities_table.c.data)
+                .order_by(entities_table.c.created_at.asc())
+            ).fetchall()
+            for fallback_row in rows:
+                entity = Entity.from_dict(_parse_json(fallback_row.data))
+                display = entity.display_name or Entity.parse_id(entity.id)[1]
+                if canonicalize_entity_name(display) == normalized:
+                    return entity
+            return None
 
     def search_entities_by_words(
         self, words: list[str], limit: int = 10
@@ -1371,6 +1392,169 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:limit]
+
+    def merge_duplicate_entities(self) -> dict[str, int]:
+        with self._connect() as conn:
+            entity_rows = conn.execute(
+                select(
+                    entities_table.c.id,
+                    entities_table.c.data,
+                    entities_table.c.created_at,
+                )
+            ).fetchall()
+
+            mention_rows = conn.execute(
+                select(
+                    mentions_table.c.entity_id,
+                    func.count().label("mention_count"),
+                )
+                .group_by(mentions_table.c.entity_id)
+            ).fetchall()
+            mention_counts = {row.entity_id: row.mention_count for row in mention_rows}
+
+            groups: dict[str, list[tuple[Entity, Optional[datetime]]]] = {}
+            for row in entity_rows:
+                entity = Entity.from_dict(_parse_json(row.data))
+                display = entity.display_name or Entity.parse_id(entity.id)[1]
+                canonical_name = canonicalize_entity_name(display)
+                groups.setdefault(canonical_name, []).append((entity, row.created_at))
+
+            groups_merged = 0
+            entities_removed = 0
+            mentions_reassigned = 0
+            relations_reassigned = 0
+
+            for group in groups.values():
+                if len(group) <= 1:
+                    continue
+
+                # Keep the most established entity: highest mention count, then oldest.
+                winner_entity, _ = sorted(
+                    group,
+                    key=lambda pair: (
+                        -mention_counts.get(pair[0].id, 0),
+                        pair[1] or datetime.max,
+                        pair[0].id,
+                    ),
+                )[0]
+                winner_id = winner_entity.id
+
+                loser_ids = [entity.id for entity, _ in group if entity.id != winner_id]
+                if not loser_ids:
+                    continue
+                groups_merged += 1
+
+                for loser_id in loser_ids:
+                    episode_rows = conn.execute(
+                        select(mentions_table.c.episode_id).where(mentions_table.c.entity_id == loser_id)
+                    ).fetchall()
+                    for ep_row in episode_rows:
+                        existing_mention = conn.execute(
+                            select(mentions_table.c.episode_id)
+                            .where(mentions_table.c.episode_id == ep_row.episode_id)
+                            .where(mentions_table.c.entity_id == winner_id)
+                        ).fetchone()
+                        if not existing_mention:
+                            conn.execute(
+                                mentions_table.insert().values(
+                                    episode_id=ep_row.episode_id,
+                                    entity_id=winner_id,
+                                )
+                            )
+                    deleted_mentions = conn.execute(
+                        mentions_table.delete().where(mentions_table.c.entity_id == loser_id)
+                    ).rowcount
+                    mentions_reassigned += deleted_mentions
+
+                    relation_rows = conn.execute(
+                        select(entity_relations_table).where(
+                            (entity_relations_table.c.source_id == loser_id)
+                            | (entity_relations_table.c.target_id == loser_id)
+                        )
+                    ).fetchall()
+                    for rel_row in relation_rows:
+                        old_source = rel_row.source_id
+                        old_target = rel_row.target_id
+                        new_source = winner_id if old_source == loser_id else old_source
+                        new_target = winner_id if old_target == loser_id else old_target
+
+                        incoming_ids = (
+                            json.loads(rel_row.source_episode_ids or "[]")
+                            if isinstance(rel_row.source_episode_ids, str)
+                            else (rel_row.source_episode_ids or [])
+                        )
+                        existing_rel = conn.execute(
+                            select(
+                                entity_relations_table.c.strength,
+                                entity_relations_table.c.context,
+                                entity_relations_table.c.source_episode_id,
+                                entity_relations_table.c.episode_count,
+                                entity_relations_table.c.source_episode_ids,
+                            )
+                            .where(entity_relations_table.c.source_id == new_source)
+                            .where(entity_relations_table.c.target_id == new_target)
+                            .where(entity_relations_table.c.relation_type == rel_row.relation_type)
+                        ).fetchone()
+                        if existing_rel:
+                            existing_ids = (
+                                json.loads(existing_rel.source_episode_ids or "[]")
+                                if isinstance(existing_rel.source_episode_ids, str)
+                                else (existing_rel.source_episode_ids or [])
+                            )
+                            merged_ids = list(dict.fromkeys(existing_ids + incoming_ids))
+                            incoming_count = rel_row.episode_count or 1
+                            if merged_ids:
+                                merged_count = len(merged_ids)
+                            else:
+                                merged_count = (existing_rel.episode_count or 1) + incoming_count
+                            conn.execute(
+                                entity_relations_table.update()
+                                .where(entity_relations_table.c.source_id == new_source)
+                                .where(entity_relations_table.c.target_id == new_target)
+                                .where(entity_relations_table.c.relation_type == rel_row.relation_type)
+                                .values(
+                                    strength=max(existing_rel.strength, rel_row.strength),
+                                    context=existing_rel.context or rel_row.context,
+                                    source_episode_id=existing_rel.source_episode_id or rel_row.source_episode_id,
+                                    episode_count=max(1, merged_count),
+                                    source_episode_ids=json.dumps(merged_ids),
+                                )
+                            )
+                        else:
+                            conn.execute(
+                                entity_relations_table.insert().values(
+                                    source_id=new_source,
+                                    target_id=new_target,
+                                    relation_type=rel_row.relation_type,
+                                    strength=rel_row.strength,
+                                    context=rel_row.context,
+                                    source_episode_id=rel_row.source_episode_id,
+                                    created_at=(
+                                        rel_row.created_at
+                                        if isinstance(rel_row.created_at, datetime)
+                                        else datetime.now()
+                                    ),
+                                    episode_count=rel_row.episode_count or 1,
+                                    source_episode_ids=json.dumps(incoming_ids),
+                                )
+                            )
+                        conn.execute(
+                            entity_relations_table.delete()
+                            .where(entity_relations_table.c.source_id == old_source)
+                            .where(entity_relations_table.c.target_id == old_target)
+                            .where(entity_relations_table.c.relation_type == rel_row.relation_type)
+                        )
+                        relations_reassigned += 1
+
+                    conn.execute(entities_table.delete().where(entities_table.c.id == loser_id))
+                    entities_removed += 1
+
+            return {
+                "groups_merged": groups_merged,
+                "entities_removed": entities_removed,
+                "mentions_reassigned": mentions_reassigned,
+                "relations_reassigned": relations_reassigned,
+            }
 
     # ------------------------------------------------------------------
     # Mention operations

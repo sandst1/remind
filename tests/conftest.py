@@ -27,6 +27,7 @@ class MockLLMProvider(LLMProvider):
 
     def __init__(self):
         self._complete_response: str = "Mock LLM response"
+        self._complete_structured_text_response: str = ""
         self._complete_json_response: dict = {}
         self._complete_json_responses: list[dict] = []
         self._complete_json_call_idx: int = 0
@@ -35,6 +36,10 @@ class MockLLMProvider(LLMProvider):
     def set_complete_response(self, response: str) -> None:
         """Set the response for complete() calls."""
         self._complete_response = response
+
+    def set_complete_structured_text_response(self, response: str) -> None:
+        """Set the response for complete_structured_text() calls."""
+        self._complete_structured_text_response = response
 
     def set_complete_json_response(self, response: dict) -> None:
         """Set the response for complete_json() calls."""
@@ -89,6 +94,24 @@ class MockLLMProvider(LLMProvider):
             self._complete_json_call_idx += 1
             return self._complete_json_responses[idx]
         return self._complete_json_response
+
+    async def complete_structured_text(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+    ) -> str:
+        self._call_history.append({
+            "method": "complete_structured_text",
+            "prompt": prompt,
+            "system": system,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        })
+        if self._complete_structured_text_response:
+            return self._complete_structured_text_response
+        return self._complete_response
 
     @property
     def name(self) -> str:
