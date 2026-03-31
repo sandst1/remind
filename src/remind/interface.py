@@ -136,6 +136,7 @@ class MemoryInterface:
             extraction_batch_size=extraction_batch_size,
             extraction_llm_batch_size=extraction_llm_batch_size,
             llm_concurrency=llm_concurrency,
+            valid_types=episode_types,
         )
         
         self.retriever = MemoryRetriever(

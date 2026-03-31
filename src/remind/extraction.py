@@ -129,29 +129,31 @@ Rules:
 - Leave context empty when unknown
 - Keep entity names under 30 chars
 
-Types: observation|decision|question|meta|preference|spec|plan|task|outcome|fact"""
+Episode type MUST be one of: observation|decision|question|meta|preference|spec|plan|task|outcome|fact
+Do NOT invent or use any other type."""
 
 
-BATCH_EXTRACTION_PROMPT_TEMPLATE = """Classify and extract from each episode below. Episodes are delimited by [EPISODE_ID] headers.
+BATCH_EXTRACTION_PROMPT_TEMPLATE = """Classify and extract from each episode below. Episodes are delimited by [ep-ID] headers.
 
 {episodes}
 
 Return ONLY rows inside these tags:
 BEGIN EXTRACT_RESULTS
-EPISODE,<episode_id>,<type>,<title>
-ENTITY,<episode_id>,<entity_type>,<entity_name>
-ENTITY_RELATION,<episode_id>,<source_type>,<source_name>,<target_type>,<target_name>,<relationship>,<strength>,<context>
+EPISODE,<ep-id>,<type>,<title>
+ENTITY,<ep-id>,<entity_type>,<entity_name>
+ENTITY_RELATION,<ep-id>,<source_type>,<source_name>,<target_type>,<target_name>,<relationship>,<strength>,<context>
 END EXTRACT_RESULTS
 
 Rules:
-- Include one EPISODE row for every episode ID
+- Include one EPISODE row for every episode ID (use the ep-prefixed ID exactly as shown)
 - Zero or more ENTITY and ENTITY_RELATION rows per episode
 - Use CSV quoting for commas
 - Strength is 0.0-1.0
 - Leave context empty when unknown
 - Keep entity names under 30 chars
 
-Types: observation|decision|question|meta|preference|spec|plan|task|outcome|fact"""
+Episode type MUST be one of: observation|decision|question|meta|preference|spec|plan|task|outcome|fact
+Do NOT invent or use any other type."""
 
 _DEFAULT_EXTRACTION_TYPES = "observation|decision|question|meta|preference|spec|plan|task|outcome|fact"
 
@@ -335,7 +337,7 @@ class EntityExtractor:
             content = ep.content
             if len(content) > MAX_CONTENT_LENGTH:
                 content = content[:MAX_CONTENT_LENGTH] + "...[truncated]"
-            sections.append(f"[{ep.id}]\n{content}")
+            sections.append(f"[ep-{ep.id}]\n{content}")
         prompt = self._batch_prompt_template.format(episodes="\n\n".join(sections))
         max_tokens = 1024 * len(episodes)
 
@@ -552,11 +554,12 @@ async def extract_for_remember(
     store: MemoryStore,
     episode: Episode,
     auto_extract: bool = True,
+    valid_types: Optional[list[str]] = None,
 ) -> Episode:
     if not auto_extract:
         return episode
 
-    extractor = EntityExtractor(llm, store)
+    extractor = EntityExtractor(llm, store, valid_types=valid_types)
     try:
         result = await extractor.extract(episode.content, episode_id=episode.id)
         episode.episode_type = result.episode_type

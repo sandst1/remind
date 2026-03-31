@@ -83,24 +83,25 @@ Analyze these new episodes in the context of existing memory. Perform consolidat
 Return ONLY rows inside these tags:
 BEGIN CONSOLIDATION_OPS
 ANALYSIS,<analysis_text>
-UPDATE,<concept_id>,<new_title>,<new_summary>,<confidence_delta>,<topic_id>
-UPDATE_SOURCE,<concept_id>,<episode_id>
-UPDATE_EXCEPTION,<concept_id>,<exception>
-UPDATE_TAG,<concept_id>,<tag>
-UPDATE_RELATION,<source_concept_id>,<relation_type>,<target_id>,<strength>,<context>
+UPDATE,<c-id>,<new_title>,<new_summary>,<confidence_delta>,<topic_id>
+UPDATE_SOURCE,<c-id>,<ep-id>
+UPDATE_EXCEPTION,<c-id>,<exception>
+UPDATE_TAG,<c-id>,<tag>
+UPDATE_RELATION,<c-id>,<relation_type>,<target_c-id>,<strength>,<context>
 NEW_CONCEPT,<temp_id>,<title>,<summary>,<confidence>,<conditions>,<topic_id>
-NEW_SOURCE,<temp_id>,<episode_id>
+NEW_SOURCE,<temp_id>,<ep-id>
 NEW_EXCEPTION,<temp_id>,<exception>
 NEW_TAG,<temp_id>,<tag>
 NEW_RELATION,<source_id>,<relation_type>,<target_id>,<strength>,<context>
-CONTRADICTION,<concept_id>,<evidence>,<resolution>
+CONTRADICTION,<c-id>,<evidence>,<resolution>
 END CONSOLIDATION_OPS
 
+ID prefixes: concept IDs start with "c-", episode IDs start with "ep-". Use them exactly as shown.
 Relation types must be full words:
 implies, contradicts, specializes, generalizes, causes, correlates, part_of, context_of, supersedes
 
 Use temp IDs NEW_0, NEW_1, ... for new concepts.
-For relations to existing concepts, use IDs from EXISTING CONCEPTUAL MEMORY.
+For relations to existing concepts, use c-prefixed IDs from EXISTING CONCEPTUAL MEMORY.
 Use CSV quoting when fields contain commas.
 Be conservative: only include entries with clear evidence."""
 
@@ -128,6 +129,7 @@ class Consolidator:
         min_confidence: float = 0.3,
         concepts_per_pass: int = 64,
         llm_concurrency: int = 3,
+        valid_types: Optional[list[str]] = None,
         # Legacy aliases (kept for backward compatibility)
         batch_size: Optional[int] = None,
         concepts_per_consolidation_pass: Optional[int] = None,
@@ -156,7 +158,7 @@ class Consolidator:
         self.topic_parallelism = llm_concurrency
         self._llm_semaphore = asyncio.Semaphore(llm_concurrency)
         self._topic_semaphore = asyncio.Semaphore(self.topic_parallelism)
-        self.extractor = EntityExtractor(llm, store)
+        self.extractor = EntityExtractor(llm, store, valid_types=valid_types)
     
     async def consolidate(
         self,
@@ -247,9 +249,9 @@ class Consolidator:
         for c in concepts:
             title = c.get("title") or ""
             if title:
-                lines.append(f"[{c['id']}] {title}")
+                lines.append(f"[c-{c['id']}] {title}")
             else:
-                lines.append(f"[{c['id']}]")
+                lines.append(f"[c-{c['id']}]")
         return "\n".join(lines)
 
     async def _consolidate_batch(self, force: bool = False, batch_num: int = 0) -> Optional[ConsolidationResult]:
@@ -754,7 +756,7 @@ class Consolidator:
         lines = []
         for c in concepts:
             tags = ", ".join(c.get("tags", [])) if c.get("tags") else ""
-            line = f"[{c['id']}] (conf: {c.get('confidence', 0.5):.2f}, n={c.get('instance_count', 1)})"
+            line = f"[c-{c['id']}] (conf: {c.get('confidence', 0.5):.2f}, n={c.get('instance_count', 1)})"
             if tags:
                 line += f" [{tags}]"
             if c.get("topic_id"):
@@ -773,7 +775,7 @@ class Consolidator:
             timestamp = ep.timestamp.strftime("%Y-%m-%d %H:%M")
             # Include type and confidence in header
             conf_str = f", conf={ep.confidence:.1f}" if ep.confidence < 1.0 else ""
-            header = f"[{ep.id}] ({timestamp}, type={ep.episode_type}{conf_str})"
+            header = f"[ep-{ep.id}] ({timestamp}, type={ep.episode_type}{conf_str})"
 
             # Include entities if present
             if ep.entity_ids:

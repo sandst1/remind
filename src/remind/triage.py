@@ -77,7 +77,8 @@ Rules:
 - For new topics, use a short descriptive name (will be auto-created)
 - Use CSV quoting when needed
 - If nothing is worth remembering, output only the DENSITY row (no TRIAGE_EPISODE rows)
-- episode_type must be one of: {type_enum}
+- episode_type MUST be one of: {type_enum}
+- Do NOT invent or use any other episode type
 - For outcome episodes, include TRIAGE_METADATA rows for strategy, result, prediction_error""".format(type_enum=type_enum)
 
 

@@ -535,7 +535,7 @@ class TestConsolidatorFormatting:
 
         result = consolidator._format_concepts(concepts)
 
-        assert "[abc123]" in result
+        assert "[c-abc123]" in result
         assert "conf: 0.80" in result
         assert "n=3" in result
         assert "programming" in result
@@ -554,7 +554,7 @@ class TestConsolidatorFormatting:
         ]
 
         result = consolidator._format_concepts(concepts)
-        assert "[abc123]" in result
+        assert "[c-abc123]" in result
         assert "Test" in result
 
     def test_format_episodes(self, consolidator, sample_episodes):
@@ -742,9 +742,9 @@ class TestConceptChunking:
             {"id": "c3", "title": "Third"},
         ]
         result = consolidator._format_concept_index(concepts)
-        assert "[c1] First concept" in result
-        assert "[c2]" in result
-        assert "[c3] Third" in result
+        assert "[c-c1] First concept" in result
+        assert "[c-c2]" in result
+        assert "[c-c3] Third" in result
 
     @pytest.mark.asyncio
     async def test_single_chunk_single_llm_call(
@@ -915,12 +915,12 @@ class TestConceptChunking:
 
         # First chunk (c00, c01, c02) should have c03, c04 in "OTHER" index
         assert "OTHER KNOWN CONCEPTS" in json_calls[0]["prompt"]
-        assert "[c03]" in json_calls[0]["prompt"]
-        assert "[c04]" in json_calls[0]["prompt"]
+        assert "[c-c03]" in json_calls[0]["prompt"]
+        assert "[c-c04]" in json_calls[0]["prompt"]
 
         # Second chunk (c03, c04) should have c00, c01, c02 in "OTHER" index
         assert "OTHER KNOWN CONCEPTS" in json_calls[1]["prompt"]
-        assert "[c00]" in json_calls[1]["prompt"]
+        assert "[c-c00]" in json_calls[1]["prompt"]
 
 
 class TestParallelConsolidation:
@@ -955,9 +955,8 @@ class TestParallelConsolidation:
         async def mock_batch_response(prompt, **kwargs):
             nonlocal call_count
             call_count += 1
-            # Parse episode IDs from prompt
             import re
-            ids = re.findall(r'\[([a-f0-9-]+)\]', prompt)
+            ids = re.findall(r'\[ep-([a-f0-9-]+)\]', prompt)
             results = {}
             for ep_id in ids:
                 results[ep_id] = {
@@ -987,7 +986,7 @@ class TestParallelConsolidation:
         async def mock_batch_response(prompt, **kwargs):
             import re
 
-            ids = re.findall(r'\[([a-f0-9-]+)\]', prompt)
+            ids = re.findall(r'\[ep-([a-f0-9-]+)\]', prompt)
             return {
                 "results": {
                     ep_id: {

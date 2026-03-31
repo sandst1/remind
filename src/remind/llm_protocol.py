@@ -58,6 +58,13 @@ class ProtocolParseError(ValueError):
     """Raised when tagged-CSV content cannot be parsed safely."""
 
 
+def strip_id_prefix(id_str: str) -> str:
+    """Strip ep-/c- prefix from LLM-facing IDs back to raw storage IDs."""
+    if id_str.startswith("ep-") or id_str.startswith("c-"):
+        return id_str.split("-", 1)[1]
+    return id_str
+
+
 def _strip_code_fence(text: str) -> str:
     raw = (text or "").strip()
     if raw.startswith("```"):
@@ -156,7 +163,7 @@ def parse_extraction_batch_csv(text: str) -> dict:
         kind = EXTRACT_TAGS.get(row[0], row[0])
         if kind == "EPISODE" and len(row) >= 4:
             saw_ep = True
-            ep_id = row[1]
+            ep_id = strip_id_prefix(row[1])
             if not ep_id:
                 continue
             results.setdefault(
@@ -166,7 +173,7 @@ def parse_extraction_batch_csv(text: str) -> dict:
             results[ep_id]["type"] = row[2] or "observation"
             results[ep_id]["title"] = _to_opt_str(row[3])
         elif kind == "ENTITY" and len(row) >= 4:
-            ep_id = row[1]
+            ep_id = strip_id_prefix(row[1])
             if not ep_id:
                 continue
             results.setdefault(
@@ -180,7 +187,7 @@ def parse_extraction_batch_csv(text: str) -> dict:
                 }
             )
         elif kind == "ENTITY_RELATION" and len(row) >= 9:
-            ep_id = row[1]
+            ep_id = strip_id_prefix(row[1])
             if not ep_id:
                 continue
             results.setdefault(
@@ -259,7 +266,7 @@ def parse_consolidation_csv(text: str) -> dict:
             analysis_parts.append(row[1])
         elif kind == "UPDATE" and len(row) >= 2:
             recognized_rows += 1
-            concept_id = row[1]
+            concept_id = strip_id_prefix(row[1])
             if not concept_id:
                 continue
             update = updates_by_id.get(concept_id)
@@ -282,27 +289,27 @@ def parse_consolidation_csv(text: str) -> dict:
                 update["topic_id"] = row[5]
         elif kind == "UPDATE_SOURCE" and len(row) >= 3:
             recognized_rows += 1
-            update = updates_by_id.get(row[1])
+            update = updates_by_id.get(strip_id_prefix(row[1]))
             if update and row[2]:
-                update["source_episodes"].append(row[2])
+                update["source_episodes"].append(strip_id_prefix(row[2]))
         elif kind == "UPDATE_EXCEPTION" and len(row) >= 3:
             recognized_rows += 1
-            update = updates_by_id.get(row[1])
+            update = updates_by_id.get(strip_id_prefix(row[1]))
             if update and row[2]:
                 update["add_exceptions"].append(row[2])
         elif kind == "UPDATE_TAG" and len(row) >= 3:
             recognized_rows += 1
-            update = updates_by_id.get(row[1])
+            update = updates_by_id.get(strip_id_prefix(row[1]))
             if update and row[2]:
                 update["add_tags"].append(row[2])
         elif kind == "UPDATE_RELATION" and len(row) >= 4:
             recognized_rows += 1
-            update = updates_by_id.get(row[1])
+            update = updates_by_id.get(strip_id_prefix(row[1]))
             if not update:
                 continue
             update["add_relations"].append(
                 {
-                    "target_id": row[3],
+                    "target_id": strip_id_prefix(row[3]),
                     "type": _validate_relation_type(row[2]),
                     "strength": _to_float(row[4] if len(row) > 4 else None, 0.5),
                     "context": _to_opt_str(row[5]) if len(row) > 5 else None,
@@ -340,7 +347,7 @@ def parse_consolidation_csv(text: str) -> dict:
             recognized_rows += 1
             nc = new_by_temp_id.get(row[1])
             if nc and row[2]:
-                nc["source_episodes"].append(row[2])
+                nc["source_episodes"].append(strip_id_prefix(row[2]))
         elif kind == "NEW_EXCEPTION" and len(row) >= 3:
             recognized_rows += 1
             nc = new_by_temp_id.get(row[1])
@@ -353,9 +360,9 @@ def parse_consolidation_csv(text: str) -> dict:
                 nc["tags"].append(row[2])
         elif kind == "NEW_RELATION" and len(row) >= 4:
             recognized_rows += 1
-            source_id = row[1]
+            source_id = strip_id_prefix(row[1])
             rel_type = _validate_relation_type(row[2])
-            target_id = row[3]
+            target_id = strip_id_prefix(row[3])
             if not source_id or not target_id:
                 continue
             ops["new_relations"].append(
@@ -369,11 +376,12 @@ def parse_consolidation_csv(text: str) -> dict:
             )
         elif kind == "CONTRADICTION" and len(row) >= 3:
             recognized_rows += 1
-            if not row[1]:
+            concept_id = strip_id_prefix(row[1])
+            if not concept_id:
                 continue
             ops["contradictions"].append(
                 {
-                    "concept_id": row[1],
+                    "concept_id": concept_id,
                     "evidence": row[2],
                     "resolution": _to_opt_str(row[3]) if len(row) > 3 else None,
                 }
