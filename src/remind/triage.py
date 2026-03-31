@@ -281,10 +281,11 @@ class IngestionTriager:
         system_prompt = TRIAGE_SYSTEM_PROMPT
         if instructions:
             system_prompt += (
-                "\n\nADDITIONAL INSTRUCTIONS FROM THE USER:\n"
-                f"{instructions}\n\n"
-                "Apply these instructions when deciding what to extract. "
-                "They take priority over default extraction behavior."
+                "\n\n=== PRIORITY INSTRUCTIONS ===\n"
+                "THE FOLLOWING ARE THE MOST IMPORTANT INSTRUCTIONS. "
+                "They OVERRIDE and take precedence over ALL other extraction behavior.\n\n"
+                f"{instructions}\n"
+                "=== END PRIORITY INSTRUCTIONS ==="
             )
 
         logger.debug(

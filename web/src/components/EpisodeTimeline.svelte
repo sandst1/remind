@@ -8,11 +8,13 @@
     currentDb,
     topics,
     selectedTopic,
+    configuredEpisodeTypes,
   } from '../lib/stores';
   import { fetchEpisodes, updateEpisode, fetchTopics } from '../lib/api';
   import type { Episode, EpisodeType, Topic } from '../lib/types';
-  import { Eye, Zap, CircleHelp, Brain, Heart, Search, Filter, FileText, MapPin, ListChecks, Circle, Play, CheckCircle2, Ban, Trash2, Pencil, Target, BookText } from 'lucide-svelte';
+  import { Search, Filter, Circle, Play, CheckCircle2, Ban, Trash2, Pencil } from 'lucide-svelte';
   import { deleteEpisode } from '../lib/api';
+  import { getTypeLabel, getTypePluralLabel, getTypeIcon } from '../lib/episode-types';
 
   let filterType: EpisodeType | '' = '';
   let filterConsolidated: boolean | null = null;
@@ -86,32 +88,6 @@
       minute: '2-digit',
     });
   }
-
-  const episodeTypeLabels: Record<EpisodeType, string> = {
-    observation: 'Observation',
-    decision: 'Decision',
-    question: 'Question',
-    meta: 'Meta',
-    preference: 'Preference',
-    spec: 'Spec',
-    plan: 'Plan',
-    task: 'Task',
-    outcome: 'Outcome',
-    fact: 'Fact',
-  };
-
-  const episodeTypeIcons: Record<EpisodeType, any> = {
-    observation: Eye,
-    decision: Zap,
-    question: CircleHelp,
-    meta: Brain,
-    preference: Heart,
-    spec: FileText,
-    plan: MapPin,
-    task: ListChecks,
-    outcome: Target,
-    fact: BookText,
-  };
 
   const taskStatusIcons: Record<string, any> = {
     todo: Circle,
@@ -207,16 +183,9 @@
         <Filter size={14} class="select-icon" />
         <select bind:value={filterType} onchange={applyFilters}>
           <option value="">All types</option>
-          <option value="observation">Observations</option>
-          <option value="decision">Decisions</option>
-          <option value="question">Questions</option>
-          <option value="meta">Meta</option>
-          <option value="preference">Preferences</option>
-          <option value="spec">Specs</option>
-          <option value="plan">Plans</option>
-          <option value="task">Tasks</option>
-          <option value="outcome">Outcomes</option>
-          <option value="fact">Facts</option>
+          {#each $configuredEpisodeTypes as t}
+            <option value={t}>{getTypePluralLabel(t)}</option>
+          {/each}
         </select>
       </div>
 
@@ -245,13 +214,13 @@
         <div class="timeline-item" class:consolidated={episode.consolidated}>
           <div class="timeline-marker">
             <span class="episode-icon">
-              <svelte:component this={episodeTypeIcons[episode.episode_type]} size={16} />
+              <svelte:component this={getTypeIcon(episode.episode_type)} size={16} />
             </span>
           </div>
           <div class="timeline-content">
             <div class="episode-header">
               <span class="episode-type type-{episode.episode_type}">
-                {episodeTypeLabels[episode.episode_type]}
+                {getTypeLabel(episode.episode_type)}
               </span>
               <span class="episode-date">{formatDate(episode.timestamp)}</span>
               {#if !episode.consolidated}

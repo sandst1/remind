@@ -10,7 +10,7 @@ export type RelationType =
   | 'part_of'
   | 'context_of';
 
-export type EpisodeType =
+export type KnownEpisodeType =
   | 'observation'
   | 'decision'
   | 'question'
@@ -21,6 +21,8 @@ export type EpisodeType =
   | 'task'
   | 'outcome'
   | 'fact';
+
+export type EpisodeType = KnownEpisodeType | (string & {});
 
 export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked';
 

@@ -4,6 +4,7 @@
   import { fetchStats, fetchTopics } from '../lib/api';
   import type { Topic } from '../lib/types';
   import { Lightbulb, History, Tag, Network, AlertCircle, CheckCircle, FolderOpen } from 'lucide-svelte';
+  import { getTypePluralLabel } from '../lib/episode-types';
 
   let mounted = false;
 
@@ -32,19 +33,6 @@
       statsLoading.set(false);
     }
   }
-
-  const episodeTypeLabels: Record<string, string> = {
-    observation: 'Observations',
-    decision: 'Decisions',
-    question: 'Questions',
-    meta: 'Meta',
-    preference: 'Preferences',
-    spec: 'Specs',
-    plan: 'Plans',
-    task: 'Tasks',
-    outcome: 'Outcomes',
-    fact: 'Facts',
-  };
 
   const relationTypeLabels: Record<string, string> = {
     implies: 'Implies',
@@ -144,7 +132,7 @@
         <div class="distribution-list">
           {#each Object.entries($stats.episode_types) as [type, count]}
             <div class="distribution-item">
-              <span class="distribution-label">{episodeTypeLabels[type] || type}</span>
+              <span class="distribution-label">{getTypePluralLabel(type)}</span>
               <span class="distribution-value">{count}</span>
             </div>
           {/each}

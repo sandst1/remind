@@ -6,9 +6,10 @@
   import type { EntityGraphData, EntityGraphNode, EntityGraphLink, EntityType, Entity, Episode, Concept } from '../lib/types';
   import {
     File, Code, Box, Folder, Lightbulb, User, Briefcase, Wrench, HelpCircle, BookOpen,
-    ZoomIn, ZoomOut, RotateCcw, Eye, Zap, CircleHelp, Brain, Heart,
-    ChevronRight, ChevronDown, FileText, MapPin, ListChecks, Target, BookText
+    ZoomIn, ZoomOut, RotateCcw,
+    ChevronRight, ChevronDown,
   } from 'lucide-svelte';
+  import { getTypeIcon } from '../lib/episode-types';
 
   let container: HTMLDivElement;
   let width = 800;
@@ -324,20 +325,6 @@
     expandedEpisodes = {};
   }
 
-  // Episode type icons
-  const episodeTypeIcons: Record<string, typeof Eye> = {
-    observation: Eye,
-    decision: Zap,
-    question: CircleHelp,
-    meta: Brain,
-    preference: Heart,
-    spec: FileText,
-    plan: MapPin,
-    task: ListChecks,
-    outcome: Target,
-    fact: BookText,
-  };
-
   // Toggle episode expansion
   async function toggleEpisodeExpand(episodeId: string) {
     if (expandedEpisodes[episodeId]) {
@@ -502,7 +489,7 @@
                           {/if}
                         </span>
                         <span class="episode-type-icon">
-                          <svelte:component this={episodeTypeIcons[episode.episode_type]} size={14} />
+                          <svelte:component this={getTypeIcon(episode.episode_type)} size={14} />
                         </span>
                         <span class="episode-date">{formatDate(episode.timestamp)}</span>
                         {#if episode.consolidated}

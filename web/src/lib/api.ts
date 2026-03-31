@@ -54,6 +54,16 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
+// Config
+
+export interface AppConfig {
+  episode_types: string[];
+}
+
+export async function fetchConfig(): Promise<AppConfig> {
+  return fetchJson<AppConfig>(`${API_BASE}/config`);
+}
+
 // Stats
 
 export async function fetchStats(): Promise<Stats> {

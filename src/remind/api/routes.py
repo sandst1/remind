@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from remind.models import Entity, EpisodeType, TaskStatus, normalize_entity_name
+from remind.config import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -887,6 +888,23 @@ async def list_databases(request: Request) -> JSONResponse:
 
 
 # =============================================================================
+# Config
+# =============================================================================
+
+
+async def get_config(request: Request) -> JSONResponse:
+    """Return relevant configuration for the web UI."""
+    try:
+        config = load_config()
+        return JSONResponse({
+            "episode_types": config.episode_types,
+        })
+    except Exception as e:
+        logger.exception("Failed to get config")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# =============================================================================
 # Tasks
 # =============================================================================
 
@@ -1198,6 +1216,8 @@ api_routes = [
     Route("/api/v1/chat", stream_chat, methods=["POST"]),
     # Databases
     Route("/api/v1/databases", list_databases, methods=["GET"]),
+    # Config
+    Route("/api/v1/config", get_config, methods=["GET"]),
     # Tasks
     Route("/api/v1/tasks", get_tasks, methods=["GET"]),
     Route("/api/v1/tasks", add_task, methods=["POST"]),

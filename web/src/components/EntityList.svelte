@@ -20,22 +20,13 @@
     Wrench,
     Tag,
     BookOpen,
-    Eye,
-    Zap,
-    CircleHelp,
-    Brain,
-    Heart,
     Search,
     ChevronRight,
     ChevronDown,
     X,
     ArrowRight,
-    FileText,
-    MapPin,
-    ListChecks,
-    Target,
-    BookText,
   } from 'lucide-svelte';
+  import { getTypeIcon } from '../lib/episode-types';
 
   let filterType: EntityType | '' = '';
   let search = '';
@@ -189,19 +180,6 @@
     project: Briefcase,
     tool: Wrench,
     other: Tag,
-  };
-
-  const episodeTypeIcons: Record<string, any> = {
-    observation: Eye,
-    decision: Zap,
-    question: CircleHelp,
-    meta: Brain,
-    preference: Heart,
-    spec: FileText,
-    plan: MapPin,
-    task: ListChecks,
-    outcome: Target,
-    fact: BookText,
   };
 
   function formatDate(isoDate: string): string {
@@ -405,7 +383,7 @@
                           {/if}
                         </span>
                         <span class="episode-type-icon">
-                          <svelte:component this={episodeTypeIcons[episode.episode_type]} size={14} />
+                          <svelte:component this={getTypeIcon(episode.episode_type)} size={14} />
                         </span>
                         <span class="episode-date">{formatDate(episode.timestamp)}</span>
                         {#if episode.consolidated}

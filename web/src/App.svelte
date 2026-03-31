@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentDb, currentView, databases, hasDatabase, type View, theme, sidebarCollapsed } from './lib/stores';
-  import { fetchDatabases, getDbParam } from './lib/api';
+  import { currentDb, currentView, databases, hasDatabase, type View, theme, sidebarCollapsed, configuredEpisodeTypes } from './lib/stores';
+  import { fetchDatabases, fetchConfig, getDbParam } from './lib/api';
   import Dashboard from './components/Dashboard.svelte';
   import EntityList from './components/EntityList.svelte';
   import ConceptList from './components/ConceptList.svelte';
@@ -23,10 +23,16 @@
     const db = getDbParam();
     currentDb.set(db);
 
-    // Fetch available databases
+    // Fetch available databases and config in parallel
     try {
-      const dbs = await fetchDatabases();
+      const [dbs, config] = await Promise.all([
+        fetchDatabases(),
+        fetchConfig().catch(() => null),
+      ]);
       databases.set(dbs);
+      if (config?.episode_types?.length) {
+        configuredEpisodeTypes.set(config.episode_types);
+      }
     } catch (e) {
       console.error('Failed to fetch databases:', e);
     }

@@ -11,13 +11,8 @@
     selectedTopic,
   } from '../lib/stores';
   import { fetchConcepts, fetchConcept, fetchEpisode } from '../lib/api';
-  import type { Concept, Episode, EpisodeType, Topic } from '../lib/types';
+  import type { Concept, Episode, Topic } from '../lib/types';
   import {
-    Eye,
-    Zap,
-    CircleHelp,
-    Brain,
-    Heart,
     Search,
     ChevronRight,
     ChevronDown,
@@ -25,14 +20,10 @@
     ArrowRight,
     ArrowUp,
     ArrowDown,
-    FileText,
-    MapPin,
-    ListChecks,
-    Target,
-    BookText,
     Trash2,
   } from 'lucide-svelte';
   import { deleteConcept } from '../lib/api';
+  import { getTypeLabel, getTypeIcon } from '../lib/episode-types';
 
   type SortKey = 'alpha' | 'recalls';
 
@@ -212,32 +203,6 @@
     correlates: 'Correlates',
     part_of: 'Part of',
     context_of: 'Context of',
-  };
-
-  const episodeTypeIcons: Record<string, any> = {
-    observation: Eye,
-    decision: Zap,
-    question: CircleHelp,
-    meta: Brain,
-    preference: Heart,
-    spec: FileText,
-    plan: MapPin,
-    task: ListChecks,
-    outcome: Target,
-    fact: BookText,
-  };
-
-  const episodeTypeLabels: Record<EpisodeType, string> = {
-    observation: 'Observation',
-    decision: 'Decision',
-    question: 'Question',
-    meta: 'Meta',
-    preference: 'Preference',
-    spec: 'Spec',
-    plan: 'Plan',
-    task: 'Task',
-    outcome: 'Outcome',
-    fact: 'Fact',
   };
 
   function formatDate(isoDate: string): string {
@@ -461,7 +426,7 @@
                       >
                         <div class="episode-collapsed">
                           <span class="episode-icon">
-                            <svelte:component this={episodeTypeIcons[episode.type]} size={16} />
+                            <svelte:component this={getTypeIcon(episode.type)} size={16} />
                           </span>
                           <span class="episode-content" class:expanded={!!expanded}>{episode.title || episode.content}</span>
                           <span class="episode-chevron">
@@ -476,7 +441,7 @@
                           <div class="episode-expanded">
                             <div class="episode-header">
                               <span class="episode-type type-{expanded.episode_type}">
-                                {episodeTypeLabels[expanded.episode_type]}
+                                {getTypeLabel(expanded.episode_type)}
                               </span>
                               <span class="episode-date">{formatDate(expanded.timestamp)}</span>
                               {#if !expanded.consolidated}

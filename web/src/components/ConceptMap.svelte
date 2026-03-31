@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import * as d3 from 'd3';
-  import { currentDb, conceptMapLoading, conceptMapError, conceptMapData } from '../lib/stores';
+  import { currentDb, conceptMapLoading, conceptMapError, conceptMapData, configuredEpisodeTypes } from '../lib/stores';
   import { fetchGraph, fetchEpisode } from '../lib/api';
   import type { GraphData, GraphNode, EpisodeType, Episode } from '../lib/types';
   import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-svelte';
+  import { getTypeColor } from '../lib/episode-types';
 
   let container: HTMLDivElement;
   let width = 800;
@@ -22,14 +23,6 @@
   // Selected episode for detail panel
   let selectedEpisode: Episode | null = null;
   let episodeLoading = false;
-
-  const episodeColors: Record<EpisodeType, string> = {
-    observation: '#3b82f6',  // blue
-    decision: '#f97316',     // orange
-    question: '#a855f7',     // purple
-    meta: '#22c55e',         // green
-    preference: '#ec4899',   // pink
-  };
 
   onMount(() => {
     mounted = true;
@@ -219,7 +212,7 @@
     switch (data.nodeType) {
       case 'root': return 'var(--color-primary)';
       case 'concept': return getConceptColor(data);
-      case 'episode': return data.type ? episodeColors[data.type] : '#71717a';
+      case 'episode': return data.type ? getTypeColor(data.type) : '#71717a';
       default: return '#71717a';
     }
   }
@@ -401,7 +394,7 @@
               <div class="episodes">
                 {#each selectedConcept.source_episodes as ep}
                   <div class="episode">
-                    <span class="episode-type" style="background: {episodeColors[ep.type] || '#71717a'}">{ep.type}</span>
+                    <span class="episode-type" style="background: {getTypeColor(ep.type)}">{ep.type}</span>
                     <span class="episode-content">{ep.title || ep.content}</span>
                   </div>
                 {/each}
@@ -425,7 +418,7 @@
         {:else if selectedEpisode}
           <div class="detail-content">
             <div class="episode-meta">
-              <span class="episode-type-badge" style="background: {episodeColors[selectedEpisode.episode_type] || '#71717a'}">{selectedEpisode.episode_type}</span>
+              <span class="episode-type-badge" style="background: {getTypeColor(selectedEpisode.episode_type)}">{selectedEpisode.episode_type}</span>
               <span class="episode-date">{formatDate(selectedEpisode.timestamp)}</span>
               {#if selectedEpisode.consolidated}
                 <span class="episode-status consolidated">Consolidated</span>
@@ -471,9 +464,9 @@
     </div>
     <div class="legend-section">
       <span class="legend-title">Episode:</span>
-      {#each Object.entries(episodeColors) as [type, color]}
+      {#each $configuredEpisodeTypes as type}
         <div class="legend-item">
-          <span class="legend-color small" style="background: {color}"></span>
+          <span class="legend-color small" style="background: {getTypeColor(type)}"></span>
           <span>{type}</span>
         </div>
       {/each}

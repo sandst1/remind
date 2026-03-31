@@ -9,6 +9,12 @@ import type {
   EntityGraphData,
 } from './types';
 
+// Config (episode types from server)
+export const configuredEpisodeTypes = writable<string[]>([
+  'observation', 'decision', 'question', 'meta', 'preference',
+  'spec', 'plan', 'task', 'outcome', 'fact',
+]);
+
 // Current database
 export const currentDb = writable<string>('');
 export const databases = writable<DatabaseInfo[]>([]);
