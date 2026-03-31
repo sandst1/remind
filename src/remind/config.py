@@ -519,6 +519,36 @@ def resolve_db_url(
     return f"sqlite:///{file_path}"
 
 
+def infer_project_dir_from_db_url(db_url: str) -> Optional[Path]:
+    """Infer project root from a SQLite URL so we can load ``<project>/.remind/remind.config.json``.
+
+    When the DB file path is ``<project>/.remind/<name>.db``, returns ``<project>``.
+    Files under the global ``~/.remind/`` (same resolved directory as :data:`REMIND_DIR`)
+    return ``None`` so callers can fall back to :func:`Path.cwd()`.
+
+    Remind wraps absolute paths as ``sqlite:///{path}``, which appears as four slashes
+    before the root ``/`` on POSIX (e.g. ``sqlite:////tmp/a.db``).
+    """
+    if not isinstance(db_url, str) or not db_url.startswith("sqlite:///"):
+        return None
+    raw = db_url[len("sqlite:///") :].strip()
+    if not raw:
+        return None
+    try:
+        db_path = Path(raw).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    parent = db_path.parent
+    if parent.name != ".remind":
+        return None
+    try:
+        if parent.resolve() == REMIND_DIR.resolve():
+            return None
+    except (OSError, RuntimeError):
+        return None
+    return parent.parent
+
+
 _file_logging_configured: set[str] = set()
 
 

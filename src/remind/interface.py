@@ -27,7 +27,7 @@ from remind.providers.base import LLMProvider, EmbeddingProvider
 from remind.consolidation import Consolidator
 from remind.retrieval import MemoryRetriever, ActivatedConcept
 from remind.extraction import EntityExtractor
-from remind.config import load_config, DecayConfig, RemindConfig, setup_file_logging
+from remind.config import load_config, DecayConfig, RemindConfig, setup_file_logging, DEFAULT_EPISODE_TYPES
 from remind.triage import IngestionBuffer, IngestionTriager, TriageResult, split_text
 
 logger = logging.getLogger(__name__)
@@ -143,6 +143,8 @@ class MemoryInterface:
             store=self.store,
             spread_hops=spread_hops,
         )
+        
+        self.episode_types: list[str] = episode_types or list(DEFAULT_EPISODE_TYPES)
         
         self.extractor = EntityExtractor(
             llm=llm,
@@ -1342,6 +1344,7 @@ class MemoryInterface:
         stats["consolidation_threshold"] = self.consolidation_threshold
         stats["auto_consolidate"] = self.auto_consolidate
         stats["should_consolidate"] = self.should_consolidate
+        stats["configured_episode_types"] = list(self.episode_types)
         stats["last_consolidation"] = self._last_consolidation.isoformat() if self._last_consolidation else None
         stats["llm_provider"] = self.llm.name
         stats["embedding_provider"] = self.embedding.name

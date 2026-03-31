@@ -12,6 +12,7 @@ External memory layer that persists across sessions and generalizes experiences 
 | `remind recall "<query>"` | Retrieve relevant memories |
 | `remind end-session` | Consolidate pending episodes |
 | `remind stats` | Memory statistics |
+| `remind types` | Show configured episode types |
 | `remind topics list` | List all topics with stats |
 | `remind topics create <name>` | Create a new topic |
 | `remind topics update <id>` | Update topic name/description |
@@ -37,7 +38,7 @@ remind remember "User wants retry-after headers on 429s" -t preference --topic p
 remind remember "Slack message: deploy failed on prod" --source-type slack --topic infra
 ```
 
-**Episode types** (`-t`): `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
+**Episode types** (`-t`): Configurable via config. Run `remind types` to see active types. Defaults: `observation`, `decision`, `question`, `meta`, `preference`, `outcome`, `fact`, `spec`, `plan`, `task`
 **Entities** (`-e`): Format `type:name` (file, function, class, person, concept, tool, project)
 **Topics** (`--topic`): Topic ID or name. Resolved to an existing topic; falls back to "general" default.
 **Source types** (`--source-type`): Origin of the memory (e.g., `agent`, `slack`, `github`, `manual`)
@@ -98,6 +99,7 @@ remind remember "Should we shard the DB early or wait for scale?" -t question --
 
 ```bash
 remind stats                    # Memory statistics
+remind types                    # Show configured episode types
 remind inspect                  # List all concepts
 remind inspect <concept_id>     # Concept details
 remind entities                 # List entities

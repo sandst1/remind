@@ -10,7 +10,6 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from remind.models import Entity, EpisodeType, TaskStatus, normalize_entity_name
-from remind.config import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,13 @@ def _normalize_entity_param(raw: str) -> str:
     return Entity.make_id(type_str, normalize_entity_name(name))
 
 # Import config and memory instance cache
-from remind.config import resolve_db_url, _is_db_url, REMIND_DIR
+from remind.config import (
+    load_config,
+    infer_project_dir_from_db_url,
+    resolve_db_url,
+    _is_db_url,
+    REMIND_DIR,
+)
 from remind.mcp_server import get_memory_for_db, resolve_db_alias
 
 
@@ -897,11 +902,27 @@ async def list_databases(request: Request) -> JSONResponse:
 async def get_config(request: Request) -> JSONResponse:
     """Return relevant configuration for the web UI.
 
-    Uses CWD as project_dir so project-local .remind/remind.config.json
-    is picked up when the server is started from a project directory.
+    When ``db`` is set, resolves it the same way as other API routes and, for SQLite
+    files under ``<project>/.remind/`` (but not under the global ``~/.remind/``),
+    loads project-local ``remind.config.json`` from that project. Otherwise uses
+    :func:`Path.cwd()` as ``project_dir`` (same as starting the server from a project).
     """
     try:
-        config = load_config(project_dir=Path.cwd())
+        db_param = (request.query_params.get("db") or "").strip()
+        project_dir: Optional[Path] = None
+        if db_param:
+            try:
+                db_url = resolve_db_alias(db_param)
+                if db_url is None:
+                    db_url = db_param if _is_db_url(db_param) else resolve_db_url(db_param)
+                inferred = infer_project_dir_from_db_url(db_url)
+                if inferred is not None:
+                    project_dir = inferred
+            except Exception:
+                logger.debug("Could not infer project dir from db=%r", db_param, exc_info=True)
+        if project_dir is None:
+            project_dir = Path.cwd()
+        config = load_config(project_dir=project_dir)
         return JSONResponse({
             "episode_types": config.episode_types,
         })

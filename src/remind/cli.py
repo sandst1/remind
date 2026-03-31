@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from rich.console import Console
 from rich.table import Table
+from rich import box
 from rich.panel import Panel
 from rich.tree import Tree
 from rich.syntax import Syntax
@@ -932,6 +933,36 @@ def stats(ctx):
         title="Memory Stats",
         border_style="cyan"
     ))
+
+
+@main.command("types")
+@click.pass_context
+def episode_types_cmd(ctx):
+    """Show configured episode types.
+
+    Lists the episode types enabled for this project/environment,
+    resolved from env vars, project config, global config, or defaults.
+    """
+    from remind.config import load_config, DEFAULT_EPISODE_TYPES
+    from remind.models import EpisodeType
+
+    config = load_config(project_dir=Path.cwd())
+    configured = config.episode_types
+    builtin_values = {e.value for e in EpisodeType}
+
+    table = Table(title="Configured Episode Types", box=box.SIMPLE_HEAVY)
+    table.add_column("Type", style="cyan")
+    table.add_column("Built-in", style="dim")
+
+    for t in configured:
+        is_builtin = "yes" if t in builtin_values else "custom"
+        table.add_row(t, is_builtin)
+
+    console.print(table)
+
+    disabled = [t for t in DEFAULT_EPISODE_TYPES if t not in configured]
+    if disabled:
+        console.print(f"\n[dim]Disabled defaults: {', '.join(disabled)}[/dim]")
 
 
 @main.command()

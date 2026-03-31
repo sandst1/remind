@@ -18,6 +18,7 @@ from remind.config import (
     _apply_env_vars,
     _load_config_file,
     resolve_db_path,
+    infer_project_dir_from_db_url,
     REMIND_DIR,
     DEFAULT_LLM_PROVIDER,
     DEFAULT_EMBEDDING_PROVIDER,
@@ -891,3 +892,31 @@ class TestEnvFileParity:
         assert config.decay.enabled is False
         assert config.decay.decay_interval == 10
         assert config.decay.decay_rate == 0.01
+
+
+class TestInferProjectDirFromDbUrl:
+    """infer_project_dir_from_db_url picks project roots for web UI config loading."""
+
+    def test_none_for_database_under_global_remind(self, tmp_path, monkeypatch):
+        fake_global = tmp_path / "global_dot_remind"
+        fake_global.mkdir()
+        monkeypatch.setattr("remind.config.REMIND_DIR", fake_global)
+        db_file = fake_global / "eduskunta-2026.db"
+        db_file.write_bytes(b"")
+        url = f"sqlite:///{db_file}"
+        assert infer_project_dir_from_db_url(url) is None
+
+    def test_project_root_for_dot_remind_outside_global(self, tmp_path, monkeypatch):
+        fake_global = tmp_path / "global_dot_remind"
+        fake_global.mkdir()
+        monkeypatch.setattr("remind.config.REMIND_DIR", fake_global)
+        project = tmp_path / "ingest-parliament"
+        remind = project / ".remind"
+        remind.mkdir(parents=True)
+        db_file = remind / "eduskunta-2026.db"
+        db_file.write_bytes(b"")
+        url = f"sqlite:///{db_file}"
+        assert infer_project_dir_from_db_url(url) == project.resolve()
+
+    def test_non_sqlite_returns_none(self):
+        assert infer_project_dir_from_db_url("postgresql://localhost/db") is None

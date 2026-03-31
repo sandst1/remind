@@ -426,6 +426,28 @@ async def tool_stats() -> str:
     return "\n".join(lines)
 
 
+async def tool_episode_types() -> str:
+    """List configured episode types."""
+    from remind.models import EpisodeType
+
+    memory = await get_memory()
+    configured = memory.episode_types
+    builtin_values = {e.value for e in EpisodeType}
+
+    lines = ["Configured episode types:"]
+    for t in configured:
+        label = "(built-in)" if t in builtin_values else "(custom)"
+        lines.append(f"  {t} {label}")
+
+    from remind.config import DEFAULT_EPISODE_TYPES
+    disabled = [t for t in DEFAULT_EPISODE_TYPES if t not in configured]
+    if disabled:
+        lines.append("")
+        lines.append(f"Disabled defaults: {', '.join(disabled)}")
+
+    return "\n".join(lines)
+
+
 async def tool_entities(
     entity_type: Optional[str] = None,
     limit: int = 50,
@@ -1169,6 +1191,19 @@ def create_mcp_server(config=None):
             Formatted statistics summary
         """
         return await tool_stats()
+
+    @mcp.tool()
+    async def episode_types() -> str:
+        """List configured episode types.
+
+        Shows which episode types are enabled for this project/environment.
+        Types are resolved from env vars > project config > global config > defaults.
+        Indicates which are built-in vs custom, and which defaults have been disabled.
+
+        Returns:
+            List of configured episode types with labels
+        """
+        return await tool_episode_types()
 
     @mcp.tool()
     async def entities(

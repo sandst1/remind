@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { stats, statsLoading, statsError, currentDb, topics } from '../lib/stores';
+  import { stats, statsLoading, statsError, currentDb, topics, configuredEpisodeTypes } from '../lib/stores';
   import { fetchStats, fetchTopics } from '../lib/api';
   import type { Topic } from '../lib/types';
   import { Lightbulb, History, Tag, Network, AlertCircle, CheckCircle, FolderOpen } from 'lucide-svelte';
-  import { getTypePluralLabel } from '../lib/episode-types';
+  import { getTypePluralLabel, isCustomEpisodeTypesProfile } from '../lib/episode-types';
 
   let mounted = false;
 
@@ -32,6 +32,38 @@
     } finally {
       statsLoading.set(false);
     }
+  }
+
+  /** Rows for "Episode Types" on the dashboard: full breakdown, or config-scoped + Other. */
+  let episodeTypeRows: [string, number][] = [];
+
+  $: if ($stats?.episode_types) {
+    const raw = $stats.episode_types;
+    const allowed = $configuredEpisodeTypes;
+    if (!isCustomEpisodeTypesProfile(allowed)) {
+      episodeTypeRows = Object.entries(raw).sort((a, b) => b[1] - a[1]);
+    } else {
+      const allowedSet = new Set(allowed);
+      let other = 0;
+      for (const [t, c] of Object.entries(raw)) {
+        if (!allowedSet.has(t)) {
+          other += c;
+        }
+      }
+      const rows: [string, number][] = [];
+      for (const t of allowed) {
+        const c = raw[t] ?? 0;
+        if (c > 0) {
+          rows.push([t, c]);
+        }
+      }
+      if (other > 0) {
+        rows.push(['__other__', other]);
+      }
+      episodeTypeRows = rows;
+    }
+  } else {
+    episodeTypeRows = [];
   }
 
   const relationTypeLabels: Record<string, string> = {
@@ -114,11 +146,11 @@
           </div>
         {/if}
 
-        {#if $stats.unextracted_count > 0}
+        {#if $stats.unextracted_episodes > 0}
           <div class="status-item pending">
             <AlertCircle size={20} />
             <div>
-              <span class="status-count">{$stats.unextracted_count}</span>
+              <span class="status-count">{$stats.unextracted_episodes}</span>
               <span class="status-label">episodes pending entity extraction</span>
             </div>
           </div>
@@ -130,9 +162,11 @@
       <div class="section">
         <h3>Episode Types</h3>
         <div class="distribution-list">
-          {#each Object.entries($stats.episode_types) as [type, count]}
+          {#each episodeTypeRows as [type, count]}
             <div class="distribution-item">
-              <span class="distribution-label">{getTypePluralLabel(type)}</span>
+              <span class="distribution-label">
+                {type === '__other__' ? 'Other types' : getTypePluralLabel(type)}
+              </span>
               <span class="distribution-value">{count}</span>
             </div>
           {/each}

@@ -61,7 +61,7 @@ export interface AppConfig {
 }
 
 export async function fetchConfig(): Promise<AppConfig> {
-  return fetchJson<AppConfig>(`${API_BASE}/config`);
+  return fetchJson<AppConfig>(apiUrl('/config'));
 }
 
 // Stats

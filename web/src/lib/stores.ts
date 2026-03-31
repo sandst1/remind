@@ -8,12 +8,10 @@ import type {
   DatabaseInfo,
   EntityGraphData,
 } from './types';
+import { DEFAULT_EPISODE_TYPES_LIST } from './episode-types';
 
-// Config (episode types from server)
-export const configuredEpisodeTypes = writable<string[]>([
-  'observation', 'decision', 'question', 'meta', 'preference',
-  'spec', 'plan', 'task', 'outcome', 'fact',
-]);
+// Episode types from server config (see /api/v1/config?db=…)
+export const configuredEpisodeTypes = writable<string[]>([...DEFAULT_EPISODE_TYPES_LIST]);
 
 // Current database
 export const currentDb = writable<string>('');
