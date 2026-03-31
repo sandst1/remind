@@ -41,6 +41,19 @@ _memory_instances: dict[str, MemoryInterface] = {}
 _memory_locks: dict[str, asyncio.Lock] = {}
 _global_lock = asyncio.Lock()
 
+# Opaque alias -> resolved db_url (so credentials stay server-side)
+_db_aliases: dict[str, str] = {}
+
+
+def register_db_alias(alias: str, db_url: str) -> None:
+    """Register an opaque alias that maps to a real database URL."""
+    _db_aliases[alias] = db_url
+
+
+def resolve_db_alias(alias: str) -> Optional[str]:
+    """Resolve an alias to its database URL, or None if not registered."""
+    return _db_aliases.get(alias)
+
 
 async def get_memory_for_db(db_path: str) -> MemoryInterface:
     """Get or create a MemoryInterface for the given database URL or path.

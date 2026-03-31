@@ -24,7 +24,7 @@ def _normalize_entity_param(raw: str) -> str:
 
 # Import config and memory instance cache
 from remind.config import resolve_db_url, _is_db_url, REMIND_DIR
-from remind.mcp_server import get_memory_for_db
+from remind.mcp_server import get_memory_for_db, resolve_db_alias
 
 
 async def _get_memory_from_request(request: Request):
@@ -37,7 +37,9 @@ async def _get_memory_from_request(request: Request):
         )
 
     try:
-        db_url = db_name if _is_db_url(db_name) else resolve_db_url(db_name)
+        db_url = resolve_db_alias(db_name)
+        if db_url is None:
+            db_url = db_name if _is_db_url(db_name) else resolve_db_url(db_name)
         memory = await get_memory_for_db(db_url)
         return memory, None
     except ValueError as e:
@@ -893,9 +895,13 @@ async def list_databases(request: Request) -> JSONResponse:
 
 
 async def get_config(request: Request) -> JSONResponse:
-    """Return relevant configuration for the web UI."""
+    """Return relevant configuration for the web UI.
+
+    Uses CWD as project_dir so project-local .remind/remind.config.json
+    is picked up when the server is started from a project directory.
+    """
     try:
-        config = load_config()
+        config = load_config(project_dir=Path.cwd())
         return JSONResponse({
             "episode_types": config.episode_types,
         })

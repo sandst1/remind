@@ -1701,14 +1701,13 @@ def ui(ctx, port: int, host: str, no_open: bool):
     import threading
     import time
     import webbrowser
-    from urllib.parse import quote
 
-    from remind.mcp_server import run_server_sse
+    from remind.mcp_server import run_server_sse, register_db_alias
 
     db_path = ctx.obj["db"]
 
-    # URL-encode the database path for the query parameter
-    db_param = quote(db_path, safe="")
+    register_db_alias("default", db_path)
+    db_param = "default"
     ui_url = f"http://{host}:{port}/ui/?db={db_param}"
 
     console.print(f"[cyan]Starting Remind UI server...[/cyan]")
