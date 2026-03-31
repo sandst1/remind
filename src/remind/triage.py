@@ -249,6 +249,7 @@ class IngestionTriager:
         chunk: str,
         existing_concepts: str = "",
         existing_topics: str = "",
+        instructions: Optional[str] = None,
     ) -> TriageResult:
         """Score density and extract episodes from a text chunk.
 
@@ -258,6 +259,9 @@ class IngestionTriager:
                 from recall(), used to judge novelty.
             existing_topics: Formatted string of existing topics (id: name)
                 for the LLM to assign episodes to.
+            instructions: Optional caller-provided instructions that steer
+                what the triage LLM extracts (e.g. "focus on architectural
+                decisions"). Appended to the system prompt.
 
         Returns:
             TriageResult with density score and extracted episodes.
@@ -274,18 +278,28 @@ class IngestionTriager:
             chunk=chunk,
         )
 
+        system_prompt = TRIAGE_SYSTEM_PROMPT
+        if instructions:
+            system_prompt += (
+                "\n\nADDITIONAL INSTRUCTIONS FROM THE USER:\n"
+                f"{instructions}\n\n"
+                "Apply these instructions when deciding what to extract. "
+                "They take priority over default extraction behavior."
+            )
+
         logger.debug(
             "Triage LLM request:\n"
             f"  provider: {self.llm.name}\n"
-            f"  system: {TRIAGE_SYSTEM_PROMPT[:120]}...\n"
+            f"  system: {system_prompt[:120]}...\n"
             f"  chunk_length: {len(chunk)}\n"
+            f"  instructions: {instructions!r}\n"
             f"  prompt (first 500 chars): {prompt[:500]}"
         )
 
         try:
             raw_response = await self.llm.complete_structured_text(
                 prompt=prompt,
-                system=TRIAGE_SYSTEM_PROMPT,
+                system=system_prompt,
                 temperature=0.3,
             )
             logger.debug(f"Triage structured response length: {len(raw_response)}")
@@ -295,7 +309,7 @@ class IngestionTriager:
             try:
                 response = await self.llm.complete_json(
                     prompt=prompt,
-                    system=TRIAGE_SYSTEM_PROMPT + "\n\nRespond with valid JSON only.",
+                    system=system_prompt + "\n\nRespond with valid JSON only.",
                     temperature=0.3,
                 )
             except Exception as e:

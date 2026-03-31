@@ -15,8 +15,8 @@ External memory layer that persists across sessions and generalizes experiences 
 | `delete_topic(topic_id)` | Delete unused topic |
 | `list_topics()` | List all topics with stats |
 | `topic_overview(topic, [k])` | Top concepts for a topic (no query needed) |
-| `ingest(content, [source], [topic])` | Auto-ingest raw text with density scoring |
-| `flush_ingest([topic])` | Force-flush ingestion buffer |
+| `ingest(content, [source], [topic], [instructions])` | Auto-ingest raw text with density scoring |
+| `flush_ingest([topic], [instructions])` | Force-flush ingestion buffer |
 | `consolidate([force])` | Extract entities + process episodes → concepts |
 | `inspect([concept_id], [show_episodes])` | View concepts or episodes |
 | `entities([entity_type], [limit])` | List entities with mention counts |
@@ -60,6 +60,7 @@ remember(content="Chose SQLite for zero-dep deploys", topic="architecture", sour
 ingest(content="User: Fix the auth bug\nAssistant: Looking at verify_credentials...")
 ingest(content="<raw tool output>", source="tool_output")
 ingest(content="Chose Postgres for JSONB support", topic="architecture")
+ingest(content="<meeting transcript>", instructions="extract decisions and action items")
 ```
 
 Streams raw text into Remind's auto-ingest pipeline. Text buffers internally (~4000 chars) then gets scored for information density and distilled into episodes automatically. Use `flush_ingest()` at session end to process remaining buffer.
@@ -68,6 +69,8 @@ Streams raw text into Remind's auto-ingest pipeline. Text buffers internally (~4
 - **With `topic`**: All extracted episodes are assigned to the given topic. No inference needed.
 - **Without `topic`**: The triage LLM infers per-episode topics automatically — mapping to existing topics or creating new ones. Different episodes from the same chunk can end up in different topics.
 
+**Instructions**: Pass `instructions` to steer what the triage LLM extracts. For example, `"focus on architectural decisions"` or `"extract all config values and version numbers"`. Instructions are appended to the triage system prompt and take priority over default extraction behavior.
+
 **`ingest()` vs `remember()`**: Use `remember()` when you've already decided what's worth storing. Use `ingest()` when you want Remind to decide — it filters, scores, and distills automatically.
 
 ## flush_ingest
@@ -75,9 +78,10 @@ Streams raw text into Remind's auto-ingest pipeline. Text buffers internally (~4
 ```
 flush_ingest()
 flush_ingest(topic="architecture")
+flush_ingest(instructions="extract only action items")
 ```
 
-Forces processing of whatever text is in the ingestion buffer, regardless of threshold. Pass `topic` to assign all flushed episodes to a specific topic; omit to let the LLM infer topics.
+Forces processing of whatever text is in the ingestion buffer, regardless of threshold. Pass `topic` to assign all flushed episodes to a specific topic; omit to let the LLM infer topics. Pass `instructions` to steer extraction (same as `ingest()`).
 
 ## recall
 
@@ -202,6 +206,7 @@ For continuous memory capture without manual curation:
 ```
 ingest(content="<conversation fragment or tool output>")
 ingest(content="<architecture discussion>", topic="architecture")
+ingest(content="<meeting notes>", instructions="extract decisions and who owns each action item")
 ```
 
 **Session end** — flush remaining buffer:
@@ -209,7 +214,7 @@ ingest(content="<architecture discussion>", topic="architecture")
 flush_ingest()
 ```
 
-Remind handles density scoring, topic assignment, distillation, and consolidation automatically. High-density content produces episodes; low-density content (greetings, boilerplate) is dropped. Topics are inferred automatically when not specified — the triage LLM maps episodes to existing topics or creates new ones.
+Remind handles density scoring, topic assignment, distillation, and consolidation automatically. High-density content produces episodes; low-density content (greetings, boilerplate) is dropped. Topics are inferred automatically when not specified — the triage LLM maps episodes to existing topics or creates new ones. Use `instructions` to focus extraction on specific types of information.
 
 ## Fact Episodes
 

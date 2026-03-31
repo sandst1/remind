@@ -28,6 +28,7 @@ Stream raw text into the auto-ingest pipeline. Text buffers internally until a c
 ingest(content="User: Fix the auth bug\nAssistant: Looking at verify_credentials...")
 ingest(content="<tool output>", source="tool_output")
 ingest(content="Chose Redis for caching", topic="architecture")
+ingest(content="<meeting transcript>", instructions="extract decisions and action items")
 ```
 
 | Parameter | Type | Required | Description |
@@ -35,8 +36,11 @@ ingest(content="Chose Redis for caching", topic="architecture")
 | `content` | string | Yes | Raw text to ingest |
 | `source` | string | No | Source label for metadata (default: `conversation`) |
 | `topic` | string | No | Topic ID or name. When set, all extracted episodes go to this topic. When omitted, the triage LLM infers per-episode topics automatically. |
+| `instructions` | string | No | Natural-language instructions to steer what the triage LLM extracts (e.g. `"focus on architectural decisions"`). Appended to the triage system prompt; takes priority over default extraction behavior. |
 
 **Topic behavior**: With `topic`, all episodes are assigned to the given topic (no inference). Without `topic`, the triage LLM maps each episode to an existing topic or suggests a new one (auto-created).
+
+**Instructions**: Use `instructions` to focus extraction on specific types of information. Without `instructions`, the triage LLM uses its default behavior (capture anything potentially useful). With `instructions`, the LLM prioritizes the given directive — useful for ingesting meeting notes, transcripts, or documents where you know what you're looking for.
 
 **`ingest` vs `remember`**: Use `remember` when you've already decided what's worth storing. Use `ingest` when you want Remind to decide — it scores information density, filters low-value content, and distills memory-worthy episodes automatically. Episodes from `ingest` are immediately consolidated.
 
@@ -47,11 +51,13 @@ Force-flush the ingestion buffer, processing whatever text has accumulated regar
 ```
 flush_ingest()
 flush_ingest(topic="architecture")
+flush_ingest(instructions="extract only action items")
 ```
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `topic` | string | No | Topic for extracted episodes. Same behavior as `ingest()` topic parameter. |
+| `instructions` | string | No | Instructions to steer extraction. Same as `ingest()` instructions parameter. |
 
 Use at session end or whenever you want to ensure all ingested text is processed.
 

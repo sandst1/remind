@@ -588,3 +588,116 @@ class TestLargeInputIngestion:
             if c["method"] == "complete_json" and "memory curation" in (c.get("system") or "")
         ]
         assert len(triage_calls) >= 2
+
+
+class TestIngestInstructions:
+    """Tests for the instructions parameter on ingest/triage."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        from tests.conftest import MockLLMProvider
+        return MockLLMProvider()
+
+    @pytest.fixture
+    def triager(self, mock_llm):
+        return IngestionTriager(llm=mock_llm)
+
+    @pytest.fixture
+    def mock_embedding(self):
+        from tests.conftest import MockEmbeddingProvider
+        return MockEmbeddingProvider(dimensions=128)
+
+    @pytest.fixture
+    def memory(self, mock_llm, mock_embedding, memory_store):
+        return MemoryInterface(
+            llm=mock_llm,
+            embedding=mock_embedding,
+            store=memory_store,
+            consolidation_threshold=5,
+            auto_consolidate=False,
+            ingest_buffer_size=50,
+            ingest_background=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_instructions_appended_to_system_prompt(self, triager, mock_llm):
+        """When instructions are provided, they appear in the system prompt."""
+        mock_llm.set_complete_json_response({
+            "density": 0.8,
+            "reasoning": "Found decisions",
+            "episodes": [
+                {"content": "Chose Redis", "type": "decision", "entities": [], "metadata": {}}
+            ],
+        })
+
+        await triager.triage(
+            "Some meeting transcript about architecture",
+            instructions="Focus on architectural decisions and their rationale",
+        )
+
+        history = mock_llm.get_call_history()
+        assert len(history) >= 1
+        system = history[0].get("system", "")
+        assert "ADDITIONAL INSTRUCTIONS FROM THE USER" in system
+        assert "Focus on architectural decisions" in system
+        assert "take priority over default extraction behavior" in system
+
+    @pytest.mark.asyncio
+    async def test_no_instructions_no_extra_system_prompt(self, triager, mock_llm):
+        """Without instructions, system prompt stays unchanged."""
+        mock_llm.set_complete_json_response({
+            "density": 0.5,
+            "reasoning": "Standard",
+            "episodes": [],
+        })
+
+        await triager.triage("Some text")
+
+        history = mock_llm.get_call_history()
+        assert len(history) >= 1
+        system = history[0].get("system", "")
+        assert "ADDITIONAL INSTRUCTIONS" not in system
+
+    @pytest.mark.asyncio
+    async def test_instructions_threaded_through_ingest(self, memory, mock_llm):
+        """instructions parameter flows from ingest() to the triage LLM call."""
+        mock_llm.set_complete_json_response({
+            "density": 0.8,
+            "reasoning": "Good info",
+            "episodes": [
+                {"content": "Config value found", "type": "fact", "entities": [], "metadata": {}}
+            ],
+        })
+
+        long_text = "x" * 60
+        await memory.ingest(long_text, instructions="Extract all config values")
+
+        triage_calls = [
+            c for c in mock_llm.get_call_history()
+            if "memory curation" in (c.get("system") or "")
+        ]
+        assert len(triage_calls) >= 1
+        assert "Extract all config values" in triage_calls[0]["system"]
+
+    @pytest.mark.asyncio
+    async def test_instructions_threaded_through_flush_ingest(self, memory, mock_llm):
+        """instructions parameter flows from flush_ingest() to the triage LLM call."""
+        mock_llm.set_complete_json_response({
+            "density": 0.7,
+            "reasoning": "Found decisions",
+            "episodes": [
+                {"content": "A decision", "type": "decision", "entities": [], "metadata": {}}
+            ],
+        })
+
+        await memory.ingest("some short text")
+        assert memory.ingest_buffer_size > 0
+
+        await memory.flush_ingest(instructions="Only extract decisions")
+
+        triage_calls = [
+            c for c in mock_llm.get_call_history()
+            if "memory curation" in (c.get("system") or "")
+        ]
+        assert len(triage_calls) >= 1
+        assert "Only extract decisions" in triage_calls[0]["system"]

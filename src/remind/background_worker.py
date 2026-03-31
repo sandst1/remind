@@ -20,6 +20,7 @@ import json
 import logging
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -134,6 +135,7 @@ def run_ingest(args, logger):
         chunk = data["chunk"]
         source = data.get("source", "conversation")
         topic = data.get("topic")
+        instructions = data.get("instructions")
     except Exception as e:
         logger.exception(f"Failed to read ingest chunk file {chunk_path}: {e}")
         return
@@ -161,7 +163,7 @@ def run_ingest(args, logger):
 
         async def _ingest():
             try:
-                return await memory._process_ingest_chunk(chunk, source, topic=topic)
+                return await memory._process_ingest_chunk(chunk, source, topic=topic, instructions=instructions)
             finally:
                 await memory.aclose()
 
@@ -176,10 +178,19 @@ def run_ingest(args, logger):
         logger.exception(f"Background ingest failed for {args.db}: {e}")
 
 
-def _next_queued_chunk(queue_dir: Path) -> tuple[Path, str, str, str | None] | None:
+@dataclass
+class _QueuedChunk:
+    path: Path
+    chunk: str
+    source: str
+    topic: str | None
+    instructions: str | None
+
+
+def _next_queued_chunk(queue_dir: Path) -> _QueuedChunk | None:
     """Pop the oldest chunk file from the queue directory.
 
-    Returns (path, chunk_text, source, topic) or None if queue is empty.
+    Returns a _QueuedChunk or None if queue is empty.
     """
     if not queue_dir.is_dir():
         return None
@@ -194,12 +205,13 @@ def _next_queued_chunk(queue_dir: Path) -> tuple[Path, str, str, str | None] | N
         chunk = data["chunk"]
         source = data.get("source", "conversation")
         topic = data.get("topic")
+        instructions = data.get("instructions")
     except Exception:
         path.unlink(missing_ok=True)
         return None
 
     path.unlink(missing_ok=True)
-    return path, chunk, source, topic
+    return _QueuedChunk(path=path, chunk=chunk, source=source, topic=topic, instructions=instructions)
 
 
 def run_ingest_worker(args, logger):
@@ -243,13 +255,14 @@ def run_ingest_worker(args, logger):
                         if item is None:
                             break
 
-                    _, chunk, source, topic = item
                     logger.info(
-                        f"Processing queued chunk ({len(chunk)} chars, source={source}, topic={topic})"
+                        f"Processing queued chunk ({len(item.chunk)} chars, source={item.source}, topic={item.topic})"
                     )
 
                     try:
-                        episode_ids = await memory._process_ingest_chunk(chunk, source, topic=topic)
+                        episode_ids = await memory._process_ingest_chunk(
+                            item.chunk, item.source, topic=item.topic, instructions=item.instructions,
+                        )
                         total_episodes += len(episode_ids)
                         chunks_processed += 1
                         logger.info(

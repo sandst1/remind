@@ -34,12 +34,14 @@ remind ingest "User said they prefer dark mode and Vim keybindings"
 remind ingest "Rate limiting at gateway" --topic architecture
 echo "conversation log" | remind ingest
 cat transcript.txt | remind ingest --source transcript
+cat meeting.txt | remind ingest -i "extract decisions and action items"
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-s, --source` | Source label for metadata (default: `conversation`) |
 | `--topic` | Topic ID or name. When set, all extracted episodes go to this topic. When omitted, topics are inferred by the triage LLM. |
+| `-i, --instructions` | Natural-language instructions to steer what gets extracted (e.g. `"focus on decisions"`). Appended to the triage system prompt. |
 | `-f, --foreground` | Run triage and consolidation in foreground (blocking). By default, processing is spawned in a background worker. |
 
 Accepts text as an argument or via stdin (for piping).

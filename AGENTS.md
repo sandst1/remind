@@ -115,6 +115,8 @@ The "input selection" subsystem. Two classes:
 
 **Topic handling**: When `ingest()` is called with an explicit `topic`, all episodes are stamped with that topic (no LLM inference). When `topic` is omitted, the triage LLM receives existing topics as context and assigns each episode to an existing topic or suggests a new one (auto-created). Sub-chunks are triaged concurrently, bounded by `llm_concurrency`.
 
+**Instructions**: The `instructions` parameter (optional) lets callers steer what the triage LLM extracts. When provided, instructions are appended to the triage system prompt as a prioritized directive. This enables focused ingestion (e.g. "extract only architectural decisions", "capture all config values"). Threaded through the full pipeline: `ingest()`/`flush_ingest()` → `_process_ingest_chunk()` → `_triage_sub_chunk()` → `IngestionTriager.triage()`. Also serialized in the background queue JSON payload for CLI background workers.
+
 Pipeline: `ingest()` → buffer → triage + extract + topic inference (LLM) → `remember()` → `consolidate(force=True)`
 
 ### Retrieval (`retrieval.py`)

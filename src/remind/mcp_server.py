@@ -835,12 +835,13 @@ async def tool_ingest(
     content: str,
     source: str = "conversation",
     topic: Optional[str] = None,
+    instructions: Optional[str] = None,
 ) -> str:
     """Ingest raw text for automatic memory curation."""
     memory = await get_memory()
 
     buf_size_before = memory.ingest_buffer_size
-    episode_ids = await memory.ingest(content, source=source, topic=topic)
+    episode_ids = await memory.ingest(content, source=source, topic=topic, instructions=instructions)
 
     if episode_ids:
         lines = [f"Ingested and created {len(episode_ids)} episode(s):"]
@@ -860,7 +861,9 @@ async def tool_ingest(
     return "Ingested but triage found nothing memory-worthy (low density)."
 
 
-async def tool_flush_ingest(topic: Optional[str] = None) -> str:
+async def tool_flush_ingest(
+    topic: Optional[str] = None, instructions: Optional[str] = None,
+) -> str:
     """Force-flush the ingestion buffer and process contents."""
     memory = await get_memory()
 
@@ -868,7 +871,7 @@ async def tool_flush_ingest(topic: Optional[str] = None) -> str:
     if buf_size == 0:
         return "Ingestion buffer is empty, nothing to flush."
 
-    episode_ids = await memory.flush_ingest(topic=topic)
+    episode_ids = await memory.flush_ingest(topic=topic, instructions=instructions)
 
     if episode_ids:
         lines = [f"Flushed buffer ({buf_size} chars) and created {len(episode_ids)} episode(s):"]
@@ -1466,6 +1469,7 @@ def create_mcp_server(config=None):
         content: str,
         source: str = "conversation",
         topic: Optional[str] = None,
+        instructions: Optional[str] = None,
     ) -> str:
         """Ingest raw text for automatic memory curation.
 
@@ -1484,14 +1488,22 @@ def create_mcp_server(config=None):
             topic: Optional topic ID or name. When set, all extracted episodes
                 are assigned to this topic. When omitted, the triage LLM
                 infers per-episode topics automatically.
+            instructions: Optional natural-language instructions to steer what
+                the triage LLM extracts. For example, "focus on architectural
+                decisions" or "extract all config values and version numbers".
+                When set, these are appended to the triage system prompt and
+                take priority over default extraction behavior.
 
         Returns:
             Status message (buffered, episodes created, or dropped)
         """
-        return await tool_ingest(content, source, topic=topic)
+        return await tool_ingest(content, source, topic=topic, instructions=instructions)
 
     @mcp.tool()
-    async def flush_ingest(topic: Optional[str] = None) -> str:
+    async def flush_ingest(
+        topic: Optional[str] = None,
+        instructions: Optional[str] = None,
+    ) -> str:
         """Force-flush the ingestion buffer.
 
         Processes whatever text is in the buffer immediately, regardless
@@ -1502,11 +1514,13 @@ def create_mcp_server(config=None):
             topic: Optional topic ID or name for extracted episodes.
                 When set, all episodes are assigned to this topic.
                 When omitted, topics are inferred automatically.
+            instructions: Optional natural-language instructions to steer
+                extraction. Same as ingest() instructions parameter.
 
         Returns:
             Status message with results
         """
-        return await tool_flush_ingest(topic=topic)
+        return await tool_flush_ingest(topic=topic, instructions=instructions)
 
     return mcp
 

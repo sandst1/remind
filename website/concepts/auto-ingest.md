@@ -49,6 +49,9 @@ ingest(content="Assistant: Fixed. Changed the comparison operator in verify_cred
 # With an explicit topic -- all episodes go to "architecture"
 ingest(content="Decided to use Redis for session caching", topic="architecture")
 
+# With instructions -- steer what gets extracted
+ingest(content="<meeting transcript>", instructions="extract decisions and action items only")
+
 # At session end
 flush_ingest()
 ```
@@ -73,6 +76,9 @@ remind ingest "User prefers dark mode and Vim keybindings in all editors"
 # With an explicit topic
 remind ingest "Rate limiting at gateway level" --topic architecture
 
+# With instructions to steer extraction
+cat meeting.txt | remind ingest -i "extract decisions and action items"
+
 # Force-process whatever is in the buffer
 remind flush-ingest
 ```
@@ -90,6 +96,9 @@ await memory.ingest("Assistant: I'd suggest a token bucket at the gateway...")
 
 # With explicit topic -- all episodes go to "architecture"
 await memory.ingest("Chose Redis for caching", topic="architecture")
+
+# With instructions -- steer what the triage LLM extracts
+await memory.ingest(transcript, instructions="extract all config values and version numbers")
 
 # At session end, flush remaining buffer
 await memory.flush_ingest()

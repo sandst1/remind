@@ -60,11 +60,15 @@ await memory.ingest("Assistant: I'd suggest a token bucket at the gateway...")
 # With explicit topic — all episodes assigned to "architecture"
 await memory.ingest("Chose Redis for caching", topic="architecture")
 
+# With instructions — steer what gets extracted
+await memory.ingest(transcript, instructions="extract all config values and version numbers")
+await memory.ingest(meeting_notes, instructions="focus on decisions and action items")
+
 # At session end, flush remaining buffer
 await memory.flush_ingest()
 ```
 
-`ingest()` buffers text until a threshold (~4000 chars) is reached, then scores information density and extracts episodes automatically. When `topic` is given, all episodes go to that topic. When omitted, the triage LLM infers per-episode topics (mapping to existing topics or creating new ones). Use `remember()` when you already know what's important; use `ingest()` when you want Remind to decide.
+`ingest()` buffers text until a threshold (~4000 chars) is reached, then scores information density and extracts episodes automatically. When `topic` is given, all episodes go to that topic. When omitted, the triage LLM infers per-episode topics (mapping to existing topics or creating new ones). When `instructions` is given, the triage LLM uses those instructions to decide what to extract — useful for focused ingestion of meeting notes, transcripts, or documentation. Use `remember()` when you already know what's important; use `ingest()` when you want Remind to decide.
 
 ## Fact and outcome episodes
 

@@ -65,6 +65,20 @@ class TestEnqueueIngestChunk:
             data = json.loads(path.read_text())
             assert data["source"] == "conversation"
 
+    def test_instructions_in_payload(self, tmp_path):
+        with patch("remind.background.REMIND_DIR", tmp_path):
+            path = enqueue_ingest_chunk(
+                "/tmp/test.db", "data", instructions="focus on decisions",
+            )
+            data = json.loads(path.read_text())
+            assert data["instructions"] == "focus on decisions"
+
+    def test_instructions_absent_when_none(self, tmp_path):
+        with patch("remind.background.REMIND_DIR", tmp_path):
+            path = enqueue_ingest_chunk("/tmp/test.db", "data")
+            data = json.loads(path.read_text())
+            assert "instructions" not in data
+
 
 class TestIngestLocking:
     def test_is_ingest_running_false_when_unlocked(self, tmp_path):
@@ -114,10 +128,10 @@ class TestNextQueuedChunk:
 
         result = _next_queued_chunk(tmp_path)
         assert result is not None
-        _, chunk, source, topic = result
-        assert chunk == "first"
-        assert source == "a"
-        assert topic is None
+        assert result.chunk == "first"
+        assert result.source == "a"
+        assert result.topic is None
+        assert result.instructions is None
         # File should be deleted after reading
         assert not f1.exists()
         assert f2.exists()
@@ -136,20 +150,34 @@ class TestNextQueuedChunk:
         # Second call picks up the good file
         result = _next_queued_chunk(tmp_path)
         assert result is not None
-        _, chunk, _, _ = result
-        assert chunk == "ok"
+        assert result.chunk == "ok"
 
     def test_default_source(self, tmp_path):
         f = tmp_path / "0001-x.json"
         f.write_text(json.dumps({"chunk": "data"}))
-        _, _, source, _ = _next_queued_chunk(tmp_path)
-        assert source == "conversation"
+        result = _next_queued_chunk(tmp_path)
+        assert result.source == "conversation"
 
     def test_topic_preserved(self, tmp_path):
         f = tmp_path / "0001-x.json"
         f.write_text(json.dumps({"chunk": "data", "source": "s", "topic": "architecture"}))
-        _, _, _, topic = _next_queued_chunk(tmp_path)
-        assert topic == "architecture"
+        result = _next_queued_chunk(tmp_path)
+        assert result.topic == "architecture"
+
+    def test_instructions_preserved(self, tmp_path):
+        f = tmp_path / "0001-x.json"
+        f.write_text(json.dumps({
+            "chunk": "data", "source": "s",
+            "instructions": "focus on decisions",
+        }))
+        result = _next_queued_chunk(tmp_path)
+        assert result.instructions == "focus on decisions"
+
+    def test_instructions_none_when_absent(self, tmp_path):
+        f = tmp_path / "0001-x.json"
+        f.write_text(json.dumps({"chunk": "data", "source": "s"}))
+        result = _next_queued_chunk(tmp_path)
+        assert result.instructions is None
 
 
 class TestRunIngestWorker:
@@ -184,7 +212,7 @@ class TestRunIngestWorker:
                 json.dumps({"chunk": "chunk two", "source": "s2"})
             )
 
-            async def fake_process(chunk, source, topic=None):
+            async def fake_process(chunk, source, topic=None, instructions=None):
                 return [f"ep-{source}"]
 
             mock_memory = MagicMock()

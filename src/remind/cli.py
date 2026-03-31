@@ -636,9 +636,10 @@ def end_session(ctx):
 @click.argument("content", required=False)
 @click.option("--source", "-s", default="conversation", help="Source label for metadata")
 @click.option("--topic", default=None, help="Topic ID or name (inferred by LLM when omitted)")
+@click.option("--instructions", "-i", default=None, help="Natural-language instructions to steer extraction (e.g. 'focus on decisions')")
 @click.option("--foreground", "-f", is_flag=True, help="Run triage and consolidation in foreground (blocking)")
 @click.pass_context
-def ingest(ctx, content: Optional[str], source: str, topic: Optional[str], foreground: bool):
+def ingest(ctx, content: Optional[str], source: str, topic: Optional[str], instructions: Optional[str], foreground: bool):
     """Ingest raw text for automatic memory curation.
 
     By default, spawns triage and consolidation in a background process
@@ -646,6 +647,9 @@ def ingest(ctx, content: Optional[str], source: str, topic: Optional[str], foreg
 
     When --topic is given, all extracted episodes are assigned to that topic.
     When omitted, the triage LLM infers per-episode topics automatically.
+
+    When --instructions is given, the triage LLM uses those instructions to
+    decide what to extract (e.g. "focus on architectural decisions").
 
     Accepts text as an argument or via stdin (for piping).
 
@@ -655,6 +659,7 @@ def ingest(ctx, content: Optional[str], source: str, topic: Optional[str], foreg
         echo "conversation log" | remind ingest
         cat transcript.txt | remind ingest --source transcript
         remind ingest --foreground "important observation"
+        cat meeting.txt | remind ingest -i "extract decisions and action items"
     """
     # Read from stdin if no argument provided
     if content is None:
@@ -673,8 +678,8 @@ def ingest(ctx, content: Optional[str], source: str, topic: Optional[str], foreg
             ingest_background=False,
         )
         with console.status("[bold cyan]Running triage and consolidation..."):
-            episode_ids = run_async(memory.ingest(content, source=source, topic=topic))
-            episode_ids.extend(run_async(memory.flush_ingest(topic=topic)))
+            episode_ids = run_async(memory.ingest(content, source=source, topic=topic, instructions=instructions))
+            episode_ids.extend(run_async(memory.flush_ingest(topic=topic, instructions=instructions)))
 
         if episode_ids:
             console.print(f"[green]✓ Created {len(episode_ids)} episode(s) from ingest[/green]")
@@ -691,6 +696,7 @@ def ingest(ctx, content: Optional[str], source: str, topic: Optional[str], foreg
             chunk=content,
             source=source,
             topic=topic,
+            instructions=instructions,
             remind_dir=ctx.obj.get("remind_dir"),
         )
         spawned = spawn_ingest_worker(

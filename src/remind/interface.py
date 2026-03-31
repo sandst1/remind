@@ -566,7 +566,8 @@ class MemoryInterface:
         return await self.consolidate(force=True)
     
     async def ingest(
-        self, content: str, source: str = "conversation", topic: Optional[str] = None,
+        self, content: str, source: str = "conversation",
+        topic: Optional[str] = None, instructions: Optional[str] = None,
     ) -> list[str]:
         """Ingest raw text for automatic memory curation.
 
@@ -585,6 +586,10 @@ class MemoryInterface:
                    When set, all episodes are assigned this topic (no inference).
                    When None, the triage LLM infers per-episode topics from
                    content, mapping to existing topics or creating new ones.
+            instructions: Optional natural-language instructions that steer
+                   what the triage LLM extracts (e.g. "focus on architectural
+                   decisions", "extract all config values"). Appended to the
+                   triage system prompt.
 
         Returns:
             List of episode IDs created (empty if buffer didn't flush,
@@ -599,12 +604,14 @@ class MemoryInterface:
             return []
 
         if self._ingest_background:
-            self._schedule_background_ingest(chunk, source, topic=topic)
+            self._schedule_background_ingest(chunk, source, topic=topic, instructions=instructions)
             return []
 
-        return await self._process_ingest_chunk(chunk, source, topic=topic)
+        return await self._process_ingest_chunk(chunk, source, topic=topic, instructions=instructions)
 
-    async def flush_ingest(self, topic: Optional[str] = None) -> list[str]:
+    async def flush_ingest(
+        self, topic: Optional[str] = None, instructions: Optional[str] = None,
+    ) -> list[str]:
         """Force-flush the ingestion buffer and process whatever is in it.
 
         Call at session end or when you want to ensure everything is processed.
@@ -613,6 +620,8 @@ class MemoryInterface:
             topic: Optional topic ID or name for extracted episodes.
                    When set, all episodes are assigned this topic.
                    When None, topics are inferred by the triage LLM.
+            instructions: Optional natural-language instructions that steer
+                   what the triage LLM extracts. Same as ingest() instructions.
 
         Returns:
             List of episode IDs created (empty if buffer was empty,
@@ -623,13 +632,14 @@ class MemoryInterface:
             return []
 
         if self._ingest_background:
-            self._schedule_background_ingest(chunk, source="flush", topic=topic)
+            self._schedule_background_ingest(chunk, source="flush", topic=topic, instructions=instructions)
             return []
 
-        return await self._process_ingest_chunk(chunk, source="flush", topic=topic)
+        return await self._process_ingest_chunk(chunk, source="flush", topic=topic, instructions=instructions)
 
     def _schedule_background_ingest(
-        self, chunk: str, source: str, topic: Optional[str] = None,
+        self, chunk: str, source: str,
+        topic: Optional[str] = None, instructions: Optional[str] = None,
     ) -> None:
         """Schedule ingest processing as a background async task.
 
@@ -638,7 +648,7 @@ class MemoryInterface:
         """
         async def _guarded():
             async with self._ingest_semaphore:
-                return await self._process_ingest_chunk(chunk, source, topic=topic)
+                return await self._process_ingest_chunk(chunk, source, topic=topic, instructions=instructions)
 
         task = asyncio.create_task(
             _guarded(),
@@ -652,7 +662,8 @@ class MemoryInterface:
         )
 
     async def _process_ingest_chunk(
-        self, chunk: str, source: str, topic: Optional[str] = None,
+        self, chunk: str, source: str,
+        topic: Optional[str] = None, instructions: Optional[str] = None,
     ) -> list[str]:
         """Run triage on a chunk and store/consolidate resulting episodes.
 
@@ -670,14 +681,14 @@ class MemoryInterface:
 
         if total == 1:
             all_episode_ids = await self._triage_sub_chunk(
-                sub_chunks[0], source, 0, 1, topic=topic,
+                sub_chunks[0], source, 0, 1, topic=topic, instructions=instructions,
             )
         else:
             sem = asyncio.Semaphore(self._llm_concurrency)
 
             async def _bounded_triage(idx: int, sc: str) -> list[str]:
                 async with sem:
-                    return await self._triage_sub_chunk(sc, source, idx, total, topic=topic)
+                    return await self._triage_sub_chunk(sc, source, idx, total, topic=topic, instructions=instructions)
 
             results = await asyncio.gather(
                 *[_bounded_triage(i, sc) for i, sc in enumerate(sub_chunks)],
@@ -705,13 +716,14 @@ class MemoryInterface:
 
     async def _triage_sub_chunk(
         self, chunk: str, source: str, chunk_index: int, total_chunks: int,
-        topic: Optional[str] = None,
+        topic: Optional[str] = None, instructions: Optional[str] = None,
     ) -> list[str]:
         """Triage a single sub-chunk and store extracted episodes.
 
         Args:
             topic: When set, all episodes are assigned this topic (no inference).
                    When None, the triage LLM infers per-episode topics.
+            instructions: Optional caller-provided instructions for triage.
         """
         existing_concepts = ""
         try:
@@ -744,6 +756,7 @@ class MemoryInterface:
 
         triage_result = await self._triager.triage(
             chunk, existing_concepts, existing_topics=existing_topics,
+            instructions=instructions,
         )
 
         logger.info(
