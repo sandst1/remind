@@ -973,7 +973,7 @@ def create_mcp_server(config=None):
     
     if config is None:
         config = load_config()
-    episode_types = set(config.episode_types)
+    enabled_episode_types = set(config.episode_types)
     
     mcp = FastMCP(
         "Remind",
@@ -1397,7 +1397,7 @@ def create_mcp_server(config=None):
         """
         return await tool_list_deleted(item_type, limit)
 
-    if "task" in episode_types:
+    if "task" in enabled_episode_types:
         @mcp.tool()
         async def task_add(
             content: str,
@@ -1468,7 +1468,7 @@ def create_mcp_server(config=None):
             """
             return await tool_list_tasks(status, entity, plan_id, include_done)
 
-    if "spec" in episode_types:
+    if "spec" in enabled_episode_types:
         @mcp.tool()
         async def list_specs(
             entity: Optional[str] = None,
@@ -1490,7 +1490,7 @@ def create_mcp_server(config=None):
             """
             return await tool_list_specs(entity, status, limit)
 
-    if "plan" in episode_types:
+    if "plan" in enabled_episode_types:
         @mcp.tool()
         async def list_plans(
             entity: Optional[str] = None,
