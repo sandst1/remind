@@ -10,23 +10,11 @@ The pipeline has three stages:
 
 Raw text accumulates in an in-memory buffer via `ingest()`. When the buffer exceeds a character threshold (default ~4000 chars), it flushes and triggers triage.
 
-### 2. Information density scoring
+### 2. Triage and extraction
 
-The flushed chunk gets scored by an LLM for how much useful, memory-worthy information it contains (0.0-1.0):
+The flushed chunk is sent to an LLM that decides what's worth remembering. The LLM extracts any memory-worthy information as tight, standalone episode statements -- and returns nothing if the chunk is pure filler. A density score (0.0-1.0) is also produced for diagnostics/logging, but it doesn't gate extraction. The LLM is the sole decision-maker.
 
-| Score | Meaning |
-|-------|---------|
-| 0.0 | Pure boilerplate, greetings, acknowledgments |
-| 0.3 | Some context but nothing specific or actionable |
-| 0.5 | Contains some facts or context worth noting |
-| 0.7 | Contains decisions, preferences, or important facts |
-| 1.0 | Dense with critical decisions, corrections, or surprises |
-
-Chunks below the minimum density threshold (default 0.4) are dropped.
-
-### 3. Triage extraction
-
-Chunks that pass the density threshold get distilled into tight, information-dense episode statements. These go through `remember()` and then **immediately consolidate**, bypassing the normal auto-consolidation threshold.
+Extracted episodes go through `remember()` and then **immediately consolidate**, bypassing the normal auto-consolidation threshold.
 
 ## `ingest()` vs `remember()`
 
@@ -34,7 +22,7 @@ Chunks that pass the density threshold get distilled into tight, information-den
 |---|---|---|
 | **Input** | Curated, standalone statement | Raw conversation text |
 | **LLM calls** | None (fast) | Yes (density scoring + extraction) |
-| **Filtering** | None — everything is stored | Density-based — low-value content is dropped |
+| **Filtering** | None — everything is stored | LLM-based — only memory-worthy content is extracted |
 | **Consolidation** | Normal threshold-based | Immediate (`force=True`) |
 | **Use when** | You know what's worth storing | You want Remind to decide |
 
@@ -46,7 +34,7 @@ Both paths are additive. Using `ingest()` doesn't affect existing `remember()` c
 
 Auto-ingest is available via MCP tools, CLI, and the Python API. The agent streams conversation fragments or tool output into `ingest()`, and Remind handles the rest.
 
-A good place to call `ingest()` is from deterministic hooks -- after each tool call returns, at the end of each turn, or on a timer. This way the agent doesn't have to "decide" when to ingest; it just always does, and the density scoring handles the filtering. The buffer threshold is configurable (default 4000 chars), so no LLM calls happen until enough text has accumulated:
+A good place to call `ingest()` is from deterministic hooks -- after each tool call returns, at the end of each turn, or on a timer. This way the agent doesn't have to "decide" when to ingest; it just always does, and the LLM handles the filtering. The buffer threshold is configurable (default 4000 chars), so no LLM calls happen until enough text has accumulated:
 
 ```text
 # During the conversation, the agent periodically sends chunks
@@ -120,7 +108,6 @@ Over time, consolidation produces causal concepts from outcomes — e.g., "grep-
 | Option | Default | Description |
 |--------|---------|-------------|
 | `ingest_buffer_size` | `4000` | Character threshold for buffer flush |
-| `ingest_min_density` | `0.4` | Minimum density score to extract episodes |
 | `<provider>.ingest_model` | `null` | Optional cheaper/faster model for triage (e.g., `anthropic.ingest_model`, `openai.ingest_model`) |
 
 See [Configuration](../guide/configuration.md#auto-ingest) for details.

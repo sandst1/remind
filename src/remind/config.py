@@ -113,7 +113,8 @@ class RemindConfig:
 
     # Auto-ingest config
     ingest_buffer_size: int = 4000
-    ingest_min_density: float = 0.4
+    # Deprecated: no longer used. The LLM decides directly what to extract.
+    ingest_min_density: float = 0.0
 
     # Episode types
     episode_types: list[str] = field(default_factory=lambda: list(DEFAULT_EPISODE_TYPES))
@@ -217,8 +218,6 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
     # Auto-ingest settings
     if "ingest_buffer_size" in file_config:
         config.ingest_buffer_size = int(file_config["ingest_buffer_size"])
-    if "ingest_min_density" in file_config:
-        config.ingest_min_density = float(file_config["ingest_min_density"])
 
     # Episode types
     if "episode_types" in file_config:
@@ -390,12 +389,6 @@ def _apply_env_vars(config: RemindConfig) -> None:
             config.ingest_buffer_size = int(buf_size)
         except ValueError:
             logger.warning(f"Invalid INGEST_BUFFER_SIZE: {buf_size}")
-    if min_density := os.environ.get("INGEST_MIN_DENSITY"):
-        try:
-            config.ingest_min_density = float(min_density)
-        except ValueError:
-            logger.warning(f"Invalid INGEST_MIN_DENSITY: {min_density}")
-
     # Decay
     if decay_enabled := os.environ.get("REMIND_DECAY_ENABLED"):
         config.decay.enabled = decay_enabled.lower() in ("true", "1", "yes")

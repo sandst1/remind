@@ -23,10 +23,12 @@ logger = logging.getLogger(__name__)
 TRIAGE_SYSTEM_PROMPT = """You are a memory curation system. You receive raw conversation fragments and decide what's worth remembering long-term.
 
 You produce two outputs:
-1. An information density score (0.0-1.0)
+1. An information density estimate (0.0-1.0) for diagnostics
 2. Distilled, memory-worthy episodes extracted from the text
 
-Be aggressive about compression. Strip conversational filler, hedging, and step-by-step narration. Each episode should be a single clear assertion that stands on its own."""
+Be aggressive about compression. Strip conversational filler, hedging, and step-by-step narration. Each episode should be a single clear assertion that stands on its own.
+
+Err on the side of capturing information. If something might be useful in a future session, extract it. Only skip content that is purely conversational filler with zero informational value."""
 
 
 _DEFAULT_TRIAGE_TYPES = "observation|decision|preference|question|meta|outcome|fact"
@@ -41,11 +43,11 @@ def _build_triage_prompt(valid_types: list[str]) -> str:
 {{chunk}}
 
 Task:
-1) Score information density in [0.0, 1.0]
-2) If density >= {{min_density}}, extract distilled memory episodes
+1) Estimate information density in [0.0, 1.0] (for diagnostics only)
+2) Extract any memory-worthy episodes from the text
 
 Guidelines:
-- Ignore filler/chitchat; prioritize new facts, decisions, preferences, corrections
+- Ignore pure filler/chitchat, but capture anything that would be useful if encountered again in a future session
 - Do not repeat already-known information unless corrected or refined
 - Each episode must be concise and standalone
 - Use type=outcome for action-result pairs
@@ -65,7 +67,7 @@ Rules:
 - TRIAGE_EPISODE row index is implicit 0-based order (first TRIAGE_EPISODE is episode_idx=0)
 - Use TRIAGE_ENTITY and TRIAGE_METADATA rows to attach entities/metadata to TRIAGE_EPISODE rows
 - Use CSV quoting when needed
-- If density < {{min_density}}, output only DENSITY row (no TRIAGE_EPISODE rows)
+- If nothing is worth remembering, output only the DENSITY row (no TRIAGE_EPISODE rows)
 - episode_type must be one of: {type_enum}
 - For outcome episodes, include TRIAGE_METADATA rows for strategy, result, prediction_error""".format(type_enum=type_enum)
 
@@ -209,18 +211,23 @@ class IngestionTriager:
     """Scores information density and extracts distilled episodes from raw text.
 
     Uses a single LLM call to both score density and extract episodes.
-    Chunks below the density threshold produce no episodes. Includes
-    existing concept context (via recall) to avoid redundant extraction.
+    The LLM decides what's worth remembering -- no numeric threshold is
+    applied. Includes existing concept context (via recall) to avoid
+    redundant extraction.
     """
 
     def __init__(
         self,
         llm: LLMProvider,
-        min_density: float = 0.4,
+        min_density: float = 0.0,
         valid_types: Optional[list[str]] = None,
     ):
         self.llm = llm
-        self.min_density = min_density
+        if min_density > 0.0:
+            logger.warning(
+                "min_density is deprecated and ignored. "
+                "The LLM now decides directly what to extract."
+            )
         if valid_types:
             self._prompt_template = _build_triage_prompt(valid_types)
         else:
@@ -249,7 +256,6 @@ class IngestionTriager:
         prompt = self._prompt_template.format(
             existing_concepts=concepts_text,
             chunk=chunk,
-            min_density=self.min_density,
         )
 
         logger.debug(
@@ -316,9 +322,6 @@ class IngestionTriager:
                     entities=[str(e) for e in entities],
                     metadata=metadata,
                 ))
-
-            if density < self.min_density:
-                episodes = []
 
             return TriageResult(
                 density=density,

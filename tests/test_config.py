@@ -100,7 +100,6 @@ class TestDefaults:
         assert config.consolidation_batch_size == 25
         assert config.llm_concurrency == 3
         assert config.ingest_buffer_size == 4000
-        assert config.ingest_min_density == 0.4
         assert config.logging_enabled is False
 
     def test_anthropic_defaults(self):
@@ -169,7 +168,6 @@ class TestApplyFileConfig:
             "concepts_per_pass": 128,
             "auto_consolidate": False,
             "ingest_buffer_size": 8000,
-            "ingest_min_density": 0.7,
             "logging_enabled": True,
         })
         assert config.llm_provider == "openai"
@@ -178,7 +176,6 @@ class TestApplyFileConfig:
         assert config.concepts_per_pass == 128
         assert config.auto_consolidate is False
         assert config.ingest_buffer_size == 8000
-        assert config.ingest_min_density == 0.7
         assert config.logging_enabled is True
 
     def test_partial_config_preserves_unset_fields(self):
@@ -417,10 +414,6 @@ class TestEnvVarOverrides:
     def test_ingest_buffer_size(self):
         c = self._config_with_env(INGEST_BUFFER_SIZE="8000")
         assert c.ingest_buffer_size == 8000
-
-    def test_ingest_min_density(self):
-        c = self._config_with_env(INGEST_MIN_DENSITY="0.8")
-        assert c.ingest_min_density == 0.8
 
     def test_logging_enabled(self):
         c = self._config_with_env(REMIND_LOGGING_ENABLED="true")
@@ -785,7 +778,6 @@ class TestEnvFileParity:
             "concepts_per_pass": 99,
             "auto_consolidate": False,
             "ingest_buffer_size": 9999,
-            "ingest_min_density": 0.99,
             "logging_enabled": True,
         }
         env_overrides = {
@@ -795,7 +787,6 @@ class TestEnvFileParity:
             "CONCEPTS_PER_PASS": "77",
             "AUTO_CONSOLIDATE": "true",
             "INGEST_BUFFER_SIZE": "7777",
-            "INGEST_MIN_DENSITY": "0.77",
             "REMIND_LOGGING_ENABLED": "false",
         }
 
@@ -812,7 +803,6 @@ class TestEnvFileParity:
         assert config.concepts_per_pass == 77
         assert config.auto_consolidate is True
         assert config.ingest_buffer_size == 7777
-        assert config.ingest_min_density == 0.77
         assert config.logging_enabled is False
 
     def test_all_anthropic_fields_have_env_vars(self):

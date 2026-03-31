@@ -111,9 +111,9 @@ The "brain" of the system. Uses LLM to:
 
 The "input selection" subsystem. Two classes:
 - `IngestionBuffer` — character-threshold accumulator. Buffers raw text until threshold (~4000 chars).
-- `IngestionTriager` — LLM-based density scoring + episode extraction. Scores information density (0.0-1.0), extracts distilled episodes from high-density chunks, detects action-result pairs as outcome episodes.
+- `IngestionTriager` — LLM-based episode extraction. The LLM decides directly what's worth remembering, extracts distilled episodes, and detects action-result pairs as outcome episodes. A density score (0.0-1.0) is produced for diagnostics but doesn't gate extraction.
 
-Pipeline: `ingest()` → buffer → density score + extract (LLM) → `remember()` → `consolidate(force=True)`
+Pipeline: `ingest()` → buffer → triage + extract (LLM) → `remember()` → `consolidate(force=True)`
 
 ### Retrieval (`retrieval.py`)
 
@@ -191,7 +191,6 @@ class RemindConfig:
     db_url: Optional[str] = None
     # Auto-ingest settings
     ingest_buffer_size: int = 4000
-    ingest_min_density: float = 0.4
     # Logging
     logging_enabled: bool = False
     # Episode types (controls which types are valid + gates CLI/MCP features)

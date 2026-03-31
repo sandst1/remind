@@ -104,7 +104,6 @@ class MemoryInterface:
         decay_config=None,
         # Auto-ingest settings
         ingest_buffer_size: int = 4000,
-        ingest_min_density: float = 0.4,
         triage_llm: Optional[LLMProvider] = None,
         ingest_background: bool = True,
         # Configurable episode types
@@ -155,7 +154,6 @@ class MemoryInterface:
         self._ingest_buffer = IngestionBuffer(threshold=ingest_buffer_size)
         self._triager = IngestionTriager(
             llm=triage_llm or llm,
-            min_density=ingest_min_density,
             valid_types=episode_types,
         )
         self._ingest_background = ingest_background
@@ -1395,8 +1393,7 @@ def create_memory(
         kwargs["decay_config"] = config.decay
     if "ingest_buffer_size" not in kwargs:
         kwargs["ingest_buffer_size"] = config.ingest_buffer_size
-    if "ingest_min_density" not in kwargs:
-        kwargs["ingest_min_density"] = config.ingest_min_density
+    kwargs.pop("ingest_min_density", None)
     if "episode_types" not in kwargs:
         kwargs["episode_types"] = config.episode_types
     if "extraction_batch_size" not in kwargs:

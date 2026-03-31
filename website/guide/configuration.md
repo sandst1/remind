@@ -58,7 +58,6 @@ Create `~/.remind/remind.config.json`:
   },
 
   "ingest_buffer_size": 4000,
-  "ingest_min_density": 0.4,
 
   "db_url": null,
 
@@ -129,7 +128,6 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `CONSOLIDATION_BATCH_SIZE` | `consolidation_batch_size` | int | `25` |
 | `LLM_CONCURRENCY` | `llm_concurrency` | int | `3` |
 | `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
-| `INGEST_MIN_DENSITY` | `ingest_min_density` | float | `0.4` |
 | `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
 | `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
@@ -290,12 +288,11 @@ Legacy aliases remain supported: `consolidation_concepts_per_pass`, `entity_extr
 
 ## Auto-ingest
 
-Settings for the `ingest()` pipeline, which buffers raw text, scores information density, and extracts memory-worthy episodes automatically.
+Settings for the `ingest()` pipeline, which buffers raw text and extracts memory-worthy episodes automatically. The LLM decides directly what's worth remembering -- no numeric density threshold is needed.
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `ingest_buffer_size` | `4000` | Character threshold before buffer flushes and triggers triage |
-| `ingest_min_density` | `0.4` | Minimum information density score (0.0-1.0) to extract episodes |
 
 Each provider config has an optional `ingest_model` field (or `ingest_deployment_name` for Azure) to use a cheaper/faster model for triage without affecting consolidation quality. When unset, triage uses the same model as consolidation.
 

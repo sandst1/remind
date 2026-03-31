@@ -177,7 +177,7 @@ class TestIngestionTriager:
 
     @pytest.fixture
     def triager(self, mock_llm):
-        return IngestionTriager(llm=mock_llm, min_density=0.4)
+        return IngestionTriager(llm=mock_llm)
 
     @pytest.mark.asyncio
     async def test_high_density_extracts_episodes(self, triager, mock_llm):
@@ -213,19 +213,20 @@ class TestIngestionTriager:
         assert len(result.episodes) == 0
 
     @pytest.mark.asyncio
-    async def test_density_below_threshold_clears_episodes(self, triager, mock_llm):
-        """Even if LLM returns episodes, they're dropped if density < threshold."""
+    async def test_low_density_keeps_llm_episodes(self, triager, mock_llm):
+        """Episodes returned by the LLM are kept regardless of density score."""
         mock_llm.set_complete_json_response({
             "density": 0.3,
-            "reasoning": "Low density",
+            "reasoning": "Low density but has something useful",
             "episodes": [
-                {"content": "Something", "type": "observation", "entities": [], "metadata": {}}
+                {"content": "Something useful", "type": "observation", "entities": [], "metadata": {}}
             ],
         })
 
         result = await triager.triage("Some text")
         assert result.density == 0.3
-        assert len(result.episodes) == 0
+        assert len(result.episodes) == 1
+        assert result.episodes[0].content == "Something useful"
 
     @pytest.mark.asyncio
     async def test_outcome_episode_extraction(self, triager, mock_llm):
@@ -316,9 +317,13 @@ class TestIngestionTriager:
         assert result.episodes[0].content == "Valid episode"
         assert result.episodes[1].content == "Another valid"
 
-    @pytest.mark.asyncio
-    async def test_custom_min_density(self, mock_llm):
-        triager = IngestionTriager(llm=mock_llm, min_density=0.7)
+    async def test_min_density_deprecated(self, mock_llm, caplog):
+        """Passing min_density > 0 logs a deprecation warning but doesn't gate."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="remind.triage"):
+            triager = IngestionTriager(llm=mock_llm, min_density=0.7)
+        assert "deprecated" in caplog.text.lower()
+
         mock_llm.set_complete_json_response({
             "density": 0.5,
             "reasoning": "Medium density",
@@ -328,7 +333,7 @@ class TestIngestionTriager:
         })
 
         result = await triager.triage("Some text")
-        assert len(result.episodes) == 0  # 0.5 < 0.7 threshold
+        assert len(result.episodes) == 1
 
 
 class TestIngestionIntegration:
@@ -353,7 +358,6 @@ class TestIngestionIntegration:
             consolidation_threshold=5,
             auto_consolidate=False,
             ingest_buffer_size=50,
-            ingest_min_density=0.4,
             ingest_background=False,
         )
 
@@ -524,7 +528,6 @@ class TestLargeInputIngestion:
             consolidation_threshold=5,
             auto_consolidate=False,
             ingest_buffer_size=50,
-            ingest_min_density=0.4,
             ingest_background=False,
         )
 
