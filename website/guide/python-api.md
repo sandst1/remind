@@ -68,7 +68,7 @@ await memory.ingest(meeting_notes, instructions="focus on decisions and action i
 await memory.flush_ingest()
 ```
 
-`ingest()` buffers text until a threshold (~4000 chars) is reached, then scores information density and extracts episodes automatically. When `topic` is given, all episodes go to that topic. When omitted, the triage LLM infers per-episode topics (mapping to existing topics or creating new ones). When `instructions` is given, the triage LLM uses those instructions to decide what to extract — useful for focused ingestion of meeting notes, transcripts, or documentation. Use `remember()` when you already know what's important; use `ingest()` when you want Remind to decide.
+`ingest()` buffers text until a threshold (~4000 chars) is reached, then runs **triage**: an LLM extracts memory-worthy episodes. A density score may be produced for logging only; extraction is not gated by a numeric threshold. When `topic` is given, all episodes go to that topic. When omitted, the triage LLM infers per-episode topics (mapping to existing topics or creating new ones). When `instructions` is given, the triage LLM uses those instructions to decide what to extract — useful for focused ingestion of meeting notes, transcripts, or documentation. Use `remember()` when you already know what's important; use `ingest()` when you want the triage LLM to filter and distill.
 
 ## Fact and outcome episodes
 
@@ -111,15 +111,25 @@ active_tasks = memory.get_tasks(status="in_progress")
 specs = memory.get_episodes_by_type(EpisodeType.SPEC)
 ```
 
-## Database path
+## Database and project config
 
 ```python
-# Default: ~/.remind/memory.db
+from pathlib import Path
+
+# Default db_path "memory" → ~/.remind/memory.db (not the same default as the CLI)
 memory = create_memory()
 
-# Named database: ~/.remind/my-project.db
+# Named SQLite under ~/.remind/
 memory = create_memory(db_path="my-project")
+
+# Any SQLAlchemy URL (PostgreSQL, MySQL, etc.) — overrides db_path
+memory = create_memory(db_url="postgresql+psycopg://user:pass@localhost:5432/remind")
+
+# Load <project>/.remind/remind.config.json (and merge with global config / env)
+memory = create_memory(project_dir=Path("/path/to/myproject"))
 ```
+
+`db_url` in `remind.config.json` or `REMIND_DB_URL` is used when you do not pass `db_url` to `create_memory()`. See [Configuration](/guide/configuration#database) for driver extras and URL examples.
 
 ## Provider selection
 

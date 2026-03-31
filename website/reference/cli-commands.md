@@ -27,7 +27,7 @@ remind remember "content" --topic architecture --source-type agent
 
 ### ingest
 
-Auto-ingest raw text with information density scoring and topic inference. Text buffers internally and processes when the threshold is reached.
+Auto-ingest raw text: the triage LLM extracts memory-worthy episodes (and may assign topics). Text buffers internally until the character threshold is reached, then flushes to triage.
 
 ```bash
 remind ingest "User said they prefer dark mode and Vim keybindings"
@@ -105,10 +105,18 @@ remind inspect <concept-id>       # Concept details
 
 ### stats
 
-Memory statistics: episode count, concept count, entity count, decay status.
+Summary counts (concepts, episodes, relations, entities, mentions), consolidation status (pending and unextracted episodes, threshold, auto-consolidate, last run), **episode types** and **entity types** (per-type counts), **relation distribution**, configured LLM and embedding providers, decay settings and stats, and the **database** path in use.
 
 ```bash
 remind stats
+```
+
+### types
+
+Show which episode types are enabled for this environment (from env vars, project config, global config, or defaults). Useful when you have restricted `episode_types` and want to confirm what the CLI and consolidation will accept.
+
+```bash
+remind types
 ```
 
 ### status

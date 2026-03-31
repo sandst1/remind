@@ -25,7 +25,7 @@ Extracted episodes go through `remember()` and then **immediately consolidate**,
 | | `remember()` | `ingest()` |
 |---|---|---|
 | **Input** | Curated, standalone statement | Raw conversation text |
-| **LLM calls** | None (fast) | Yes (density scoring + extraction) |
+| **LLM calls** | None (fast) | Yes (triage: extract episodes; optional diagnostic density score) |
 | **Filtering** | None — everything is stored | LLM-based — only memory-worthy content is extracted |
 | **Consolidation** | Normal threshold-based | Immediate (`force=True`) |
 | **Use when** | You know what's worth storing | You want Remind to decide |
@@ -56,7 +56,7 @@ ingest(content="<meeting transcript>", instructions="extract decisions and actio
 flush_ingest()
 ```
 
-Remind buffers the text internally. When the buffer threshold is reached (default 4000 chars, configurable via `ingest_buffer_size`), it scores the chunk for information density and extracts distilled episodes like:
+Remind buffers the text internally. When the buffer threshold is reached (default 4000 chars, configurable via `ingest_buffer_size`), the triage LLM extracts distilled episodes like:
 
 > "Auth bug in verify_credentials: token expiry check used `<=` instead of `<`, accepting tokens one second past expiry"
 

@@ -22,7 +22,7 @@ remember(content="Chose microservices", topic="architecture", source_type="agent
 
 ## ingest
 
-Stream raw text into the auto-ingest pipeline. Text buffers internally until a character threshold (~4000 chars) is reached, then gets scored for information density and distilled into episodes automatically.
+Stream raw text into the auto-ingest pipeline. Text buffers internally until a character threshold (~4000 chars) is reached, then the **triage LLM** decides what to extract as episodes. A density score (0.0–1.0) may be returned for diagnostics only; it does not gate extraction.
 
 ```
 ingest(content="User: Fix the auth bug\nAssistant: Looking at verify_credentials...")
@@ -42,7 +42,7 @@ ingest(content="<meeting transcript>", instructions="extract decisions and actio
 
 **Instructions**: Use `instructions` to focus extraction on specific types of information. Without `instructions`, the triage LLM uses its default behavior (capture anything potentially useful). With `instructions`, the LLM prioritizes the given directive — useful for ingesting meeting notes, transcripts, or documents where you know what you're looking for.
 
-**`ingest` vs `remember`**: Use `remember` when you've already decided what's worth storing. Use `ingest` when you want Remind to decide — it scores information density, filters low-value content, and distills memory-worthy episodes automatically. Episodes from `ingest` are immediately consolidated.
+**`ingest` vs `remember`**: Use `remember` when you've already decided what's worth storing. Use `ingest` when you want the triage LLM to choose what to keep — it skips filler and distills memory-worthy episodes. Episodes from `ingest` are immediately consolidated.
 
 ## flush_ingest
 
