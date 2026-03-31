@@ -149,18 +149,25 @@ Rules:
 - Use CSV quoting for commas
 - Strength is 0.0-1.0
 - Leave context empty when unknown
-- Keep entity names under 30 chars"""
+- Keep entity names under 30 chars
+
+Types: observation|decision|question|meta|preference|spec|plan|task|outcome|fact"""
+
+_DEFAULT_EXTRACTION_TYPES = "observation|decision|question|meta|preference|spec|plan|task|outcome|fact"
 
 
 def _build_extraction_prompt(valid_types: list[str]) -> str:
     return EXTRACTION_PROMPT_TEMPLATE.replace(
-        "observation|decision|question|meta|preference|spec|plan|task|outcome|fact",
+        _DEFAULT_EXTRACTION_TYPES,
         "|".join(valid_types),
     )
 
 
 def _build_batch_extraction_prompt(valid_types: list[str]) -> str:
-    return BATCH_EXTRACTION_PROMPT_TEMPLATE
+    return BATCH_EXTRACTION_PROMPT_TEMPLATE.replace(
+        _DEFAULT_EXTRACTION_TYPES,
+        "|".join(valid_types),
+    )
 
 
 RELATIONS_ONLY_PROMPT_TEMPLATE = """Given this text and already identified entities, extract relationships between them:
@@ -191,12 +198,26 @@ class EntityExtractor:
     ):
         self.llm = llm
         self.store = store
+        self._valid_types: Optional[set[str]] = set(valid_types) if valid_types else None
+        self._default_type = valid_types[0] if valid_types else "observation"
         if valid_types:
             self._prompt_template = _build_extraction_prompt(valid_types)
             self._batch_prompt_template = _build_batch_extraction_prompt(valid_types)
         else:
             self._prompt_template = EXTRACTION_PROMPT_TEMPLATE
             self._batch_prompt_template = BATCH_EXTRACTION_PROMPT_TEMPLATE
+
+    def _clamp_episode_type(self, episode_type: str) -> str:
+        """Validate episode_type against configured valid_types, defaulting if invalid."""
+        if not self._valid_types:
+            return episode_type
+        if episode_type in self._valid_types:
+            return episode_type
+        logger.debug(
+            f"Extraction returned invalid episode type '{episode_type}', "
+            f"defaulting to '{self._default_type}'"
+        )
+        return self._default_type
 
     def _ensure_entity_row(self, entity_id: str) -> str:
         if self.store.get_entity(entity_id):
@@ -286,17 +307,21 @@ class EntityExtractor:
                 f"  response:\n{response}"
             )
             result = parse_extraction_single_csv(response)
-            return ExtractionResult.from_dict(result, episode_id=episode_id)
+            er = ExtractionResult.from_dict(result, episode_id=episode_id)
+            er.episode_type = self._clamp_episode_type(er.episode_type)
+            return er
         except (ProtocolParseError, ValueError, KeyError, IndexError) as e:
             logger.debug(f"CSV extraction parse failed, trying JSON fallback: {e}")
             try:
-                return await self._extract_json_fallback(prompt, episode_id, 1024)
+                er = await self._extract_json_fallback(prompt, episode_id, 1024)
+                er.episode_type = self._clamp_episode_type(er.episode_type)
+                return er
             except Exception as fallback_err:
                 logger.warning(f"Extraction failed after fallback: {fallback_err}")
-                return ExtractionResult(episode_type="observation", entities=[])
+                return ExtractionResult(episode_type=self._default_type, entities=[])
         except Exception as e:
             logger.warning(f"Extraction failed: {e}")
-            return ExtractionResult(episode_type="observation", entities=[])
+            return ExtractionResult(episode_type=self._default_type, entities=[])
 
     async def extract_batch(self, episodes: list[Episode]) -> dict[str, ExtractionResult]:
         if not episodes:
@@ -363,7 +388,9 @@ class EntityExtractor:
         for ep in episodes:
             ep_result = results_dict.get(ep.id)
             if ep_result:
-                output[ep.id] = ExtractionResult.from_dict(ep_result, episode_id=ep.id)
+                er = ExtractionResult.from_dict(ep_result, episode_id=ep.id)
+                er.episode_type = self._clamp_episode_type(er.episode_type)
+                output[ep.id] = er
         return output
 
     def store_extraction_result(self, episode: Episode, result: ExtractionResult) -> None:

@@ -234,6 +234,7 @@ class IngestionTriager:
         valid_types: Optional[list[str]] = None,
     ):
         self.llm = llm
+        self._valid_types: Optional[set[str]] = set(valid_types) if valid_types else None
         if min_density > 0.0:
             logger.warning(
                 "min_density is deprecated and ignored. "
@@ -241,8 +242,10 @@ class IngestionTriager:
             )
         if valid_types:
             self._prompt_template = _build_triage_prompt(valid_types)
+            self._default_type = valid_types[0]
         else:
             self._prompt_template = TRIAGE_PROMPT_TEMPLATE
+            self._default_type = "observation"
 
     async def triage(
         self,
@@ -339,7 +342,13 @@ class IngestionTriager:
                 if not content:
                     continue
 
-                ep_type = ep.get("type", "observation")
+                ep_type = ep.get("type", self._default_type)
+                if self._valid_types and ep_type not in self._valid_types:
+                    logger.debug(
+                        f"Triage LLM returned invalid episode type '{ep_type}', "
+                        f"defaulting to '{self._default_type}'"
+                    )
+                    ep_type = self._default_type
                 entities = ep.get("entities", [])
                 if not isinstance(entities, list):
                     entities = []
@@ -375,6 +384,6 @@ class IngestionTriager:
         return TriageResult(
             density=0.5,
             reasoning=f"Fallback: {reason}",
-            episodes=[TriageEpisode(content=chunk[:2000])],
+            episodes=[TriageEpisode(content=chunk[:2000], episode_type=self._default_type)],
             raw_chunk=chunk,
         )

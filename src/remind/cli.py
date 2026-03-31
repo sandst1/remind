@@ -675,6 +675,7 @@ def ingest(ctx, content: Optional[str], source: str, topic: Optional[str], instr
             llm_provider=ctx.obj["llm"],
             embedding_provider=ctx.obj["embedding"],
             db_url=ctx.obj["db"],
+            project_dir=Path.cwd(),
             ingest_background=False,
         )
         with console.status("[bold cyan]Running triage and consolidation..."):

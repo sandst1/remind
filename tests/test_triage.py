@@ -638,9 +638,9 @@ class TestIngestInstructions:
         history = mock_llm.get_call_history()
         assert len(history) >= 1
         system = history[0].get("system", "")
-        assert "ADDITIONAL INSTRUCTIONS FROM THE USER" in system
+        assert "PRIORITY INSTRUCTIONS" in system
         assert "Focus on architectural decisions" in system
-        assert "take priority over default extraction behavior" in system
+        assert "=== END PRIORITY INSTRUCTIONS ===" in system
 
     @pytest.mark.asyncio
     async def test_no_instructions_no_extra_system_prompt(self, triager, mock_llm):
@@ -656,7 +656,7 @@ class TestIngestInstructions:
         history = mock_llm.get_call_history()
         assert len(history) >= 1
         system = history[0].get("system", "")
-        assert "ADDITIONAL INSTRUCTIONS" not in system
+        assert "PRIORITY INSTRUCTIONS" not in system
 
     @pytest.mark.asyncio
     async def test_instructions_threaded_through_ingest(self, memory, mock_llm):
