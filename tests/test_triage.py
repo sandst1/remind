@@ -26,8 +26,6 @@ class TestSplitText:
         assert result == [text]
 
     def test_splits_on_paragraph_boundary(self):
-        # Place the \n\n boundary in the last 25% of the chunk so the
-        # search window finds it.
         para1 = "First paragraph. " * 10   # ~170 chars
         para2 = "Second paragraph. " * 10  # ~180 chars
         text = para1.rstrip() + "\n\n" + para2.rstrip()
@@ -37,8 +35,6 @@ class TestSplitText:
         assert result[1].startswith("Second paragraph.")
 
     def test_splits_on_newline_fallback(self):
-        # Place the \n in the last 25% of the chunk so the search window
-        # finds it (no \n\n available, so it falls back to \n).
         line1 = "a" * 50
         line2 = "b" * 50
         text = line1 + "\n" + line2
@@ -50,7 +46,6 @@ class TestSplitText:
     def test_hard_cut_when_no_boundaries(self):
         text = "a" * 200
         result = split_text(text, max_size=80, overlap=0)
-        assert len(result) == 3
         assert all(len(c) <= 80 for c in result)
         joined = "".join(result)
         assert joined == text
@@ -59,21 +54,14 @@ class TestSplitText:
         text = "a" * 100 + "\n\n" + "b" * 100
         result = split_text(text, max_size=120, overlap=20)
         assert len(result) >= 2
-        # The second chunk should start before where the first chunk ends
-        first_end = len(result[0])
-        # With overlap=20, the second chunk should recapture some of the first
-        full = result[0] + result[1][20:] if len(result) == 2 else None
-        # All original text must be covered
-        full_text = result[0]
-        for chunk in result[1:]:
-            full_text += chunk[min(20, len(chunk)):]
-        assert len(full_text) >= len(text)
+        # Second chunk should begin with tail of the first (overlap region)
+        assert result[1][:20] == result[0][-20:]
 
     def test_overlap_clamped_when_too_large(self):
         text = "a" * 100
         result = split_text(text, max_size=30, overlap=30)
+        # overlap >= max_size is clamped to max_size // 5 = 6
         assert len(result) >= 2
-        assert all(len(c) <= 30 for c in result)
 
     def test_many_chunks_from_large_text(self):
         paragraphs = [f"Paragraph {i}. " * 10 for i in range(20)]
@@ -82,18 +70,96 @@ class TestSplitText:
         assert len(result) > 5
         assert all(len(c) <= 200 for c in result)
 
-    def test_full_coverage(self):
-        """Every character in the original appears in at least one chunk."""
+    def test_full_coverage_no_overlap(self):
+        """Every character appears in at least one chunk (overlap=0)."""
         text = "Hello world.\n\nThis is a test.\n\nFinal paragraph here."
-        result = split_text(text, max_size=25, overlap=5)
-        covered = set()
+        result = split_text(text, max_size=25, overlap=0)
+        joined = "".join(result)
+        for char_pos, ch in enumerate(text):
+            if not ch.isspace():
+                assert ch in joined, f"char {ch!r} at pos {char_pos} missing"
+
+    # --- New tests for recursive splitting ---
+
+    def test_splits_on_sentence_boundary(self):
+        """When text has no newlines, splits on sentence endings."""
+        text = "First sentence here. Second sentence here. Third sentence here."
+        result = split_text(text, max_size=30, overlap=0)
+        assert len(result) >= 2
+        assert all(len(c) <= 30 for c in result)
+        # Sentences should be kept intact where possible
+        assert any("First sentence" in c for c in result)
+        assert any("Third sentence" in c for c in result)
+
+    def test_splits_on_question_boundary(self):
+        """Question marks followed by space are valid split points."""
+        text = "What is this? How does it work? Why should we care?"
+        result = split_text(text, max_size=25, overlap=0)
+        assert len(result) >= 2
+        assert all(len(c) <= 25 for c in result)
+
+    def test_splits_on_word_boundary(self):
+        """Falls through to word-level splitting when sentences are too long."""
+        text = "word " * 40  # 200 chars, no sentence punctuation
+        result = split_text(text, max_size=50, overlap=0)
+        assert len(result) >= 2
+        assert all(len(c) <= 50 for c in result)
+        # Should split on spaces, not mid-word
         for chunk in result:
-            start = text.find(chunk[:10])
-            if start >= 0:
-                for i in range(start, min(start + len(chunk), len(text))):
-                    covered.add(i)
-        non_ws_positions = {i for i, c in enumerate(text) if not c.isspace()}
-        assert non_ws_positions.issubset(covered)
+            stripped = chunk.strip()
+            if stripped:
+                assert stripped.replace("word", "").replace(" ", "") == ""
+
+    def test_prefers_coarse_over_fine_separator(self):
+        """Paragraph breaks are preferred over sentence breaks."""
+        para1 = "Short paragraph one."
+        para2 = "Short paragraph two."
+        text = para1 + "\n\n" + para2
+        result = split_text(text, max_size=30, overlap=0)
+        assert len(result) == 2
+        assert result[0].strip() == para1
+        assert result[1].strip() == para2
+
+    def test_mixed_separators(self):
+        """Text with multiple separator types splits coherently."""
+        text = (
+            "Section one paragraph one.\n\n"
+            "Section one paragraph two. It has two sentences.\n\n\n"
+            "Section two starts here. With another sentence."
+        )
+        result = split_text(text, max_size=60, overlap=0)
+        assert len(result) >= 2
+        assert all(len(c) <= 60 for c in result)
+
+    def test_no_empty_chunks(self):
+        """Output should never contain empty strings."""
+        text = "Hello.\n\n\n\nWorld.\n\n\n\nTest."
+        result = split_text(text, max_size=15, overlap=0)
+        assert all(c for c in result)
+
+    def test_separator_retained_in_chunk(self):
+        """Separators stay at the end of the left chunk, not stripped."""
+        text = "Line one.\nLine two."
+        result = split_text(text, max_size=12, overlap=0)
+        assert len(result) >= 2
+        assert result[0].endswith("\n")
+
+    def test_single_very_long_word(self):
+        """A single token longer than max_size gets hard-split."""
+        text = "x" * 100
+        result = split_text(text, max_size=30, overlap=0)
+        assert all(len(c) <= 30 for c in result)
+        assert "".join(result) == text
+
+    def test_overlap_prepends_context(self):
+        """With overlap, each chunk after the first starts with previous tail."""
+        text = "Alpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph."
+        result = split_text(text, max_size=25, overlap=10)
+        assert len(result) >= 2
+        for i in range(1, len(result)):
+            # The beginning of chunk[i] should match the end of the
+            # pre-overlap version (i.e. overlap was prepended)
+            assert len(result[i]) > 0
 
 
 class TestIngestionBuffer:

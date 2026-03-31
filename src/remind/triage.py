@@ -106,13 +106,31 @@ class TriageResult:
 
 DEFAULT_OVERLAP = 200
 
+# Coarse-to-fine separator hierarchy for prose/conversation text.
+# The splitter tries each level in order and only recurses to a finer
+# separator when a piece still exceeds max_size.
+_SEPARATORS = [
+    "\n\n\n",
+    "\n\n",
+    "\n",
+    ". ",
+    "? ",
+    "! ",
+    "; ",
+    ", ",
+    " ",
+    "",
+]
+
 
 def split_text(text: str, max_size: int, overlap: int = DEFAULT_OVERLAP) -> list[str]:
-    """Split text into chunks of at most max_size characters.
+    """Split text into chunks of at most *max_size* characters.
 
-    Splits on paragraph boundaries (\\n\\n) when possible, falling back to
-    line breaks (\\n), then hard-cutting as a last resort. Adjacent chunks
-    share an overlap region so context isn't lost at boundaries.
+    Uses a recursive strategy: the text is first split on the coarsest
+    natural-language boundary that appears (section breaks → paragraphs →
+    lines → sentences → words).  Adjacent small pieces are merged back
+    together up to *max_size*.  Any merged piece that still exceeds the
+    limit is recursively split with the next finer separator.
 
     Args:
         text: The text to split.
@@ -120,8 +138,8 @@ def split_text(text: str, max_size: int, overlap: int = DEFAULT_OVERLAP) -> list
         overlap: Characters of overlap between adjacent chunks.
 
     Returns:
-        List of text chunks. Returns [text] as-is if it fits in one chunk.
-        Returns [] for empty input.
+        List of text chunks.  Returns ``[text]`` as-is when it fits in one
+        chunk.  Returns ``[]`` for empty input.
     """
     if not text or not text.strip():
         return []
@@ -132,47 +150,96 @@ def split_text(text: str, max_size: int, overlap: int = DEFAULT_OVERLAP) -> list
     if overlap >= max_size:
         overlap = max_size // 5
 
-    chunks: list[str] = []
-    start = 0
+    chunks = _recursive_split(text, max_size, _SEPARATORS)
 
-    while start < len(text):
-        end = start + max_size
+    if overlap <= 0 or len(chunks) <= 1:
+        return chunks
 
-        if end >= len(text):
-            chunks.append(text[start:])
-            break
-
-        # Try to find a paragraph boundary to split on
-        split_at = _find_split_point(text, start, end)
-        chunks.append(text[start:split_at])
-
-        # Advance past the split point, minus overlap
-        start = max(start + 1, split_at - overlap)
-
-    return chunks
+    return _apply_overlap(chunks, overlap)
 
 
-def _find_split_point(text: str, start: int, end: int) -> int:
-    """Find the best place to split within text[start:end].
+def _recursive_split(text: str, max_size: int, separators: list[str]) -> list[str]:
+    """Core recursive splitting logic.
 
-    Searches backwards from end for paragraph breaks, then line breaks,
-    then falls back to a hard cut at end.
+    Picks the first (coarsest) separator present in *text*, splits on it,
+    merges small adjacent pieces, then recurses on any piece that is still
+    too large using the remaining (finer) separators.
     """
-    # Search the last 25% of the window for a good split point
-    search_start = start + (end - start) * 3 // 4
+    if len(text) <= max_size:
+        return [text]
 
-    # Prefer paragraph boundary (\n\n)
-    pos = text.rfind("\n\n", search_start, end)
-    if pos != -1:
-        return pos + 2  # after the double newline
+    if not separators:
+        return [text]
 
-    # Fall back to line boundary (\n)
-    pos = text.rfind("\n", search_start, end)
-    if pos != -1:
-        return pos + 1
+    sep = separators[0]
+    remaining_seps = separators[1:]
 
-    # Hard cut
-    return end
+    if sep == "":
+        return _hard_split(text, max_size)
+
+    if sep not in text:
+        return _recursive_split(text, max_size, remaining_seps)
+
+    raw_pieces = _split_keeping_separator(text, sep)
+
+    merged = _merge_pieces(raw_pieces, max_size)
+
+    final: list[str] = []
+    for chunk in merged:
+        if len(chunk) <= max_size:
+            final.append(chunk)
+        else:
+            final.extend(_recursive_split(chunk, max_size, remaining_seps))
+
+    return final
+
+
+def _split_keeping_separator(text: str, sep: str) -> list[str]:
+    """Split *text* on *sep*, keeping the separator at the end of each piece."""
+    parts = text.split(sep)
+    pieces: list[str] = []
+    for i, part in enumerate(parts):
+        if i < len(parts) - 1:
+            pieces.append(part + sep)
+        elif part:
+            pieces.append(part)
+    return pieces
+
+
+def _merge_pieces(pieces: list[str], max_size: int) -> list[str]:
+    """Greedily merge adjacent small pieces into chunks up to *max_size*."""
+    merged: list[str] = []
+    current = ""
+    for piece in pieces:
+        if not piece:
+            continue
+        if current and len(current) + len(piece) > max_size:
+            merged.append(current)
+            current = piece
+        else:
+            current += piece
+    if current:
+        merged.append(current)
+    return merged
+
+
+def _hard_split(text: str, max_size: int) -> list[str]:
+    """Character-level split as a last resort."""
+    return [text[i:i + max_size] for i in range(0, len(text), max_size)]
+
+
+def _apply_overlap(chunks: list[str], overlap: int) -> list[str]:
+    """Re-introduce overlap between adjacent chunks.
+
+    Each chunk (except the first) is prepended with up to *overlap*
+    characters from the end of the preceding chunk.
+    """
+    result = [chunks[0]]
+    for i in range(1, len(chunks)):
+        prev = chunks[i - 1]
+        tail = prev[-overlap:] if len(prev) >= overlap else prev
+        result.append(tail + chunks[i])
+    return result
 
 
 class IngestionBuffer:
