@@ -181,10 +181,12 @@ class RemindConfig:
     llm_provider: str = "anthropic"
     embedding_provider: str = "openai"
     consolidation_threshold: int = 5
+    concepts_per_pass: int = 64
     auto_consolidate: bool = True
-    entity_extraction_batch_size: int = 10
+    extraction_batch_size: int = 50
+    extraction_llm_batch_size: int = 10
     consolidation_batch_size: int = 25
-    consolidation_llm_concurrency: int = 1
+    llm_concurrency: int = 3
     # Database URL (SQLAlchemy format; None = SQLite default)
     db_url: Optional[str] = None
     # Auto-ingest settings

@@ -22,7 +22,7 @@ from remind.config import (
     DEFAULT_LLM_PROVIDER,
     DEFAULT_EMBEDDING_PROVIDER,
     DEFAULT_CONSOLIDATION_THRESHOLD,
-    DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS,
+    DEFAULT_CONCEPTS_PER_PASS,
 )
 
 
@@ -33,7 +33,10 @@ _ALL_CONFIG_ENV_VARS = [
     "LLM_PROVIDER",
     "EMBEDDING_PROVIDER",
     "CONSOLIDATION_THRESHOLD",
+    "CONCEPTS_PER_PASS",
     "CONSOLIDATION_CONCEPTS_PER_PASS",
+    "EXTRACTION_BATCH_SIZE",
+    "EXTRACTION_LLM_BATCH_SIZE",
     "AUTO_CONSOLIDATE",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_MODEL",
@@ -61,7 +64,8 @@ _ALL_CONFIG_ENV_VARS = [
     "REMIND_LOGGING_ENABLED",
     "REMIND_EPISODE_TYPES",
     "ENTITY_EXTRACTION_BATCH_SIZE",
-    "CONSOLIDATION_WORKERS",
+    "LLM_CONCURRENCY",
+    "CONSOLIDATION_LLM_CONCURRENCY",
 ]
 
 
@@ -89,11 +93,12 @@ class TestDefaults:
         assert config.llm_provider == "anthropic"
         assert config.embedding_provider == "openai"
         assert config.consolidation_threshold == 5
-        assert config.consolidation_concepts_per_pass == 64
+        assert config.concepts_per_pass == 64
         assert config.auto_consolidate is True
-        assert config.entity_extraction_batch_size == 10
+        assert config.extraction_batch_size == 50
+        assert config.extraction_llm_batch_size == 10
         assert config.consolidation_batch_size == 25
-        assert config.consolidation_llm_concurrency == 1
+        assert config.llm_concurrency == 3
         assert config.ingest_buffer_size == 4000
         assert config.ingest_min_density == 0.4
         assert config.logging_enabled is False
@@ -161,7 +166,7 @@ class TestApplyFileConfig:
             "llm_provider": "openai",
             "embedding_provider": "ollama",
             "consolidation_threshold": 10,
-            "consolidation_concepts_per_pass": 128,
+            "concepts_per_pass": 128,
             "auto_consolidate": False,
             "ingest_buffer_size": 8000,
             "ingest_min_density": 0.7,
@@ -170,7 +175,7 @@ class TestApplyFileConfig:
         assert config.llm_provider == "openai"
         assert config.embedding_provider == "ollama"
         assert config.consolidation_threshold == 10
-        assert config.consolidation_concepts_per_pass == 128
+        assert config.concepts_per_pass == 128
         assert config.auto_consolidate is False
         assert config.ingest_buffer_size == 8000
         assert config.ingest_min_density == 0.7
@@ -270,18 +275,20 @@ class TestApplyFileConfig:
     def test_applies_consolidation_parallelism_fields(self):
         config = RemindConfig()
         _apply_file_config(config, {
-            "entity_extraction_batch_size": 5,
+            "extraction_batch_size": 40,
+            "extraction_llm_batch_size": 5,
             "consolidation_batch_size": 50,
-            "consolidation_llm_concurrency": 4,
+            "llm_concurrency": 4,
         })
-        assert config.entity_extraction_batch_size == 5
+        assert config.extraction_batch_size == 40
+        assert config.extraction_llm_batch_size == 5
         assert config.consolidation_batch_size == 50
-        assert config.consolidation_llm_concurrency == 4
+        assert config.llm_concurrency == 4
 
     def test_applies_consolidation_workers_legacy_key(self):
         config = RemindConfig()
         _apply_file_config(config, {"consolidation_workers": 4})
-        assert config.consolidation_llm_concurrency == 4
+        assert config.llm_concurrency == 4
 
     def test_applies_episode_types(self):
         config = RemindConfig()
@@ -389,9 +396,13 @@ class TestEnvVarOverrides:
         c = self._config_with_env(CONSOLIDATION_THRESHOLD="abc")
         assert c.consolidation_threshold == DEFAULT_CONSOLIDATION_THRESHOLD
 
-    def test_consolidation_concepts_per_pass(self):
-        c = self._config_with_env(CONSOLIDATION_CONCEPTS_PER_PASS="32")
-        assert c.consolidation_concepts_per_pass == 32
+    def test_concepts_per_pass(self):
+        c = self._config_with_env(CONCEPTS_PER_PASS="32")
+        assert c.concepts_per_pass == 32
+
+    def test_consolidation_concepts_per_pass_legacy_env(self):
+        c = self._config_with_env(CONSOLIDATION_CONCEPTS_PER_PASS="31")
+        assert c.concepts_per_pass == 31
 
     def test_auto_consolidate_true(self):
         for val in ("true", "True", "1", "yes"):
@@ -415,13 +426,21 @@ class TestEnvVarOverrides:
         c = self._config_with_env(REMIND_LOGGING_ENABLED="true")
         assert c.logging_enabled is True
 
-    def test_entity_extraction_batch_size(self):
-        c = self._config_with_env(ENTITY_EXTRACTION_BATCH_SIZE="10")
-        assert c.entity_extraction_batch_size == 10
+    def test_extraction_batch_size(self):
+        c = self._config_with_env(EXTRACTION_BATCH_SIZE="60")
+        assert c.extraction_batch_size == 60
 
-    def test_entity_extraction_batch_size_invalid(self):
-        c = self._config_with_env(ENTITY_EXTRACTION_BATCH_SIZE="abc")
-        assert c.entity_extraction_batch_size == 10  # unchanged default
+    def test_extraction_llm_batch_size(self):
+        c = self._config_with_env(EXTRACTION_LLM_BATCH_SIZE="12")
+        assert c.extraction_llm_batch_size == 12
+
+    def test_entity_extraction_batch_size_legacy_env(self):
+        c = self._config_with_env(ENTITY_EXTRACTION_BATCH_SIZE="11")
+        assert c.extraction_llm_batch_size == 11
+
+    def test_extraction_llm_batch_size_invalid(self):
+        c = self._config_with_env(EXTRACTION_LLM_BATCH_SIZE="abc")
+        assert c.extraction_llm_batch_size == 10  # unchanged default
 
     def test_consolidation_batch_size(self):
         c = self._config_with_env(CONSOLIDATION_BATCH_SIZE="50")
@@ -431,13 +450,17 @@ class TestEnvVarOverrides:
         c = self._config_with_env(CONSOLIDATION_BATCH_SIZE="abc")
         assert c.consolidation_batch_size == 25  # unchanged default
 
-    def test_consolidation_llm_concurrency(self):
-        c = self._config_with_env(CONSOLIDATION_LLM_CONCURRENCY="4")
-        assert c.consolidation_llm_concurrency == 4
+    def test_llm_concurrency(self):
+        c = self._config_with_env(LLM_CONCURRENCY="4")
+        assert c.llm_concurrency == 4
 
-    def test_consolidation_llm_concurrency_invalid(self):
-        c = self._config_with_env(CONSOLIDATION_LLM_CONCURRENCY="abc")
-        assert c.consolidation_llm_concurrency == 1  # unchanged default
+    def test_consolidation_llm_concurrency_legacy_env(self):
+        c = self._config_with_env(CONSOLIDATION_LLM_CONCURRENCY="5")
+        assert c.llm_concurrency == 5
+
+    def test_llm_concurrency_invalid(self):
+        c = self._config_with_env(LLM_CONCURRENCY="abc")
+        assert c.llm_concurrency == 3  # unchanged default
 
     # -- Episode types --
 
@@ -759,7 +782,7 @@ class TestEnvFileParity:
             "llm_provider": "file_val",
             "embedding_provider": "file_val",
             "consolidation_threshold": 99,
-            "consolidation_concepts_per_pass": 99,
+            "concepts_per_pass": 99,
             "auto_consolidate": False,
             "ingest_buffer_size": 9999,
             "ingest_min_density": 0.99,
@@ -769,7 +792,7 @@ class TestEnvFileParity:
             "LLM_PROVIDER": "env_val",
             "EMBEDDING_PROVIDER": "env_val",
             "CONSOLIDATION_THRESHOLD": "77",
-            "CONSOLIDATION_CONCEPTS_PER_PASS": "77",
+            "CONCEPTS_PER_PASS": "77",
             "AUTO_CONSOLIDATE": "true",
             "INGEST_BUFFER_SIZE": "7777",
             "INGEST_MIN_DENSITY": "0.77",
@@ -786,7 +809,7 @@ class TestEnvFileParity:
         assert config.llm_provider == "env_val"
         assert config.embedding_provider == "env_val"
         assert config.consolidation_threshold == 77
-        assert config.consolidation_concepts_per_pass == 77
+        assert config.concepts_per_pass == 77
         assert config.auto_consolidate is True
         assert config.ingest_buffer_size == 7777
         assert config.ingest_min_density == 0.77

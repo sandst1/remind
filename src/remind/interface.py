@@ -86,11 +86,16 @@ class MemoryInterface:
         db_path: str = "memory.db",
         # Consolidation settings
         consolidation_threshold: int = 5,  # episodes before auto-consolidation
-        consolidation_concepts_per_pass: int = 64,
+        concepts_per_pass: int = 64,
         auto_consolidate: bool = True,
-        entity_extraction_batch_size: int = 10,
+        extraction_batch_size: int = 50,
+        extraction_llm_batch_size: int = 10,
         consolidation_batch_size: int = 25,
-        consolidation_llm_concurrency: int = 1,
+        llm_concurrency: int = 3,
+        # Legacy aliases (kept for backward compatibility)
+        consolidation_concepts_per_pass: Optional[int] = None,
+        entity_extraction_batch_size: Optional[int] = None,
+        consolidation_llm_concurrency: Optional[int] = None,
         # Retrieval settings
         default_recall_k: int = 3,
         default_episode_k: int = 5,
@@ -114,15 +119,24 @@ class MemoryInterface:
         else:
             self.store = SQLAlchemyMemoryStore(db_path)
         
+        # Legacy aliases override defaults when explicitly provided.
+        if consolidation_concepts_per_pass is not None:
+            concepts_per_pass = consolidation_concepts_per_pass
+        if entity_extraction_batch_size is not None:
+            extraction_llm_batch_size = entity_extraction_batch_size
+        if consolidation_llm_concurrency is not None:
+            llm_concurrency = consolidation_llm_concurrency
+
         # Initialize components
         self.consolidator = Consolidator(
             llm=llm,
             embedding=embedding,
             store=self.store,
-            concepts_per_consolidation_pass=consolidation_concepts_per_pass,
-            batch_size=consolidation_batch_size,
-            max_workers=consolidation_llm_concurrency,
-            entity_extraction_batch_size=entity_extraction_batch_size,
+            concepts_per_pass=concepts_per_pass,
+            consolidation_batch_size=consolidation_batch_size,
+            extraction_batch_size=extraction_batch_size,
+            extraction_llm_batch_size=extraction_llm_batch_size,
+            llm_concurrency=llm_concurrency,
         )
         
         self.retriever = MemoryRetriever(
@@ -1344,6 +1358,14 @@ def create_memory(
 
     config = load_config(project_dir=project_dir)
 
+    # Legacy kwargs aliases for backward compatibility.
+    if "consolidation_concepts_per_pass" in kwargs and "concepts_per_pass" not in kwargs:
+        kwargs["concepts_per_pass"] = kwargs.pop("consolidation_concepts_per_pass")
+    if "entity_extraction_batch_size" in kwargs and "extraction_llm_batch_size" not in kwargs:
+        kwargs["extraction_llm_batch_size"] = kwargs.pop("entity_extraction_batch_size")
+    if "consolidation_llm_concurrency" in kwargs and "llm_concurrency" not in kwargs:
+        kwargs["llm_concurrency"] = kwargs.pop("consolidation_llm_concurrency")
+
     # Resolve database URL: explicit arg > config > resolve from db_path
     if not db_url:
         db_url = config.db_url
@@ -1365,8 +1387,8 @@ def create_memory(
     # Apply config defaults for kwargs if not provided
     if "consolidation_threshold" not in kwargs:
         kwargs["consolidation_threshold"] = config.consolidation_threshold
-    if "consolidation_concepts_per_pass" not in kwargs:
-        kwargs["consolidation_concepts_per_pass"] = config.consolidation_concepts_per_pass
+    if "concepts_per_pass" not in kwargs:
+        kwargs["concepts_per_pass"] = config.concepts_per_pass
     if "auto_consolidate" not in kwargs:
         kwargs["auto_consolidate"] = config.auto_consolidate
     if "decay_config" not in kwargs:
@@ -1377,12 +1399,14 @@ def create_memory(
         kwargs["ingest_min_density"] = config.ingest_min_density
     if "episode_types" not in kwargs:
         kwargs["episode_types"] = config.episode_types
-    if "entity_extraction_batch_size" not in kwargs:
-        kwargs["entity_extraction_batch_size"] = config.entity_extraction_batch_size
+    if "extraction_batch_size" not in kwargs:
+        kwargs["extraction_batch_size"] = config.extraction_batch_size
+    if "extraction_llm_batch_size" not in kwargs:
+        kwargs["extraction_llm_batch_size"] = config.extraction_llm_batch_size
     if "consolidation_batch_size" not in kwargs:
         kwargs["consolidation_batch_size"] = config.consolidation_batch_size
-    if "consolidation_llm_concurrency" not in kwargs:
-        kwargs["consolidation_llm_concurrency"] = config.consolidation_llm_concurrency
+    if "llm_concurrency" not in kwargs:
+        kwargs["llm_concurrency"] = config.llm_concurrency
     
     # Import providers
     from remind.providers import (

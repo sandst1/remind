@@ -414,9 +414,10 @@ def consolidate(ctx, force: bool, background: bool):
     try:
         console.print(f"[cyan]Consolidating {unconsolidated} episodes...[/cyan]")
 
-        batch_size = memory.consolidator.batch_size
+        batch_size = memory.consolidator.consolidation_batch_size
         total_batches = (unconsolidated + batch_size - 1) // batch_size
-        extraction_batch_size = memory.consolidator.entity_extraction_batch_size
+        extraction_batch_size = memory.consolidator.extraction_batch_size
+        extraction_llm_batch_size = memory.consolidator.extraction_llm_batch_size
         total_extraction_batches = (unconsolidated + extraction_batch_size - 1) // extraction_batch_size
 
         def on_batch(batch_num, batch_result):
@@ -443,7 +444,8 @@ def consolidate(ctx, force: bool, background: bool):
                 status_text = f"{progress.get('entities_created', 0)} entities"
             console.print(
                 f"  [dim]Extract {progress.get('batch_num', 0)}/{progress.get('total_batches', 0)}:[/dim] "
-                f"{progress.get('episodes_processed', 0)}/{progress.get('batch_size', 0)} episodes → "
+                f"{progress.get('episodes_processed', 0)}/{progress.get('batch_size', 0)} episodes "
+                f"(llm batch={extraction_llm_batch_size}) → "
                 f"{status_text}"
             )
 
@@ -530,9 +532,10 @@ def reconsolidate(ctx):
     # Step 4: Run consolidation (loops through all batches internally)
     console.print(f"\n[cyan]Running consolidation on {episode_count} episodes...[/cyan]")
 
-    batch_size = memory.consolidator.batch_size
+    batch_size = memory.consolidator.consolidation_batch_size
     total_batches = (episode_count + batch_size - 1) // batch_size
-    extraction_batch_size = memory.consolidator.entity_extraction_batch_size
+    extraction_batch_size = memory.consolidator.extraction_batch_size
+    extraction_llm_batch_size = memory.consolidator.extraction_llm_batch_size
     total_extraction_batches = (episode_count + extraction_batch_size - 1) // extraction_batch_size
 
     def on_batch(batch_num, batch_result):
@@ -559,7 +562,8 @@ def reconsolidate(ctx):
             status_text = f"{progress.get('entities_created', 0)} entities"
         console.print(
             f"  [dim]Extract {progress.get('batch_num', 0)}/{progress.get('total_batches', 0)}:[/dim] "
-            f"{progress.get('episodes_processed', 0)}/{progress.get('batch_size', 0)} episodes → "
+            f"{progress.get('episodes_processed', 0)}/{progress.get('batch_size', 0)} episodes "
+            f"(llm batch={extraction_llm_batch_size}) → "
             f"{status_text}"
         )
 

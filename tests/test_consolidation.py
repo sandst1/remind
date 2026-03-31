@@ -924,7 +924,7 @@ class TestConceptChunking:
 
 
 class TestParallelConsolidation:
-    """Tests for parallel consolidation with max_workers > 1."""
+    """Tests for parallel consolidation with llm_concurrency > 1."""
 
     @pytest.fixture
     def parallel_consolidator(self, mock_llm, mock_embedding, memory_store):
@@ -933,17 +933,18 @@ class TestParallelConsolidation:
             llm=mock_llm,
             embedding=mock_embedding,
             store=memory_store,
-            batch_size=20,
+            extraction_batch_size=20,
+            consolidation_batch_size=20,
             min_confidence=0.3,
-            max_workers=4,
-            entity_extraction_batch_size=3,
+            llm_concurrency=4,
+            extraction_llm_batch_size=3,
         )
 
     @pytest.mark.asyncio
     async def test_parallel_extraction_batches_episodes(
         self, parallel_consolidator, memory_store, mock_llm
     ):
-        """Entity extraction groups episodes into batches of entity_extraction_batch_size."""
+        """Entity extraction groups episodes into batches of extraction_llm_batch_size."""
         for i in range(7):
             memory_store.add_episode(Episode(content=f"Episode {i}"))
 

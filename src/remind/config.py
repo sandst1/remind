@@ -30,7 +30,9 @@ CONFIG_FILE = REMIND_DIR / "remind.config.json"
 
 # Default values
 DEFAULT_CONSOLIDATION_THRESHOLD = 5
-DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS = 64
+DEFAULT_CONCEPTS_PER_PASS = 64
+# Backward compatibility alias.
+DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS = DEFAULT_CONCEPTS_PER_PASS
 DEFAULT_LLM_PROVIDER = "anthropic"
 DEFAULT_EMBEDDING_PROVIDER = "openai"
 
@@ -93,11 +95,12 @@ class RemindConfig:
     llm_provider: str = DEFAULT_LLM_PROVIDER
     embedding_provider: str = DEFAULT_EMBEDDING_PROVIDER
     consolidation_threshold: int = DEFAULT_CONSOLIDATION_THRESHOLD
-    consolidation_concepts_per_pass: int = DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS
+    concepts_per_pass: int = DEFAULT_CONCEPTS_PER_PASS
     auto_consolidate: bool = True
-    entity_extraction_batch_size: int = 10
+    extraction_batch_size: int = 50
+    extraction_llm_batch_size: int = 10
     consolidation_batch_size: int = 25
-    consolidation_llm_concurrency: int = 1
+    llm_concurrency: int = 3
 
     # Provider-specific configs
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
@@ -120,6 +123,31 @@ class RemindConfig:
 
     # Logging
     logging_enabled: bool = False
+
+    # Backward-compat aliases for older config field names
+    @property
+    def consolidation_concepts_per_pass(self) -> int:
+        return self.concepts_per_pass
+
+    @consolidation_concepts_per_pass.setter
+    def consolidation_concepts_per_pass(self, value: int) -> None:
+        self.concepts_per_pass = int(value)
+
+    @property
+    def entity_extraction_batch_size(self) -> int:
+        return self.extraction_llm_batch_size
+
+    @entity_extraction_batch_size.setter
+    def entity_extraction_batch_size(self, value: int) -> None:
+        self.extraction_llm_batch_size = int(value)
+
+    @property
+    def consolidation_llm_concurrency(self) -> int:
+        return self.llm_concurrency
+
+    @consolidation_llm_concurrency.setter
+    def consolidation_llm_concurrency(self, value: int) -> None:
+        self.llm_concurrency = int(value)
 
 
 def _apply_provider_config(
@@ -149,20 +177,26 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         config.embedding_provider = file_config["embedding_provider"]
     if "consolidation_threshold" in file_config:
         config.consolidation_threshold = int(file_config["consolidation_threshold"])
-    if "consolidation_concepts_per_pass" in file_config:
-        config.consolidation_concepts_per_pass = int(
-            file_config["consolidation_concepts_per_pass"]
-        )
+    if "concepts_per_pass" in file_config:
+        config.concepts_per_pass = int(file_config["concepts_per_pass"])
+    elif "consolidation_concepts_per_pass" in file_config:
+        config.concepts_per_pass = int(file_config["consolidation_concepts_per_pass"])
     if "auto_consolidate" in file_config:
         config.auto_consolidate = bool(file_config["auto_consolidate"])
-    if "entity_extraction_batch_size" in file_config:
-        config.entity_extraction_batch_size = int(file_config["entity_extraction_batch_size"])
+    if "extraction_batch_size" in file_config:
+        config.extraction_batch_size = int(file_config["extraction_batch_size"])
+    if "extraction_llm_batch_size" in file_config:
+        config.extraction_llm_batch_size = int(file_config["extraction_llm_batch_size"])
+    elif "entity_extraction_batch_size" in file_config:
+        config.extraction_llm_batch_size = int(file_config["entity_extraction_batch_size"])
     if "consolidation_batch_size" in file_config:
         config.consolidation_batch_size = int(file_config["consolidation_batch_size"])
-    if "consolidation_llm_concurrency" in file_config:
-        config.consolidation_llm_concurrency = int(file_config["consolidation_llm_concurrency"])
+    if "llm_concurrency" in file_config:
+        config.llm_concurrency = int(file_config["llm_concurrency"])
+    elif "consolidation_llm_concurrency" in file_config:
+        config.llm_concurrency = int(file_config["consolidation_llm_concurrency"])
     elif "consolidation_workers" in file_config:
-        config.consolidation_llm_concurrency = int(file_config["consolidation_workers"])
+        config.llm_concurrency = int(file_config["consolidation_workers"])
 
     # Provider-specific settings (overlay, not replace)
     _apply_provider_config(config, file_config, "anthropic", AnthropicConfig)
@@ -262,24 +296,44 @@ def _apply_env_vars(config: RemindConfig) -> None:
             logger.warning(f"Invalid CONSOLIDATION_THRESHOLD: {threshold}")
     if auto_consolidate := os.environ.get("AUTO_CONSOLIDATE"):
         config.auto_consolidate = auto_consolidate.lower() in ("true", "1", "yes")
-    if concepts_per_pass := os.environ.get("CONSOLIDATION_CONCEPTS_PER_PASS"):
+    if concepts_per_pass := os.environ.get("CONCEPTS_PER_PASS"):
         try:
-            config.consolidation_concepts_per_pass = int(concepts_per_pass)
+            config.concepts_per_pass = int(concepts_per_pass)
+        except ValueError:
+            logger.warning(f"Invalid CONCEPTS_PER_PASS: {concepts_per_pass}")
+    elif concepts_per_pass := os.environ.get("CONSOLIDATION_CONCEPTS_PER_PASS"):
+        try:
+            config.concepts_per_pass = int(concepts_per_pass)
         except ValueError:
             logger.warning(f"Invalid CONSOLIDATION_CONCEPTS_PER_PASS: {concepts_per_pass}")
-    if extraction_batch := os.environ.get("ENTITY_EXTRACTION_BATCH_SIZE"):
+    if extraction_batch := os.environ.get("EXTRACTION_BATCH_SIZE"):
         try:
-            config.entity_extraction_batch_size = int(extraction_batch)
+            config.extraction_batch_size = int(extraction_batch)
         except ValueError:
-            logger.warning(f"Invalid ENTITY_EXTRACTION_BATCH_SIZE: {extraction_batch}")
+            logger.warning(f"Invalid EXTRACTION_BATCH_SIZE: {extraction_batch}")
+    if extraction_llm_batch := os.environ.get("EXTRACTION_LLM_BATCH_SIZE"):
+        try:
+            config.extraction_llm_batch_size = int(extraction_llm_batch)
+        except ValueError:
+            logger.warning(f"Invalid EXTRACTION_LLM_BATCH_SIZE: {extraction_llm_batch}")
+    elif extraction_llm_batch := os.environ.get("ENTITY_EXTRACTION_BATCH_SIZE"):
+        try:
+            config.extraction_llm_batch_size = int(extraction_llm_batch)
+        except ValueError:
+            logger.warning(f"Invalid ENTITY_EXTRACTION_BATCH_SIZE: {extraction_llm_batch}")
     if consolidation_batch := os.environ.get("CONSOLIDATION_BATCH_SIZE"):
         try:
             config.consolidation_batch_size = int(consolidation_batch)
         except ValueError:
             logger.warning(f"Invalid CONSOLIDATION_BATCH_SIZE: {consolidation_batch}")
-    if concurrency := os.environ.get("CONSOLIDATION_LLM_CONCURRENCY"):
+    if concurrency := os.environ.get("LLM_CONCURRENCY"):
         try:
-            config.consolidation_llm_concurrency = int(concurrency)
+            config.llm_concurrency = int(concurrency)
+        except ValueError:
+            logger.warning(f"Invalid LLM_CONCURRENCY: {concurrency}")
+    elif concurrency := os.environ.get("CONSOLIDATION_LLM_CONCURRENCY"):
+        try:
+            config.llm_concurrency = int(concurrency)
         except ValueError:
             logger.warning(f"Invalid CONSOLIDATION_LLM_CONCURRENCY: {concurrency}")
 

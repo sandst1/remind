@@ -122,21 +122,40 @@ class Consolidator:
         llm: LLMProvider,
         embedding: EmbeddingProvider,
         store: MemoryStore,
-        batch_size: int = 25,
+        consolidation_batch_size: int = 25,
+        extraction_batch_size: int = 50,
+        extraction_llm_batch_size: int = 10,
         min_confidence: float = 0.3,
-        concepts_per_consolidation_pass: int = 64,
-        max_workers: int = 1,
-        entity_extraction_batch_size: int = 10,
+        concepts_per_pass: int = 64,
+        llm_concurrency: int = 3,
+        # Legacy aliases (kept for backward compatibility)
+        batch_size: Optional[int] = None,
+        concepts_per_consolidation_pass: Optional[int] = None,
+        max_workers: Optional[int] = None,
+        entity_extraction_batch_size: Optional[int] = None,
     ):
+        # Legacy aliases override defaults when explicitly provided.
+        if batch_size is not None:
+            consolidation_batch_size = batch_size
+        if concepts_per_consolidation_pass is not None:
+            concepts_per_pass = concepts_per_consolidation_pass
+        if max_workers is not None:
+            llm_concurrency = max_workers
+        if entity_extraction_batch_size is not None:
+            extraction_llm_batch_size = entity_extraction_batch_size
+
         self.llm = llm
         self.embedding = embedding
         self.store = store
-        self.batch_size = batch_size
+        self.consolidation_batch_size = consolidation_batch_size
+        self.extraction_batch_size = extraction_batch_size
+        self.extraction_llm_batch_size = extraction_llm_batch_size
         self.min_confidence = min_confidence
-        self.concepts_per_consolidation_pass = concepts_per_consolidation_pass
-        self.max_workers = max_workers
-        self.entity_extraction_batch_size = entity_extraction_batch_size
-        self._semaphore = asyncio.Semaphore(max_workers)
+        self.concepts_per_pass = concepts_per_pass
+        self.llm_concurrency = llm_concurrency
+        self.topic_parallelism = llm_concurrency
+        self._llm_semaphore = asyncio.Semaphore(llm_concurrency)
+        self._topic_semaphore = asyncio.Semaphore(self.topic_parallelism)
         self.extractor = EntityExtractor(llm, store)
     
     async def consolidate(
@@ -152,7 +171,7 @@ class Consolidator:
         1. Extraction: Process any episodes that haven't had entity extraction
         2. Generalization: Create/update concepts from unconsolidated episodes
         
-        Phase 2 loops over batches of `batch_size` episodes until all pending
+        Phase 2 loops over batches of `consolidation_batch_size` episodes until all pending
         episodes are processed.
         
         Args:
@@ -213,11 +232,11 @@ class Consolidator:
         return result
 
     def _partition_concepts(self, concepts: list[dict]) -> list[list[dict]]:
-        """Split concepts into chunks of at most concepts_per_consolidation_pass, sorted by id."""
+        """Split concepts into chunks of at most concepts_per_pass, sorted by id."""
         if not concepts:
             return [[]]
         sorted_concepts = sorted(concepts, key=lambda c: c.get("id", ""))
-        n = self.concepts_per_consolidation_pass
+        n = self.concepts_per_pass
         return [sorted_concepts[i:i + n] for i in range(0, len(sorted_concepts), n)]
 
     def _format_concept_index(self, concepts: list[dict]) -> str:
@@ -239,7 +258,7 @@ class Consolidator:
         
         Episodes are grouped by topic and each topic group is consolidated
         independently to prevent cross-topic concept bleed. When there are
-        more existing concepts than concepts_per_consolidation_pass, runs
+        more existing concepts than concepts_per_pass, runs
         multiple LLM sub-passes (one per concept chunk) and merges the
         operations before applying them once.
         
@@ -248,7 +267,7 @@ class Consolidator:
         """
         result = ConsolidationResult()
         
-        episodes = self.store.get_unconsolidated_episodes(limit=self.batch_size)
+        episodes = self.store.get_unconsolidated_episodes(limit=self.consolidation_batch_size)
 
         # Filter out active task episodes — only completed tasks should consolidate
         active_tasks = []
@@ -287,11 +306,12 @@ class Consolidator:
             topic_labels = [t or "(no topic)" for t in episodes_by_topic.keys()]
             logger.info(f"Consolidating {topic_count} topic groups: {', '.join(topic_labels)}")
 
+        async def _run_topic_group(topic_id: Optional[str], topic_episodes: list[Episode]):
+            async with self._topic_semaphore:
+                return await self._consolidate_topic_group(topic_id, topic_episodes, batch_num, batch_label)
+
         topic_results = await asyncio.gather(
-            *[
-                self._consolidate_topic_group(topic_id, topic_episodes, batch_num, batch_label)
-                for topic_id, topic_episodes in episodes_by_topic.items()
-            ],
+            *[_run_topic_group(topic_id, topic_episodes) for topic_id, topic_episodes in episodes_by_topic.items()],
             return_exceptions=True,
         )
         for topic_result in topic_results:
@@ -371,7 +391,7 @@ class Consolidator:
                 f"  prompt:\n{prompt}"
             )
 
-            async with self._semaphore:
+            async with self._llm_semaphore:
                 try:
                     raw_response = await self.llm.complete_structured_text(
                         prompt=prompt,
@@ -578,9 +598,9 @@ class Consolidator:
         extracting entity mentions. Also extracts relationships for episodes
         that have entities but haven't had relationship extraction.
 
-        Episodes are grouped into batches of ``entity_extraction_batch_size``
+        Episodes are grouped into batches of ``extraction_llm_batch_size``
         for fewer LLM calls. Multiple batches run concurrently up to
-        ``max_workers``.
+        ``llm_concurrency``.
         
         Returns:
             dict with extraction stats or None if no episodes needed extraction
@@ -590,10 +610,10 @@ class Consolidator:
         relations_extracted = 0
 
         # Step 1: Batched entity extraction
-        unextracted = self.store.get_unextracted_episodes(limit=self.batch_size)
+        unextracted = self.store.get_unextracted_episodes(limit=self.extraction_batch_size)
 
         if unextracted:
-            bs = self.entity_extraction_batch_size
+            bs = self.extraction_llm_batch_size
             episode_batches = [unextracted[i:i + bs] for i in range(0, len(unextracted), bs)]
             logger.info(
                 f"Running extraction on {len(unextracted)} episodes "
@@ -601,7 +621,7 @@ class Consolidator:
             )
 
             async def _extract_batch(batch: list) -> dict:
-                async with self._semaphore:
+                async with self._llm_semaphore:
                     return await self.extractor.extract_batch(batch)
 
             batch_results = await asyncio.gather(
@@ -668,13 +688,13 @@ class Consolidator:
                     relations_extracted += len(result.entity_relations)
 
         # Step 2: Parallel relationship-only extraction (1 call per episode)
-        unextracted_relations = self.store.get_unextracted_relation_episodes(limit=self.batch_size)
+        unextracted_relations = self.store.get_unextracted_relation_episodes(limit=self.extraction_batch_size)
 
         if unextracted_relations:
             logger.info(f"Extracting relationships from {len(unextracted_relations)} episodes...")
 
             async def _extract_rels(ep):
-                async with self._semaphore:
+                async with self._llm_semaphore:
                     return (ep, await self.extractor.extract_relations_only(ep))
 
             rel_results = await asyncio.gather(

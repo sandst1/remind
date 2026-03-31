@@ -81,15 +81,18 @@ Consolidation prioritizes specificity and falsifiability — concepts should be 
 
 ## Performance tuning
 
-Consolidation performance can be tuned with three settings:
+Consolidation performance can be tuned with four settings:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `entity_extraction_batch_size` | `10` | Number of episodes grouped into each extraction LLM call. Higher values mean fewer LLM calls but larger prompts and slower individual calls. |
-| `consolidation_batch_size` | `25` | Number of episodes fetched and consolidated per pass. Controls how much context the consolidation LLM sees at once. |
-| `consolidation_llm_concurrency` | `1` | Maximum concurrent LLM calls within a consolidation run. Parallelizes topic groups, extraction sub-batches, and concept-chunk sub-passes (all share this limit). Set to e.g. `4` to speed up runs with many topics. |
+| `extraction_batch_size` | `50` | Number of episodes fetched per extraction loop pass. This is independent from `consolidation_batch_size`. |
+| `extraction_llm_batch_size` | `10` | Number of episodes grouped into each extraction LLM call. Higher values mean fewer LLM calls but larger prompts and slower individual calls. |
+| `consolidation_batch_size` | `25` | Number of episodes fetched and generalized per consolidation pass. Controls how much episode context each consolidation batch sees. |
+| `llm_concurrency` | `3` | Maximum concurrent LLM calls within a consolidation run. This shared cap applies to extraction sub-batches, topic-group work, and concept-chunk sub-passes. |
 
-With the defaults, 30 episodes split across 3 topics will consolidate those 3 topic groups concurrently when `consolidation_llm_concurrency > 1`. Set it higher to run those calls in parallel.
+With the defaults, 30 episodes split across 3 topics can process up to 3 LLM calls in parallel. Increase `llm_concurrency` to parallelize more aggressively.
+
+Legacy aliases remain supported: `entity_extraction_batch_size` and `consolidation_llm_concurrency`.
 
 Only LLM calls are parallelized — all store writes (entity deduplication, concept creation, relation storage) remain sequential to avoid conflicts.
 

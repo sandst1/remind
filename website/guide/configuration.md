@@ -122,11 +122,12 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `LLM_PROVIDER` | `llm_provider` | string | `anthropic` |
 | `EMBEDDING_PROVIDER` | `embedding_provider` | string | `openai` |
 | `CONSOLIDATION_THRESHOLD` | `consolidation_threshold` | int | `5` |
-| `CONSOLIDATION_CONCEPTS_PER_PASS` | `consolidation_concepts_per_pass` | int | `64` |
+| `CONCEPTS_PER_PASS` | `concepts_per_pass` | int | `64` |
 | `AUTO_CONSOLIDATE` | `auto_consolidate` | bool | `true` |
-| `ENTITY_EXTRACTION_BATCH_SIZE` | `entity_extraction_batch_size` | int | `10` |
+| `EXTRACTION_BATCH_SIZE` | `extraction_batch_size` | int | `50` |
+| `EXTRACTION_LLM_BATCH_SIZE` | `extraction_llm_batch_size` | int | `10` |
 | `CONSOLIDATION_BATCH_SIZE` | `consolidation_batch_size` | int | `25` |
-| `CONSOLIDATION_LLM_CONCURRENCY` | `consolidation_llm_concurrency` | int | `1` |
+| `LLM_CONCURRENCY` | `llm_concurrency` | int | `3` |
 | `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
 | `INGEST_MIN_DENSITY` | `ingest_min_density` | float | `0.4` |
 | `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
@@ -278,11 +279,14 @@ View decay stats with `remind stats`.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `consolidation_threshold` | `5` | Episodes before auto-consolidation triggers |
-| `consolidation_concepts_per_pass` | `64` | Max concepts processed per consolidation pass |
+| `concepts_per_pass` | `64` | Max concepts included per consolidation LLM pass |
 | `auto_consolidate` | `true` | Whether to auto-consolidate after `remember` |
-| `entity_extraction_batch_size` | `10` | Episodes per entity extraction LLM call |
-| `consolidation_batch_size` | `25` | Episodes fetched and consolidated per pass |
-| `consolidation_llm_concurrency` | `1` | Max concurrent LLM calls within a consolidation run (topic groups, extraction sub-batches, concept-chunk sub-passes all share this limit) |
+| `extraction_batch_size` | `50` | Episodes fetched per extraction loop pass (independent of consolidation batch size) |
+| `extraction_llm_batch_size` | `10` | Episodes grouped into each extraction LLM call |
+| `consolidation_batch_size` | `25` | Episodes fetched and generalized per consolidation loop pass |
+| `llm_concurrency` | `3` | Max concurrent LLM calls across extraction + consolidation; also bounds topic-group parallelism |
+
+Legacy aliases remain supported: `consolidation_concepts_per_pass`, `entity_extraction_batch_size`, and `consolidation_llm_concurrency`.
 
 ## Auto-ingest
 
