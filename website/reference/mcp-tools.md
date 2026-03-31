@@ -27,12 +27,16 @@ Stream raw text into the auto-ingest pipeline. Text buffers internally until a c
 ```
 ingest(content="User: Fix the auth bug\nAssistant: Looking at verify_credentials...")
 ingest(content="<tool output>", source="tool_output")
+ingest(content="Chose Redis for caching", topic="architecture")
 ```
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content` | string | Yes | Raw text to ingest |
 | `source` | string | No | Source label for metadata (default: `conversation`) |
+| `topic` | string | No | Topic ID or name. When set, all extracted episodes go to this topic. When omitted, the triage LLM infers per-episode topics automatically. |
+
+**Topic behavior**: With `topic`, all episodes are assigned to the given topic (no inference). Without `topic`, the triage LLM maps each episode to an existing topic or suggests a new one (auto-created).
 
 **`ingest` vs `remember`**: Use `remember` when you've already decided what's worth storing. Use `ingest` when you want Remind to decide — it scores information density, filters low-value content, and distills memory-worthy episodes automatically. Episodes from `ingest` are immediately consolidated.
 
@@ -42,7 +46,12 @@ Force-flush the ingestion buffer, processing whatever text has accumulated regar
 
 ```
 flush_ingest()
+flush_ingest(topic="architecture")
 ```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `topic` | string | No | Topic for extracted episodes. Same behavior as `ingest()` topic parameter. |
 
 Use at session end or whenever you want to ensure all ingested text is processed.
 

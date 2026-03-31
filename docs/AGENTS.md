@@ -15,8 +15,8 @@ External memory layer that persists across sessions and generalizes experiences 
 | `delete_topic(topic_id)` | Delete unused topic |
 | `list_topics()` | List all topics with stats |
 | `topic_overview(topic, [k])` | Top concepts for a topic (no query needed) |
-| `ingest(content, [source])` | Auto-ingest raw text with density scoring |
-| `flush_ingest()` | Force-flush ingestion buffer |
+| `ingest(content, [source], [topic])` | Auto-ingest raw text with density scoring |
+| `flush_ingest([topic])` | Force-flush ingestion buffer |
 | `consolidate([force])` | Extract entities + process episodes → concepts |
 | `inspect([concept_id], [show_episodes])` | View concepts or episodes |
 | `entities([entity_type], [limit])` | List entities with mention counts |
@@ -59,9 +59,14 @@ remember(content="Chose SQLite for zero-dep deploys", topic="architecture", sour
 ```
 ingest(content="User: Fix the auth bug\nAssistant: Looking at verify_credentials...")
 ingest(content="<raw tool output>", source="tool_output")
+ingest(content="Chose Postgres for JSONB support", topic="architecture")
 ```
 
 Streams raw text into Remind's auto-ingest pipeline. Text buffers internally (~4000 chars) then gets scored for information density and distilled into episodes automatically. Use `flush_ingest()` at session end to process remaining buffer.
+
+**Topic behavior**:
+- **With `topic`**: All extracted episodes are assigned to the given topic. No inference needed.
+- **Without `topic`**: The triage LLM infers per-episode topics automatically — mapping to existing topics or creating new ones. Different episodes from the same chunk can end up in different topics.
 
 **`ingest()` vs `remember()`**: Use `remember()` when you've already decided what's worth storing. Use `ingest()` when you want Remind to decide — it filters, scores, and distills automatically.
 
@@ -69,9 +74,10 @@ Streams raw text into Remind's auto-ingest pipeline. Text buffers internally (~4
 
 ```
 flush_ingest()
+flush_ingest(topic="architecture")
 ```
 
-Forces processing of whatever text is in the ingestion buffer, regardless of threshold.
+Forces processing of whatever text is in the ingestion buffer, regardless of threshold. Pass `topic` to assign all flushed episodes to a specific topic; omit to let the LLM infer topics.
 
 ## recall
 
@@ -103,7 +109,9 @@ topic_overview(topic="architecture")    # Top concepts for a topic
 topic_overview(topic="product", k=10)   # More results
 ```
 
-When calling `remember()` or `ingest()` with a topic name, the topic is auto-created if it doesn't exist. If no topic is given, memories go to the "general" default topic.
+When calling `remember()` with a topic, the topic is resolved by ID or name; if no match, falls back to the "general" default.
+
+When calling `ingest()` with a topic, all extracted episodes go to that topic. When calling `ingest()` without a topic, the triage LLM infers topics per-episode — mapping to existing topics or auto-creating new ones.
 
 When calling `recall()` without a topic, results are grouped by topic showing top N per topic. With a topic, results are filtered to that topic only.
 
@@ -193,6 +201,7 @@ For continuous memory capture without manual curation:
 **During work** — stream raw conversation/output into `ingest()`:
 ```
 ingest(content="<conversation fragment or tool output>")
+ingest(content="<architecture discussion>", topic="architecture")
 ```
 
 **Session end** — flush remaining buffer:
@@ -200,7 +209,7 @@ ingest(content="<conversation fragment or tool output>")
 flush_ingest()
 ```
 
-Remind handles density scoring, distillation, and consolidation automatically. High-density content produces episodes; low-density content (greetings, boilerplate) is dropped.
+Remind handles density scoring, topic assignment, distillation, and consolidation automatically. High-density content produces episodes; low-density content (greetings, boilerplate) is dropped. Topics are inferred automatically when not specified — the triage LLM maps episodes to existing topics or creates new ones.
 
 ## Fact Episodes
 

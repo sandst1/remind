@@ -26,6 +26,8 @@ External memory layer that persists across sessions and generalizes experiences 
 | `remind restore-episode <id>` | Restore deleted episode |
 | `remind restore-concept <id>` | Restore deleted concept |
 | `remind deleted` | List soft-deleted items |
+| `remind ingest "<content>"` | Auto-ingest with density scoring + topic inference |
+| `remind flush-ingest` | Force-flush ingestion buffer |
 
 ## remember
 
@@ -75,6 +77,20 @@ remind topics overview product -k 10    # More results
 ```
 
 When using `--topic` with `remember`, the topic is resolved by ID or name. If no match, the memory goes to the "general" default topic.
+
+## ingest
+
+```bash
+remind ingest "User prefers dark mode and Vim keybindings"
+remind ingest "Rate limiting at gateway" --topic architecture
+echo "conversation log" | remind ingest
+cat transcript.txt | remind ingest --source transcript
+remind ingest --foreground "important observation"
+```
+
+**Topics** (`--topic`): When set, all extracted episodes go to that topic. When omitted, the triage LLM infers per-episode topics automatically — mapping to existing topics or creating new ones.
+
+Use `remind flush-ingest` to force-process whatever is in the buffer.
 
 **Workflow**: `remind topics list` → `remind topics overview <id>` → `remind recall "<query>" --topic <id>`
 

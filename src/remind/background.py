@@ -145,6 +145,7 @@ def enqueue_ingest_chunk(
     db_url: str,
     chunk: str,
     source: str = "conversation",
+    topic: Optional[str] = None,
     remind_dir: Optional[Path] = None,
 ) -> Path:
     """Write a chunk to the ingest queue directory for later processing.
@@ -160,7 +161,10 @@ def enqueue_ingest_chunk(
     ts = f"{time.time():.6f}"
     suffix = uuid4().hex[:8]
     path = queue_dir / f"{ts}-{suffix}.json"
-    path.write_text(json.dumps({"chunk": chunk, "source": source}))
+    payload: dict = {"chunk": chunk, "source": source}
+    if topic is not None:
+        payload["topic"] = topic
+    path.write_text(json.dumps(payload))
 
     logger.debug(f"Enqueued ingest chunk: {path.name} ({len(chunk)} chars)")
     return path

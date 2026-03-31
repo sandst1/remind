@@ -834,12 +834,13 @@ async def tool_list_plans(
 async def tool_ingest(
     content: str,
     source: str = "conversation",
+    topic: Optional[str] = None,
 ) -> str:
     """Ingest raw text for automatic memory curation."""
     memory = await get_memory()
 
     buf_size_before = memory.ingest_buffer_size
-    episode_ids = await memory.ingest(content, source=source)
+    episode_ids = await memory.ingest(content, source=source, topic=topic)
 
     if episode_ids:
         lines = [f"Ingested and created {len(episode_ids)} episode(s):"]
@@ -859,7 +860,7 @@ async def tool_ingest(
     return "Ingested but triage found nothing memory-worthy (low density)."
 
 
-async def tool_flush_ingest() -> str:
+async def tool_flush_ingest(topic: Optional[str] = None) -> str:
     """Force-flush the ingestion buffer and process contents."""
     memory = await get_memory()
 
@@ -867,7 +868,7 @@ async def tool_flush_ingest() -> str:
     if buf_size == 0:
         return "Ingestion buffer is empty, nothing to flush."
 
-    episode_ids = await memory.flush_ingest()
+    episode_ids = await memory.flush_ingest(topic=topic)
 
     if episode_ids:
         lines = [f"Flushed buffer ({buf_size} chars) and created {len(episode_ids)} episode(s):"]
@@ -1464,6 +1465,7 @@ def create_mcp_server(config=None):
     async def ingest(
         content: str,
         source: str = "conversation",
+        topic: Optional[str] = None,
     ) -> str:
         """Ingest raw text for automatic memory curation.
 
@@ -1479,24 +1481,32 @@ def create_mcp_server(config=None):
         Args:
             content: Raw text to ingest (conversation fragments, tool output, etc.)
             source: Source label for metadata tracking (default: "conversation")
+            topic: Optional topic ID or name. When set, all extracted episodes
+                are assigned to this topic. When omitted, the triage LLM
+                infers per-episode topics automatically.
 
         Returns:
             Status message (buffered, episodes created, or dropped)
         """
-        return await tool_ingest(content, source)
+        return await tool_ingest(content, source, topic=topic)
 
     @mcp.tool()
-    async def flush_ingest() -> str:
+    async def flush_ingest(topic: Optional[str] = None) -> str:
         """Force-flush the ingestion buffer.
 
         Processes whatever text is in the buffer immediately, regardless
         of whether the character threshold has been reached. Use at
         session end or when you want to ensure all ingested text is processed.
 
+        Args:
+            topic: Optional topic ID or name for extracted episodes.
+                When set, all episodes are assigned to this topic.
+                When omitted, topics are inferred automatically.
+
         Returns:
             Status message with results
         """
-        return await tool_flush_ingest()
+        return await tool_flush_ingest(topic=topic)
 
     return mcp
 

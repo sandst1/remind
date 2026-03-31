@@ -27,10 +27,11 @@ remind remember "content" --topic architecture --source-type agent
 
 ### ingest
 
-Auto-ingest raw text with information density scoring. Text buffers internally and processes when the threshold is reached.
+Auto-ingest raw text with information density scoring and topic inference. Text buffers internally and processes when the threshold is reached.
 
 ```bash
 remind ingest "User said they prefer dark mode and Vim keybindings"
+remind ingest "Rate limiting at gateway" --topic architecture
 echo "conversation log" | remind ingest
 cat transcript.txt | remind ingest --source transcript
 ```
@@ -38,6 +39,7 @@ cat transcript.txt | remind ingest --source transcript
 | Flag | Description |
 |------|-------------|
 | `-s, --source` | Source label for metadata (default: `conversation`) |
+| `--topic` | Topic ID or name. When set, all extracted episodes go to this topic. When omitted, topics are inferred by the triage LLM. |
 | `-f, --foreground` | Run triage and consolidation in foreground (blocking). By default, processing is spawned in a background worker. |
 
 Accepts text as an argument or via stdin (for piping).

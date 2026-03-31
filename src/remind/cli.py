@@ -635,18 +635,23 @@ def end_session(ctx):
 @main.command()
 @click.argument("content", required=False)
 @click.option("--source", "-s", default="conversation", help="Source label for metadata")
+@click.option("--topic", default=None, help="Topic ID or name (inferred by LLM when omitted)")
 @click.option("--foreground", "-f", is_flag=True, help="Run triage and consolidation in foreground (blocking)")
 @click.pass_context
-def ingest(ctx, content: Optional[str], source: str, foreground: bool):
+def ingest(ctx, content: Optional[str], source: str, topic: Optional[str], foreground: bool):
     """Ingest raw text for automatic memory curation.
 
     By default, spawns triage and consolidation in a background process
     and returns immediately. Use --foreground to run synchronously.
 
+    When --topic is given, all extracted episodes are assigned to that topic.
+    When omitted, the triage LLM infers per-episode topics automatically.
+
     Accepts text as an argument or via stdin (for piping).
 
     Examples:
         remind ingest "User prefers dark mode and Vim keybindings"
+        remind ingest "Rate limiting at gateway" --topic architecture
         echo "conversation log" | remind ingest
         cat transcript.txt | remind ingest --source transcript
         remind ingest --foreground "important observation"
@@ -668,8 +673,8 @@ def ingest(ctx, content: Optional[str], source: str, foreground: bool):
             ingest_background=False,
         )
         with console.status("[bold cyan]Running triage and consolidation..."):
-            episode_ids = run_async(memory.ingest(content, source=source))
-            episode_ids.extend(run_async(memory.flush_ingest()))
+            episode_ids = run_async(memory.ingest(content, source=source, topic=topic))
+            episode_ids.extend(run_async(memory.flush_ingest(topic=topic)))
 
         if episode_ids:
             console.print(f"[green]✓ Created {len(episode_ids)} episode(s) from ingest[/green]")
@@ -685,6 +690,7 @@ def ingest(ctx, content: Optional[str], source: str, foreground: bool):
             db_url=ctx.obj["db"],
             chunk=content,
             source=source,
+            topic=topic,
             remind_dir=ctx.obj.get("remind_dir"),
         )
         spawned = spawn_ingest_worker(

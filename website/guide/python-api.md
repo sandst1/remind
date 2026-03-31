@@ -53,15 +53,18 @@ asyncio.run(main())
 Stream raw text and let Remind decide what's worth remembering:
 
 ```python
-# Stream conversation fragments — buffer accumulates internally
+# Stream conversation fragments — topics are inferred automatically
 await memory.ingest("User: How should we handle rate limiting?")
 await memory.ingest("Assistant: I'd suggest a token bucket at the gateway...")
+
+# With explicit topic — all episodes assigned to "architecture"
+await memory.ingest("Chose Redis for caching", topic="architecture")
 
 # At session end, flush remaining buffer
 await memory.flush_ingest()
 ```
 
-`ingest()` buffers text until a threshold (~4000 chars) is reached, then scores information density and extracts episodes automatically. Use `remember()` when you already know what's important; use `ingest()` when you want Remind to decide.
+`ingest()` buffers text until a threshold (~4000 chars) is reached, then scores information density and extracts episodes automatically. When `topic` is given, all episodes go to that topic. When omitted, the triage LLM infers per-episode topics (mapping to existing topics or creating new ones). Use `remember()` when you already know what's important; use `ingest()` when you want Remind to decide.
 
 ## Fact and outcome episodes
 
@@ -80,7 +83,7 @@ memory.remember(
 ## Key design decisions
 
 - **`remember()` is synchronous and fast** — No LLM calls, just stores the episode. This keeps the write path non-blocking.
-- **`ingest()` is async with LLM triage** — Buffers raw text, scores density, extracts episodes, and consolidates automatically.
+- **`ingest()` is async with LLM triage** — Buffers raw text, extracts episodes with topic inference, and consolidates automatically.
 - **`consolidate()` is async** — This is where all LLM work happens (extraction, generalization). Call it explicitly or let auto-consolidation handle it.
 - **`recall()` is async** — Uses embeddings and spreading activation.
 

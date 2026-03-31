@@ -19,7 +19,7 @@ src/remind/
 ├── consolidation.py   # LLM-powered episode → concept transformation
 ├── extraction.py      # Entity/type extraction from episodes
 ├── retrieval.py       # Spreading activation retrieval
-├── triage.py          # Auto-ingest: buffered intake + density scoring
+├── triage.py          # Auto-ingest: buffered intake + density scoring + topic inference
 ├── cli.py             # Command-line interface (project-aware)
 ├── mcp_server.py      # MCP (Model Context Protocol) server
 ├── background.py      # Background consolidation spawning
@@ -87,7 +87,7 @@ class EmbeddingProvider(ABC):
 The main entry point. Key design decisions:
 
 1. **`remember()` is synchronous and fast** - no LLM calls, just stores episode
-2. **`ingest()` is async with LLM triage** - buffers, scores density, extracts episodes, immediately consolidates
+2. **`ingest()` is async with LLM triage** - buffers, extracts episodes with topic inference, immediately consolidates
 3. **`consolidate()` does all LLM work** - extraction + generalization
 4. **Two consolidation modes**: Automatic (threshold-based) or manual (hook-based)
 
@@ -111,9 +111,11 @@ The "brain" of the system. Uses LLM to:
 
 The "input selection" subsystem. Two classes:
 - `IngestionBuffer` — character-threshold accumulator. Buffers raw text until threshold (~4000 chars).
-- `IngestionTriager` — LLM-based episode extraction. The LLM decides directly what's worth remembering, extracts distilled episodes, and detects action-result pairs as outcome episodes. A density score (0.0-1.0) is produced for diagnostics but doesn't gate extraction.
+- `IngestionTriager` — LLM-based episode extraction with topic inference. The LLM decides directly what's worth remembering, extracts distilled episodes, detects action-result pairs as outcome episodes, and assigns each episode to a topic. A density score (0.0-1.0) is produced for diagnostics but doesn't gate extraction.
 
-Pipeline: `ingest()` → buffer → triage + extract (LLM) → `remember()` → `consolidate(force=True)`
+**Topic handling**: When `ingest()` is called with an explicit `topic`, all episodes are stamped with that topic (no LLM inference). When `topic` is omitted, the triage LLM receives existing topics as context and assigns each episode to an existing topic or suggests a new one (auto-created). Sub-chunks are triaged concurrently, bounded by `llm_concurrency`.
+
+Pipeline: `ingest()` → buffer → triage + extract + topic inference (LLM) → `remember()` → `consolidate(force=True)`
 
 ### Retrieval (`retrieval.py`)
 
@@ -424,7 +426,7 @@ When making changes, these files are most commonly modified together:
 | New provider | `providers/newprovider.py`, `providers/__init__.py`, `interface.py` |
 | Consolidation logic | `consolidation.py`, `extraction.py` |
 | Retrieval behavior | `retrieval.py` |
-| Auto-ingest pipeline | `triage.py`, `interface.py`, `config.py` |
+| Auto-ingest pipeline | `triage.py`, `llm_protocol.py`, `interface.py`, `config.py` |
 | CLI commands | `cli.py` |
 | Configuration | `config.py`, `interface.py`, `mcp_server.py`, `cli.py` |
 | Background consolidation | `background.py`, `background_worker.py`, `cli.py` |

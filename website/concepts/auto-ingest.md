@@ -10,9 +10,13 @@ The pipeline has three stages:
 
 Raw text accumulates in an in-memory buffer via `ingest()`. When the buffer exceeds a character threshold (default ~4000 chars), it flushes and triggers triage.
 
-### 2. Triage and extraction
+### 2. Triage, extraction, and topic assignment
 
 The flushed chunk is sent to an LLM that decides what's worth remembering. The LLM extracts any memory-worthy information as tight, standalone episode statements -- and returns nothing if the chunk is pure filler. A density score (0.0-1.0) is also produced for diagnostics/logging, but it doesn't gate extraction. The LLM is the sole decision-maker.
+
+The triage LLM also assigns each episode to a topic. It receives existing topics as context and maps episodes to them, or suggests new topic names (which are auto-created). When `ingest()` is called with an explicit `topic` parameter, topic inference is skipped entirely -- all episodes are stamped with the given topic.
+
+Large chunks are split into sub-chunks and triaged concurrently (bounded by `llm_concurrency`).
 
 Extracted episodes go through `remember()` and then **immediately consolidate**, bypassing the normal auto-consolidation threshold.
 
@@ -42,6 +46,9 @@ ingest(content="User: Can you fix the auth bug?\nAssistant: Looking at verify_cr
 ingest(content="...I see the issue. The token expiry check uses <= instead of <, so tokens are accepted one second past expiry. Fixing now...")
 ingest(content="Assistant: Fixed. Changed the comparison operator in verify_credentials from <= to <. All auth tests pass now.")
 
+# With an explicit topic -- all episodes go to "architecture"
+ingest(content="Decided to use Redis for session caching", topic="architecture")
+
 # At session end
 flush_ingest()
 ```
@@ -63,6 +70,9 @@ cat conversation-log.txt | remind ingest --source transcript
 # Pass as argument
 remind ingest "User prefers dark mode and Vim keybindings in all editors"
 
+# With an explicit topic
+remind ingest "Rate limiting at gateway level" --topic architecture
+
 # Force-process whatever is in the buffer
 remind flush-ingest
 ```
@@ -74,10 +84,12 @@ from remind.interface import create_memory
 
 memory = create_memory(db_path="my-project")
 
-# Stream text in
+# Stream text in -- topics are inferred automatically
 await memory.ingest("User: How should we handle rate limiting?")
 await memory.ingest("Assistant: I'd suggest a token bucket at the gateway...")
-# ... more conversation ...
+
+# With explicit topic -- all episodes go to "architecture"
+await memory.ingest("Chose Redis for caching", topic="architecture")
 
 # At session end, flush remaining buffer
 await memory.flush_ingest()

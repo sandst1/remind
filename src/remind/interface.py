@@ -165,6 +165,7 @@ class MemoryInterface:
         self.auto_consolidate = auto_consolidate
         self.default_recall_k = default_recall_k
         self.default_episode_k = default_episode_k
+        self._llm_concurrency = llm_concurrency
         
         # Decay settings
         self.decay_config = decay_config or DecayConfig()
@@ -580,13 +581,15 @@ class MemoryInterface:
         Args:
             content: Raw text to ingest (conversation fragments, tool output, etc.)
             source: Source label for metadata (default: "conversation")
-            topic: Optional topic ID for extracted episodes
+            topic: Optional topic ID or name for extracted episodes.
+                   When set, all episodes are assigned this topic (no inference).
+                   When None, the triage LLM infers per-episode topics from
+                   content, mapping to existing topics or creating new ones.
 
         Returns:
             List of episode IDs created (empty if buffer didn't flush,
             triage dropped everything, or processing is running in background).
         """
-        self._ingest_topic = topic
         chunk = self._ingest_buffer.add(content)
         if chunk is None:
             logger.debug(
@@ -596,15 +599,20 @@ class MemoryInterface:
             return []
 
         if self._ingest_background:
-            self._schedule_background_ingest(chunk, source)
+            self._schedule_background_ingest(chunk, source, topic=topic)
             return []
 
-        return await self._process_ingest_chunk(chunk, source)
+        return await self._process_ingest_chunk(chunk, source, topic=topic)
 
-    async def flush_ingest(self) -> list[str]:
+    async def flush_ingest(self, topic: Optional[str] = None) -> list[str]:
         """Force-flush the ingestion buffer and process whatever is in it.
 
         Call at session end or when you want to ensure everything is processed.
+
+        Args:
+            topic: Optional topic ID or name for extracted episodes.
+                   When set, all episodes are assigned this topic.
+                   When None, topics are inferred by the triage LLM.
 
         Returns:
             List of episode IDs created (empty if buffer was empty,
@@ -615,12 +623,14 @@ class MemoryInterface:
             return []
 
         if self._ingest_background:
-            self._schedule_background_ingest(chunk, source="flush")
+            self._schedule_background_ingest(chunk, source="flush", topic=topic)
             return []
 
-        return await self._process_ingest_chunk(chunk, source="flush")
+        return await self._process_ingest_chunk(chunk, source="flush", topic=topic)
 
-    def _schedule_background_ingest(self, chunk: str, source: str) -> None:
+    def _schedule_background_ingest(
+        self, chunk: str, source: str, topic: Optional[str] = None,
+    ) -> None:
         """Schedule ingest processing as a background async task.
 
         Concurrency is capped by self._ingest_semaphore (default 2) so
@@ -628,7 +638,7 @@ class MemoryInterface:
         """
         async def _guarded():
             async with self._ingest_semaphore:
-                return await self._process_ingest_chunk(chunk, source)
+                return await self._process_ingest_chunk(chunk, source, topic=topic)
 
         task = asyncio.create_task(
             _guarded(),
@@ -641,23 +651,44 @@ class MemoryInterface:
             f"{len(self._background_tasks)} tasks in flight)"
         )
 
-    async def _process_ingest_chunk(self, chunk: str, source: str) -> list[str]:
+    async def _process_ingest_chunk(
+        self, chunk: str, source: str, topic: Optional[str] = None,
+    ) -> list[str]:
         """Run triage on a chunk and store/consolidate resulting episodes.
 
         Large chunks are split into sub-chunks of at most
         ``self._ingest_buffer.threshold`` characters before triage so that
-        each LLM call receives a reasonable amount of text.  Consolidation
+        each LLM call receives a reasonable amount of text.  Sub-chunks are
+        triaged concurrently (bounded by llm_concurrency).  Consolidation
         runs once at the end after all sub-chunks have been triaged.
         """
         sub_chunks = split_text(chunk, max_size=self._ingest_buffer.threshold)
         if not sub_chunks:
             return []
 
-        all_episode_ids: list[str] = []
+        total = len(sub_chunks)
 
-        for i, sub_chunk in enumerate(sub_chunks):
-            ids = await self._triage_sub_chunk(sub_chunk, source, i, len(sub_chunks))
-            all_episode_ids.extend(ids)
+        if total == 1:
+            all_episode_ids = await self._triage_sub_chunk(
+                sub_chunks[0], source, 0, 1, topic=topic,
+            )
+        else:
+            sem = asyncio.Semaphore(self._llm_concurrency)
+
+            async def _bounded_triage(idx: int, sc: str) -> list[str]:
+                async with sem:
+                    return await self._triage_sub_chunk(sc, source, idx, total, topic=topic)
+
+            results = await asyncio.gather(
+                *[_bounded_triage(i, sc) for i, sc in enumerate(sub_chunks)],
+                return_exceptions=True,
+            )
+            all_episode_ids: list[str] = []
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.warning(f"Sub-chunk triage failed: {r}")
+                else:
+                    all_episode_ids.extend(r)
 
         # Single consolidation pass after all sub-chunks are processed
         if all_episode_ids:
@@ -674,8 +705,14 @@ class MemoryInterface:
 
     async def _triage_sub_chunk(
         self, chunk: str, source: str, chunk_index: int, total_chunks: int,
+        topic: Optional[str] = None,
     ) -> list[str]:
-        """Triage a single sub-chunk and store extracted episodes."""
+        """Triage a single sub-chunk and store extracted episodes.
+
+        Args:
+            topic: When set, all episodes are assigned this topic (no inference).
+                   When None, the triage LLM infers per-episode topics.
+        """
         existing_concepts = ""
         try:
             activated = await self.recall(
@@ -692,7 +729,22 @@ class MemoryInterface:
         except Exception as e:
             logger.debug(f"Recall for triage context failed (ok for empty memory): {e}")
 
-        triage_result = await self._triager.triage(chunk, existing_concepts)
+        existing_topics = ""
+        if topic is None:
+            try:
+                all_topics = self.store.get_all_topics()
+                if all_topics:
+                    topic_lines = []
+                    for t in all_topics:
+                        desc = f" - {t.description}" if t.description else ""
+                        topic_lines.append(f"- {t.id}: {t.name}{desc}")
+                    existing_topics = "\n".join(topic_lines)
+            except Exception as e:
+                logger.debug(f"Failed to load topics for triage: {e}")
+
+        triage_result = await self._triager.triage(
+            chunk, existing_concepts, existing_topics=existing_topics,
+        )
 
         logger.info(
             f"Triage [{chunk_index + 1}/{total_chunks}]: "
@@ -710,16 +762,45 @@ class MemoryInterface:
             metadata["source"] = source
             metadata["triage_density"] = triage_result.density
 
+            ep_topic = topic
+            if ep_topic is None and ep.topic_id:
+                ep_topic = self._resolve_or_create_inferred_topic(
+                    ep.topic_id, ep.topic_name,
+                )
+
             episode_id = await self.remember(
                 content=ep.content,
                 metadata=metadata,
                 episode_type=ep.episode_type or "observation",
                 entities=ep.entities if ep.entities else None,
-                topic=getattr(self, "_ingest_topic", None),
+                topic=ep_topic,
             )
             episode_ids.append(episode_id)
 
         return episode_ids
+
+    def _resolve_or_create_inferred_topic(
+        self, topic_id: str, topic_name: Optional[str] = None,
+    ) -> str:
+        """Resolve a triage-inferred topic, creating it if new.
+
+        Returns the resolved topic ID.
+        """
+        existing = self.store.get_topic(topic_id)
+        if existing:
+            return existing.id
+
+        for t in self.store.get_all_topics():
+            if t.name.lower() == (topic_name or topic_id).lower():
+                return t.id
+
+        name = topic_name or topic_id
+        try:
+            created = self.create_topic(name)
+            logger.info(f"Auto-created topic '{created.id}' from triage inference")
+            return created.id
+        except ValueError:
+            return self.store.get_or_create_default_topic().id
 
     @property
     def ingest_buffer_size(self) -> int:

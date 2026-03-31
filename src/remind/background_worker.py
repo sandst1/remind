@@ -133,6 +133,7 @@ def run_ingest(args, logger):
         data = json.loads(chunk_path.read_text())
         chunk = data["chunk"]
         source = data.get("source", "conversation")
+        topic = data.get("topic")
     except Exception as e:
         logger.exception(f"Failed to read ingest chunk file {chunk_path}: {e}")
         return
@@ -145,7 +146,7 @@ def run_ingest(args, logger):
     remind_dir = Path(args.remind_dir) if args.remind_dir else None
     project_dir = remind_dir.parent if remind_dir is not None else None
 
-    logger.info(f"Starting background ingest for {args.db} ({len(chunk)} chars, source={source})")
+    logger.info(f"Starting background ingest for {args.db} ({len(chunk)} chars, source={source}, topic={topic})")
 
     try:
         from remind.interface import create_memory
@@ -160,7 +161,7 @@ def run_ingest(args, logger):
 
         async def _ingest():
             try:
-                return await memory._process_ingest_chunk(chunk, source)
+                return await memory._process_ingest_chunk(chunk, source, topic=topic)
             finally:
                 await memory.aclose()
 
@@ -175,10 +176,10 @@ def run_ingest(args, logger):
         logger.exception(f"Background ingest failed for {args.db}: {e}")
 
 
-def _next_queued_chunk(queue_dir: Path) -> tuple[Path, str, str] | None:
+def _next_queued_chunk(queue_dir: Path) -> tuple[Path, str, str, str | None] | None:
     """Pop the oldest chunk file from the queue directory.
 
-    Returns (path, chunk_text, source) or None if queue is empty.
+    Returns (path, chunk_text, source, topic) or None if queue is empty.
     """
     if not queue_dir.is_dir():
         return None
@@ -192,12 +193,13 @@ def _next_queued_chunk(queue_dir: Path) -> tuple[Path, str, str] | None:
         data = json.loads(path.read_text())
         chunk = data["chunk"]
         source = data.get("source", "conversation")
+        topic = data.get("topic")
     except Exception:
         path.unlink(missing_ok=True)
         return None
 
     path.unlink(missing_ok=True)
-    return path, chunk, source
+    return path, chunk, source, topic
 
 
 def run_ingest_worker(args, logger):
@@ -241,13 +243,13 @@ def run_ingest_worker(args, logger):
                         if item is None:
                             break
 
-                    _, chunk, source = item
+                    _, chunk, source, topic = item
                     logger.info(
-                        f"Processing queued chunk ({len(chunk)} chars, source={source})"
+                        f"Processing queued chunk ({len(chunk)} chars, source={source}, topic={topic})"
                     )
 
                     try:
-                        episode_ids = await memory._process_ingest_chunk(chunk, source)
+                        episode_ids = await memory._process_ingest_chunk(chunk, source, topic=topic)
                         total_episodes += len(episode_ids)
                         chunks_processed += 1
                         logger.info(

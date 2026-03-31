@@ -114,9 +114,10 @@ class TestNextQueuedChunk:
 
         result = _next_queued_chunk(tmp_path)
         assert result is not None
-        _, chunk, source = result
+        _, chunk, source, topic = result
         assert chunk == "first"
         assert source == "a"
+        assert topic is None
         # File should be deleted after reading
         assert not f1.exists()
         assert f2.exists()
@@ -135,14 +136,20 @@ class TestNextQueuedChunk:
         # Second call picks up the good file
         result = _next_queued_chunk(tmp_path)
         assert result is not None
-        _, chunk, _ = result
+        _, chunk, _, _ = result
         assert chunk == "ok"
 
     def test_default_source(self, tmp_path):
         f = tmp_path / "0001-x.json"
         f.write_text(json.dumps({"chunk": "data"}))
-        _, _, source = _next_queued_chunk(tmp_path)
+        _, _, source, _ = _next_queued_chunk(tmp_path)
         assert source == "conversation"
+
+    def test_topic_preserved(self, tmp_path):
+        f = tmp_path / "0001-x.json"
+        f.write_text(json.dumps({"chunk": "data", "source": "s", "topic": "architecture"}))
+        _, _, _, topic = _next_queued_chunk(tmp_path)
+        assert topic == "architecture"
 
 
 class TestRunIngestWorker:
@@ -177,7 +184,7 @@ class TestRunIngestWorker:
                 json.dumps({"chunk": "chunk two", "source": "s2"})
             )
 
-            async def fake_process(chunk, source):
+            async def fake_process(chunk, source, topic=None):
                 return [f"ep-{source}"]
 
             mock_memory = MagicMock()
