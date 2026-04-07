@@ -84,7 +84,8 @@ remind ui
 
 - **Generalization** — Episodes are consolidated into concepts with confidence, conditions, and exceptions
 - **Auto-ingest** — Stream raw conversation text; Remind scores information density and distills memory-worthy episodes automatically
-- **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph, with direct episode vector search for fine-grained matches
+- **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph, with hybrid embedding+keyword scoring
+- **Native vector indexes** — sqlite-vec for SQLite, pgvector for PostgreSQL; automatic fallback to brute-force when unavailable
 - **Entity graph** — Files, functions, people, tools and other entities are extracted and linked to episodes and concepts
 - **Outcome tracking** — Record action-result pairs; consolidation extracts causal strategy patterns
 - **Task management** — Track work items (todo → in\_progress → done / blocked) with priorities and dependencies
@@ -98,12 +99,14 @@ remind ui
 
 ## Database backends
 
-SQLite is the default — no extra dependencies needed. For PostgreSQL or MySQL, install the corresponding extra:
+SQLite is the default with `sqlite-vec` for native vector search (included as a dependency). For PostgreSQL or MySQL, install the corresponding extra:
 
 ```bash
-pip install "remind-mcp[postgres]"   # PostgreSQL (psycopg v3)
+pip install "remind-mcp[postgres]"   # PostgreSQL (psycopg v3 + pgvector)
 pip install "remind-mcp[mysql]"      # MySQL (PyMySQL)
 ```
+
+PostgreSQL installations get `pgvector` for HNSW-indexed vector search. Enable the extension with `CREATE EXTENSION vector` (Remind does this automatically).
 
 Point Remind at your database via config file, environment variable, or CLI flag:
 

@@ -17,11 +17,13 @@ dependencies = [
     "starlette>=0.38.0",
     "filelock>=3.0.0",
     "sqlalchemy>=2.0",
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.optional-dependencies]
 postgres = [
     "psycopg[binary]>=3.0",
+    "pgvector>=0.3.0",
 ]
 mysql = [
     "pymysql>=1.0",

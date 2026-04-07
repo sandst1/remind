@@ -32,6 +32,7 @@ from sqlalchemy import (
     delete,
     text,
     inspect,
+    event,
 )
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -42,6 +43,39 @@ from remind.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Vector backend detection
+# ---------------------------------------------------------------------------
+
+_SQLITE_VEC_AVAILABLE: Optional[bool] = None
+_PGVECTOR_AVAILABLE: Optional[bool] = None
+
+
+def _check_sqlite_vec() -> bool:
+    """Check if sqlite-vec is installable."""
+    global _SQLITE_VEC_AVAILABLE
+    if _SQLITE_VEC_AVAILABLE is not None:
+        return _SQLITE_VEC_AVAILABLE
+    try:
+        import sqlite_vec  # noqa: F401
+        _SQLITE_VEC_AVAILABLE = True
+    except ImportError:
+        _SQLITE_VEC_AVAILABLE = False
+    return _SQLITE_VEC_AVAILABLE
+
+
+def _check_pgvector() -> bool:
+    """Check if pgvector is importable."""
+    global _PGVECTOR_AVAILABLE
+    if _PGVECTOR_AVAILABLE is not None:
+        return _PGVECTOR_AVAILABLE
+    try:
+        import pgvector.sqlalchemy  # noqa: F401
+        _PGVECTOR_AVAILABLE = True
+    except ImportError:
+        _PGVECTOR_AVAILABLE = False
+    return _PGVECTOR_AVAILABLE
 
 
 class MemoryStore(ABC):
@@ -570,6 +604,11 @@ def _is_sqlite(engine) -> bool:
     return engine.dialect.name == "sqlite"
 
 
+def _has_column_in_list(columns: list[dict], col_name: str) -> bool:
+    """Check if a column exists in an inspector column list."""
+    return any(c["name"] == col_name for c in columns)
+
+
 def _embedding_to_bytes(embedding: Optional[list[float]]) -> Optional[bytes]:
     if not embedding:
         return None
@@ -606,6 +645,9 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     Supports SQLite (default), PostgreSQL, MySQL, and any database
     backend supported by SQLAlchemy.
+
+    When sqlite-vec or pgvector is available, embedding search uses native
+    vector indexes instead of brute-force Python cosine similarity.
     """
 
     def __init__(self, db_url: str = "sqlite:///memory.db"):
@@ -614,7 +656,35 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
         self.db_url = db_url
         self.engine = create_engine(db_url)
+
+        # Vector backend state
+        self._vec_backend: Optional[str] = None  # "sqlite-vec", "pgvector", or None
+        self._vec_dimensions: Optional[int] = None
+
+        self._setup_vector_backend()
         self._init_db()
+
+    def _setup_vector_backend(self) -> None:
+        """Detect and configure the appropriate vector search backend."""
+        if _is_sqlite(self.engine) and _check_sqlite_vec():
+            import sqlite_vec
+
+            @event.listens_for(self.engine, "connect")
+            def _load_sqlite_vec(dbapi_conn, connection_record):
+                dbapi_conn.enable_load_extension(True)
+                sqlite_vec.load(dbapi_conn)
+                dbapi_conn.enable_load_extension(False)
+
+            self._vec_backend = "sqlite-vec"
+            logger.info("Vector backend: sqlite-vec")
+
+        elif not _is_sqlite(self.engine) and _check_pgvector():
+            self._vec_backend = "pgvector"
+            logger.info("Vector backend: pgvector")
+
+        else:
+            backend = "SQLite" if _is_sqlite(self.engine) else self.engine.dialect.name
+            logger.info(f"Vector backend: brute-force (no native vector extension for {backend})")
 
     @contextmanager
     def _connect(self):
@@ -627,6 +697,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
         """Create tables and run additive migrations."""
         metadata_obj.create_all(self.engine)
         self._run_migrations()
+        self._init_vector_tables()
 
     def _run_migrations(self):
         """Run additive schema migrations for backwards compatibility."""
@@ -686,6 +757,235 @@ class SQLAlchemyMemoryStore(MemoryStore):
             except OperationalError:
                 logger.warning("Entity tables not found, will be created on next init")
 
+    def _init_vector_tables(self) -> None:
+        """Create vector index tables/extensions if a vector backend is active."""
+        if self._vec_backend is None:
+            return
+
+        stored_dims = self.get_metadata("embedding_dimensions")
+        if stored_dims:
+            self._vec_dimensions = int(stored_dims)
+
+        if self._vec_backend == "sqlite-vec":
+            self._init_sqlite_vec_tables()
+        elif self._vec_backend == "pgvector":
+            self._init_pgvector()
+
+    def _init_sqlite_vec_tables(self) -> None:
+        """Create sqlite-vec vec0 virtual tables if they don't exist."""
+        if not self._vec_dimensions:
+            return
+
+        dims = self._vec_dimensions
+        with self.engine.connect() as conn:
+            existing = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_concepts'")
+            ).fetchone()
+            if not existing:
+                conn.execute(text(
+                    f"CREATE VIRTUAL TABLE vec_concepts USING vec0("
+                    f"concept_id TEXT PRIMARY KEY, "
+                    f"embedding float[{dims}] distance_metric=cosine)"
+                ))
+                self._backfill_sqlite_vec(conn, "concepts")
+                conn.commit()
+                logger.info(f"Created vec_concepts table ({dims} dims)")
+
+            existing = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_episodes'")
+            ).fetchone()
+            if not existing:
+                conn.execute(text(
+                    f"CREATE VIRTUAL TABLE vec_episodes USING vec0("
+                    f"episode_id TEXT PRIMARY KEY, "
+                    f"embedding float[{dims}] distance_metric=cosine)"
+                ))
+                self._backfill_sqlite_vec(conn, "episodes")
+                conn.commit()
+                logger.info(f"Created vec_episodes table ({dims} dims)")
+
+    def _backfill_sqlite_vec(self, conn, table: str) -> None:
+        """Populate a vec0 table from existing embeddings in the main table."""
+        if table == "concepts":
+            rows = conn.execute(
+                select(concepts_table.c.id, concepts_table.c.embedding)
+                .where(concepts_table.c.embedding.isnot(None))
+            ).fetchall()
+            for row in rows:
+                if row.embedding:
+                    vec = np.frombuffer(row.embedding, dtype=np.float32)
+                    conn.execute(text(
+                        "INSERT INTO vec_concepts(concept_id, embedding) VALUES (:id, :emb)"
+                    ), {"id": row.id, "emb": vec.tobytes()})
+        else:
+            rows = conn.execute(
+                select(episodes_table.c.id, episodes_table.c.embedding)
+                .where(episodes_table.c.embedding.isnot(None))
+            ).fetchall()
+            for row in rows:
+                if row.embedding:
+                    vec = np.frombuffer(row.embedding, dtype=np.float32)
+                    conn.execute(text(
+                        "INSERT INTO vec_episodes(episode_id, embedding) VALUES (:id, :emb)"
+                    ), {"id": row.id, "emb": vec.tobytes()})
+
+    def _init_pgvector(self) -> None:
+        """Enable pgvector extension and create vector columns/indexes if needed."""
+        with self.engine.connect() as conn:
+            try:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"Could not create pgvector extension: {e}")
+                self._vec_backend = None
+                return
+
+            insp = inspect(self.engine)
+
+            if not _has_column_in_list(insp.get_columns("concepts"), "embedding_vec"):
+                if self._vec_dimensions:
+                    dims = self._vec_dimensions
+                    conn.execute(text(
+                        f"ALTER TABLE concepts ADD COLUMN embedding_vec vector({dims})"
+                    ))
+                    self._backfill_pgvector(conn, "concepts")
+                    conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS idx_concepts_embedding_vec "
+                        "ON concepts USING hnsw (embedding_vec vector_cosine_ops)"
+                    ))
+                    conn.commit()
+                    logger.info(f"Created concepts.embedding_vec column ({dims} dims)")
+
+            if not _has_column_in_list(insp.get_columns("episodes"), "embedding_vec"):
+                if self._vec_dimensions:
+                    dims = self._vec_dimensions
+                    conn.execute(text(
+                        f"ALTER TABLE episodes ADD COLUMN embedding_vec vector({dims})"
+                    ))
+                    self._backfill_pgvector(conn, "episodes")
+                    conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS idx_episodes_embedding_vec "
+                        "ON episodes USING hnsw (embedding_vec vector_cosine_ops)"
+                    ))
+                    conn.commit()
+                    logger.info(f"Created episodes.embedding_vec column ({dims} dims)")
+
+    def _backfill_pgvector(self, conn, table: str) -> None:
+        """Convert existing LargeBinary embeddings to pgvector format."""
+        main_table = concepts_table if table == "concepts" else episodes_table
+        rows = conn.execute(
+            select(main_table.c.id, main_table.c.embedding)
+            .where(main_table.c.embedding.isnot(None))
+        ).fetchall()
+        for row in rows:
+            if row.embedding:
+                vec = _bytes_to_embedding(row.embedding)
+                vec_str = "[" + ",".join(str(v) for v in vec) + "]"
+                conn.execute(text(
+                    f"UPDATE {table} SET embedding_vec = :vec WHERE id = :id"
+                ), {"vec": vec_str, "id": row.id})
+
+    def _ensure_vec_dimensions(self, embedding: list[float], conn=None) -> None:
+        """Record embedding dimensions on first use and create vector tables.
+
+        When called from within an existing connection context, pass *conn* to
+        avoid opening a nested connection (which deadlocks on SQLite).
+        """
+        dims = len(embedding)
+        if self._vec_dimensions == dims:
+            return
+
+        if self._vec_dimensions is not None and self._vec_dimensions != dims:
+            logger.warning(
+                f"Embedding dimensions changed ({self._vec_dimensions} -> {dims}), "
+                f"recreating vector tables"
+            )
+            self._drop_vector_tables()
+
+        self._vec_dimensions = dims
+
+        if conn is not None:
+            try:
+                conn.execute(
+                    metadata_table.insert().values(key="embedding_dimensions", value=str(dims))
+                )
+            except IntegrityError:
+                conn.execute(
+                    metadata_table.update()
+                    .where(metadata_table.c.key == "embedding_dimensions")
+                    .values(value=str(dims))
+                )
+            conn.commit()
+        else:
+            self.set_metadata("embedding_dimensions", str(dims))
+
+        self._init_vector_tables()
+
+    def _drop_vector_tables(self) -> None:
+        """Drop vector index tables for recreation."""
+        with self.engine.connect() as conn:
+            if self._vec_backend == "sqlite-vec":
+                conn.execute(text("DROP TABLE IF EXISTS vec_concepts"))
+                conn.execute(text("DROP TABLE IF EXISTS vec_episodes"))
+            elif self._vec_backend == "pgvector":
+                conn.execute(text("ALTER TABLE concepts DROP COLUMN IF EXISTS embedding_vec"))
+                conn.execute(text("ALTER TABLE episodes DROP COLUMN IF EXISTS embedding_vec"))
+            conn.commit()
+
+    def _upsert_vec_concept(self, conn, concept_id: str, embedding: Optional[list[float]]) -> None:
+        """Sync a concept embedding to the vector index."""
+        if self._vec_backend is None or embedding is None:
+            return
+        self._ensure_vec_dimensions(embedding, conn=conn)
+
+        if self._vec_backend == "sqlite-vec":
+            vec = np.array(embedding, dtype=np.float32)
+            conn.execute(text(
+                "DELETE FROM vec_concepts WHERE concept_id = :id"
+            ), {"id": concept_id})
+            conn.execute(text(
+                "INSERT INTO vec_concepts(concept_id, embedding) VALUES (:id, :emb)"
+            ), {"id": concept_id, "emb": vec.tobytes()})
+        elif self._vec_backend == "pgvector":
+            vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+            conn.execute(text(
+                "UPDATE concepts SET embedding_vec = :vec WHERE id = :id"
+            ), {"vec": vec_str, "id": concept_id})
+
+    def _upsert_vec_episode(self, conn, episode_id: str, embedding: Optional[list[float]]) -> None:
+        """Sync an episode embedding to the vector index."""
+        if self._vec_backend is None or embedding is None:
+            return
+        self._ensure_vec_dimensions(embedding, conn=conn)
+
+        if self._vec_backend == "sqlite-vec":
+            vec = np.array(embedding, dtype=np.float32)
+            conn.execute(text(
+                "DELETE FROM vec_episodes WHERE episode_id = :id"
+            ), {"id": episode_id})
+            conn.execute(text(
+                "INSERT INTO vec_episodes(episode_id, embedding) VALUES (:id, :emb)"
+            ), {"id": episode_id, "emb": vec.tobytes()})
+        elif self._vec_backend == "pgvector":
+            vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+            conn.execute(text(
+                "UPDATE episodes SET embedding_vec = :vec WHERE id = :id"
+            ), {"vec": vec_str, "id": episode_id})
+
+    def _delete_vec_concept(self, conn, concept_id: str) -> None:
+        """Remove a concept from the vector index."""
+        if self._vec_backend == "sqlite-vec":
+            conn.execute(text(
+                "DELETE FROM vec_concepts WHERE concept_id = :id"
+            ), {"id": concept_id})
+
+    def _delete_vec_episode(self, conn, episode_id: str) -> None:
+        """Remove an episode from the vector index."""
+        if self._vec_backend == "sqlite-vec":
+            conn.execute(text(
+                "DELETE FROM vec_episodes WHERE episode_id = :id"
+            ), {"id": episode_id})
+
     # ------------------------------------------------------------------
     # Concept operations
     # ------------------------------------------------------------------
@@ -706,6 +1006,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 )
             )
             self._sync_relations(conn, concept)
+            self._upsert_vec_concept(conn, concept.id, concept.embedding)
         return concept.id
 
     def _sync_relations(self, conn, concept: Concept):
@@ -754,6 +1055,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 )
             )
             self._sync_relations(conn, concept)
+            self._upsert_vec_concept(conn, concept.id, concept.embedding)
 
     def delete_concept(self, id: str) -> bool:
         with self._connect() as conn:
@@ -793,6 +1095,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def purge_concept(self, id: str) -> bool:
         with self._connect() as conn:
+            self._delete_vec_concept(conn, id)
             result = conn.execute(
                 concepts_table.delete().where(concepts_table.c.id == id)
             )
@@ -861,6 +1164,53 @@ class SQLAlchemyMemoryStore(MemoryStore):
     # ------------------------------------------------------------------
 
     def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
+        if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
+            return self._find_concepts_sqlite_vec(embedding, k)
+        elif self._vec_backend == "pgvector" and self._vec_dimensions:
+            return self._find_concepts_pgvector(embedding, k)
+        return self._find_concepts_brute_force(embedding, k)
+
+    def _find_concepts_sqlite_vec(self, embedding: list[float], k: int) -> list[tuple[Concept, float]]:
+        query_vec = np.array(embedding, dtype=np.float32)
+        with self._connect() as conn:
+            rows = conn.execute(text(
+                "SELECT concept_id, distance FROM vec_concepts "
+                "WHERE embedding MATCH :query AND k = :k"
+            ), {"query": query_vec.tobytes(), "k": k * 2}).fetchall()
+
+            results = []
+            for row in rows:
+                concept = self._get_concept_from_conn(conn, row.concept_id)
+                if concept is None:
+                    continue
+                distance = row.distance if row.distance is not None else 1.0
+                similarity = 1.0 - distance
+                results.append((concept, similarity))
+
+            return results[:k]
+
+    def _find_concepts_pgvector(self, embedding: list[float], k: int) -> list[tuple[Concept, float]]:
+        vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+        with self._connect() as conn:
+            rows = conn.execute(text(
+                "SELECT id, data, embedding, embedding_vec <=> :query AS distance "
+                "FROM concepts WHERE embedding_vec IS NOT NULL "
+                "ORDER BY embedding_vec <=> :query LIMIT :k"
+            ), {"query": vec_str, "k": k * 2}).fetchall()
+
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                if row.embedding:
+                    data["embedding"] = _bytes_to_embedding(row.embedding)
+                similarity = 1.0 - row.distance
+                results.append((Concept.from_dict(data), similarity))
+
+            return results[:k]
+
+    def _find_concepts_brute_force(self, embedding: list[float], k: int) -> list[tuple[Concept, float]]:
         with self._connect() as conn:
             rows = conn.execute(
                 select(concepts_table.c.data, concepts_table.c.embedding)
@@ -882,7 +1232,70 @@ class SQLAlchemyMemoryStore(MemoryStore):
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:k]
 
+    def _get_concept_from_conn(self, conn, concept_id: str) -> Optional[Concept]:
+        """Load a concept by ID within an existing connection."""
+        row = conn.execute(
+            select(concepts_table.c.data, concepts_table.c.embedding)
+            .where(concepts_table.c.id == concept_id)
+        ).fetchone()
+        if not row:
+            return None
+        data = _parse_json(row.data)
+        if data.get("deleted_at"):
+            return None
+        if row.embedding:
+            data["embedding"] = _bytes_to_embedding(row.embedding)
+        return Concept.from_dict(data)
+
     def find_episodes_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Episode, float]]:
+        if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
+            return self._find_episodes_sqlite_vec(embedding, k)
+        elif self._vec_backend == "pgvector" and self._vec_dimensions:
+            return self._find_episodes_pgvector(embedding, k)
+        return self._find_episodes_brute_force(embedding, k)
+
+    def _find_episodes_sqlite_vec(self, embedding: list[float], k: int) -> list[tuple[Episode, float]]:
+        query_vec = np.array(embedding, dtype=np.float32)
+        with self._connect() as conn:
+            rows = conn.execute(text(
+                "SELECT episode_id, distance FROM vec_episodes "
+                "WHERE embedding MATCH :query AND k = :k"
+            ), {"query": query_vec.tobytes(), "k": k * 2}).fetchall()
+
+            results = []
+            for row in rows:
+                ep = self._get_episode_from_conn(conn, row.episode_id)
+                if ep is None:
+                    continue
+                distance = row.distance if row.distance is not None else 1.0
+                similarity = 1.0 - distance
+                results.append((ep, similarity))
+
+            return results[:k]
+
+    def _find_episodes_pgvector(self, embedding: list[float], k: int) -> list[tuple[Episode, float]]:
+        vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+        with self._connect() as conn:
+            rows = conn.execute(text(
+                "SELECT id, data, embedding, embedding_vec <=> :query AS distance "
+                "FROM episodes WHERE embedding_vec IS NOT NULL "
+                "ORDER BY embedding_vec <=> :query LIMIT :k"
+            ), {"query": vec_str, "k": k * 2}).fetchall()
+
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                ep = Episode.from_dict(data)
+                if row.embedding:
+                    ep.embedding = _bytes_to_embedding(row.embedding)
+                similarity = 1.0 - row.distance
+                results.append((ep, similarity))
+
+            return results[:k]
+
+    def _find_episodes_brute_force(self, embedding: list[float], k: int) -> list[tuple[Episode, float]]:
         with self._connect() as conn:
             rows = conn.execute(
                 select(episodes_table.c.data, episodes_table.c.embedding)
@@ -904,6 +1317,22 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:k]
+
+    def _get_episode_from_conn(self, conn, episode_id: str) -> Optional[Episode]:
+        """Load an episode by ID within an existing connection."""
+        row = conn.execute(
+            select(episodes_table.c.data, episodes_table.c.embedding)
+            .where(episodes_table.c.id == episode_id)
+        ).fetchone()
+        if not row:
+            return None
+        data = _parse_json(row.data)
+        if data.get("deleted_at"):
+            return None
+        ep = Episode.from_dict(data)
+        if row.embedding:
+            ep.embedding = _bytes_to_embedding(row.embedding)
+        return ep
 
     # ------------------------------------------------------------------
     # Graph traversal
@@ -1028,6 +1457,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     topic_id=episode.topic_id,
                 )
             )
+            self._upsert_vec_episode(conn, episode.id, episode.embedding)
         return episode.id
 
     def add_episodes_batch(self, episodes: list[Episode]) -> list[str]:
@@ -1049,6 +1479,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                         topic_id=episode.topic_id,
                     )
                 )
+                self._upsert_vec_episode(conn, episode.id, episode.embedding)
                 ids.append(episode.id)
             return ids
 
@@ -1104,6 +1535,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     topic_id=episode.topic_id,
                 )
             )
+            self._upsert_vec_episode(conn, episode.id, episode.embedding)
 
     def delete_episode(self, id: str) -> bool:
         with self._connect() as conn:
@@ -1151,6 +1583,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def purge_episode(self, id: str) -> bool:
         with self._connect() as conn:
+            self._delete_vec_episode(conn, id)
             conn.execute(
                 entity_relations_table.delete()
                 .where(entity_relations_table.c.source_episode_id == id)
@@ -1874,6 +2307,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def delete_all_concepts(self) -> int:
         with self._connect() as conn:
+            if self._vec_backend == "sqlite-vec":
+                try:
+                    conn.execute(text("DELETE FROM vec_concepts"))
+                except OperationalError:
+                    pass
             conn.execute(relations_table.delete())
             result = conn.execute(concepts_table.delete())
             return result.rowcount

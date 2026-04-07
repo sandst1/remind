@@ -9,10 +9,15 @@ Query: "What authentication approach should we use?"
 
 1. EMBED     → Query is converted to a dense vector
 
-2. MATCH     → Concepts with similar embeddings activate
+2. MATCH     → Concepts with similar embeddings activate (via native
+               vector index when available, or brute-force fallback)
                "JWT auth middleware" (0.89)
                "Auth module architecture" (0.82)
                "Password hashing with bcrypt" (0.75)
+
+2b. FUSE     → Embedding score is blended with keyword overlap
+               score = (1 - keyword_weight) × embedding + keyword_weight × keyword
+               (configurable via hybrid_keyword_weight, default 0.3)
 
 3. SPREAD    → Activated concepts propagate through relations
                "JWT auth middleware"
@@ -35,6 +40,40 @@ This is fundamentally different from RAG. You don't get "the 5 most similar docu
 Consider how human memory works. You don't search for "that restaurant" by scanning every memory. You think about *food*, which activates *that conversation about cooking*, which activates *that restaurant*, which activates *who you were with*.
 
 Spreading activation retrieves concepts you didn't directly query for but are meaningfully connected. Asking about "auth" might activate "rate limiting" (which is part of the auth system) even though "rate limiting" has no embedding similarity to "auth."
+
+## Hybrid keyword scoring
+
+By default, retrieval fuses embedding similarity with keyword overlap (controlled by `hybrid_keyword_weight`, default `0.3`). This helps surface concepts that contain exact query terms which embeddings alone might miss — for instance, specific tool names, config keys, or technical terms.
+
+The formula is:
+
+```
+score = (1 - weight) × embedding_similarity + weight × keyword_overlap
+```
+
+Where `keyword_overlap` is the fraction of query tokens (2+ chars) found in the concept's title and summary. Set `hybrid_keyword_weight` to `0.0` for pure embedding search or `1.0` for pure keyword matching.
+
+Configure via `~/.remind/remind.config.json`:
+
+```json
+{
+  "hybrid_keyword_weight": 0.3
+}
+```
+
+Or environment variable: `REMIND_HYBRID_KEYWORD_WEIGHT=0.3`
+
+## Vector indexes
+
+Remind uses native database vector indexes when available, replacing the default brute-force Python cosine similarity:
+
+| Backend | Extension | How it works |
+|---------|-----------|-------------|
+| SQLite | [sqlite-vec](https://github.com/asg017/sqlite-vec) | `vec0` virtual tables with cosine distance KNN. Included as a pip dependency. |
+| PostgreSQL | [pgvector](https://github.com/pgvector/pgvector) | `vector(N)` columns with HNSW indexes. Installed with `pip install "remind-mcp[postgres]"`. |
+| Fallback | — | NumPy brute-force cosine similarity (O(n) per query). |
+
+Vector tables are created automatically on first embedding write. No manual setup is needed — Remind detects the backend at startup and chooses the best available path.
 
 ## Entity name matching
 

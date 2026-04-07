@@ -122,12 +122,15 @@ Pipeline: `ingest()` → buffer → triage + extract + topic inference (LLM) →
 ### Retrieval (`retrieval.py`)
 
 **Hybrid recall** with spreading activation + entity-based episode retrieval:
-1. Query is embedded and matched to concepts via cosine similarity
-2. Matched concepts activate related concepts through the graph
-3. Activation spreads with decay over multiple hops
-4. Highest-activation concepts are returned with source episodes (including type labels and entity context)
+1. Query is embedded and matched to concepts via cosine similarity (native vector index when available)
+2. Embedding scores are optionally fused with keyword overlap scores (`hybrid_keyword_weight` config, default 0.3)
+3. Matched concepts activate related concepts through the graph
+4. Activation spreads with decay over multiple hops
+5. Highest-activation concepts are returned with source episodes (including type labels and entity context)
 
 Key class: `MemoryRetriever` with `ActivatedConcept` results.
+
+Helper function: `_keyword_score(query, text)` — normalized token overlap for hybrid scoring.
 
 ### Store (`store.py`)
 
@@ -139,6 +142,13 @@ Multi-database persistence via SQLAlchemy Core. Supports SQLite (default), Postg
 - `relations` - Concept-to-concept graph edges
 - `entity_relations` - Entity-to-entity relationships
 - `metadata` - Persistent key-value store
+
+**Vector search backends** (auto-detected at startup):
+- **sqlite-vec** (SQLite): `vec0` virtual tables (`vec_concepts`, `vec_episodes`) with cosine distance KNN. Extension is loaded via `sqlite_vec.load()` on connection creation.
+- **pgvector** (PostgreSQL): `vector(N)` columns (`embedding_vec`) with HNSW indexes and `<=>` cosine distance operator.
+- **Brute-force fallback**: If neither extension is available, falls back to Python-side numpy cosine similarity (O(n) per query).
+
+Embedding dimensions are recorded in the `metadata` table on first write. Vector tables/columns are created lazily when the first embedding is stored.
 
 The `MemoryStore` ABC defines the interface. `SQLAlchemyMemoryStore` is the concrete implementation (aliased as `SQLiteMemoryStore` for backward compatibility).
 
@@ -182,28 +192,30 @@ class OllamaConfig:
 
 @dataclass
 class RemindConfig:
-    llm_provider: str = "anthropic"
-    embedding_provider: str = "openai"
-    consolidation_threshold: int = 5
-    concepts_per_pass: int = 64
-    auto_consolidate: bool = True
-    extraction_batch_size: int = 50
-    extraction_llm_batch_size: int = 10
-    consolidation_batch_size: int = 25
-    llm_concurrency: int = 3
-    # Database URL (SQLAlchemy format; None = SQLite default)
-    db_url: Optional[str] = None
-    # Auto-ingest settings
-    ingest_buffer_size: int = 4000
-    # Logging
-    logging_enabled: bool = False
-    # Episode types (controls which types are valid + gates CLI/MCP features)
-    episode_types: list[str] = field(default_factory=lambda: list(DEFAULT_EPISODE_TYPES))
-    # Nested provider configs
-    anthropic: AnthropicConfig
-    openai: OpenAIConfig
-    azure_openai: AzureOpenAIConfig
-    ollama: OllamaConfig
+ llm_provider: str = "anthropic"
+ embedding_provider: str = "openai"
+ consolidation_threshold: int = 5
+ concepts_per_pass: int = 64
+ auto_consolidate: bool = True
+ extraction_batch_size: int = 50
+ extraction_llm_batch_size: int = 10
+ consolidation_batch_size: int = 25
+ llm_concurrency: int = 3
+ # Database URL (SQLAlchemy format; None = SQLite default)
+ db_url: Optional[str] = None
+ # Auto-ingest settings
+ ingest_buffer_size: int = 4000
+ # Retrieval tuning
+ hybrid_keyword_weight: float = 0.3
+ # Logging
+ logging_enabled: bool = False
+ # Episode types (controls which types are valid + gates CLI/MCP features)
+ episode_types: list[str] = field(default_factory=lambda: list(DEFAULT_EPISODE_TYPES))
+ # Nested provider configs
+ anthropic: AnthropicConfig
+ openai: OpenAIConfig
+ azure_openai: AzureOpenAIConfig
+ ollama: OllamaConfig
 
 def load_config() -> RemindConfig:
     """Priority: env vars > config file > defaults"""
@@ -228,16 +240,17 @@ def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
 **Config file format** (`~/.remind/remind.config.json`):
 ```json
 {
-  "llm_provider": "anthropic",
-  "embedding_provider": "openai",
-  "consolidation_threshold": 5,
-  "auto_consolidate": true,
-  "logging_enabled": false,
-  "db_url": null,
-  "anthropic": { "api_key": "sk-ant-..." },
-  "openai": { "api_key": "sk-..." },
-  "azure_openai": { "api_key": "...", "base_url": "..." },
-  "ollama": { "url": "http://localhost:11434" }
+ "llm_provider": "anthropic",
+ "embedding_provider": "openai",
+ "consolidation_threshold": 5,
+ "auto_consolidate": true,
+ "hybrid_keyword_weight": 0.3,
+ "logging_enabled": false,
+ "db_url": null,
+ "anthropic": { "api_key": "sk-ant-..." },
+ "openai": { "api_key": "sk-..." },
+ "azure_openai": { "api_key": "...", "base_url": "..." },
+ "ollama": { "url": "http://localhost:11434" }
 }
 ```
 
@@ -427,7 +440,7 @@ When making changes, these files are most commonly modified together:
 | New data structure | `models.py`, `store.py` |
 | New provider | `providers/newprovider.py`, `providers/__init__.py`, `interface.py` |
 | Consolidation logic | `consolidation.py`, `extraction.py` |
-| Retrieval behavior | `retrieval.py` |
+| Retrieval behavior | `retrieval.py`, `config.py` |
 | Auto-ingest pipeline | `triage.py`, `llm_protocol.py`, `interface.py`, `config.py` |
 | CLI commands | `cli.py` |
 | Configuration | `config.py`, `interface.py`, `mcp_server.py`, `cli.py` |

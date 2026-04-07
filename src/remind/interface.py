@@ -108,6 +108,8 @@ class MemoryInterface:
         ingest_background: bool = True,
         # Configurable episode types
         episode_types: Optional[list[str]] = None,
+        # Retrieval tuning
+        hybrid_keyword_weight: float = 0.0,
     ):
         self.llm = llm
         self.embedding = embedding
@@ -143,6 +145,7 @@ class MemoryInterface:
             embedding=embedding,
             store=self.store,
             spread_hops=spread_hops,
+            hybrid_keyword_weight=hybrid_keyword_weight,
         )
         
         self.episode_types: list[str] = episode_types or list(DEFAULT_EPISODE_TYPES)
@@ -1502,6 +1505,10 @@ def create_memory(
         kwargs["consolidation_batch_size"] = config.consolidation_batch_size
     if "llm_concurrency" not in kwargs:
         kwargs["llm_concurrency"] = config.llm_concurrency
+    if "hybrid_keyword_weight" not in kwargs:
+        kwargs["hybrid_keyword_weight"] = config.hybrid_keyword_weight
+    else:
+        kwargs["hybrid_keyword_weight"] = float(kwargs["hybrid_keyword_weight"])
     
     # Import providers
     from remind.providers import (

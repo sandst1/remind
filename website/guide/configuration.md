@@ -59,6 +59,8 @@ Create `~/.remind/remind.config.json`:
 
   "ingest_buffer_size": 4000,
 
+  "hybrid_keyword_weight": 0.3,
+
   "db_url": null,
 
   "logging_enabled": false,
@@ -128,6 +130,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `CONSOLIDATION_BATCH_SIZE` | `consolidation_batch_size` | int | `25` |
 | `LLM_CONCURRENCY` | `llm_concurrency` | int | `3` |
 | `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
+| `REMIND_HYBRID_KEYWORD_WEIGHT` | `hybrid_keyword_weight` | float | `0.3` |
 | `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
 | `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
@@ -254,9 +257,19 @@ remind --db "postgresql+psycopg://user:pass@localhost:5432/remind" remember "hel
 Install the appropriate driver extra:
 
 ```bash
-pip install "remind-mcp[postgres]"   # PostgreSQL (psycopg)
+pip install "remind-mcp[postgres]"   # PostgreSQL (psycopg + pgvector)
 pip install "remind-mcp[mysql]"      # MySQL (PyMySQL)
 ```
+
+### Vector search
+
+Remind uses native vector indexes for embedding search when available:
+
+- **SQLite**: `sqlite-vec` is included as a dependency and enabled automatically. Embeddings are stored in `vec0` virtual tables with cosine distance KNN.
+- **PostgreSQL**: `pgvector` is included with `remind-mcp[postgres]`. Embeddings are stored in `vector(N)` columns with HNSW indexes. The `vector` extension is created automatically.
+- **Fallback**: If neither extension is available, Remind uses brute-force NumPy cosine similarity.
+
+Vector tables are created lazily when the first embedding is written. No manual schema setup is needed.
 
 ## Memory decay
 
@@ -285,6 +298,14 @@ View decay stats with `remind stats`.
 | `llm_concurrency` | `3` | Max concurrent LLM calls across extraction + consolidation; also bounds topic-group parallelism |
 
 Legacy aliases remain supported: `consolidation_concepts_per_pass`, `entity_extraction_batch_size`, and `consolidation_llm_concurrency`.
+
+## Retrieval tuning
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `hybrid_keyword_weight` | `0.3` | Blend between embedding similarity and keyword overlap. `0.0` = pure embedding, `1.0` = pure keyword. |
+
+The default `0.3` means 70% embedding similarity + 30% keyword overlap. This helps surface results with exact term matches that embeddings alone might miss. See [Retrieval](/concepts/retrieval) for details.
 
 ## Auto-ingest
 

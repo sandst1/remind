@@ -245,6 +245,20 @@ Outcome metadata conventions:
 
 Auto-ingest detects outcomes automatically from raw conversation data.
 
+## Configuration
+
+### Retrieval Tuning
+
+`hybrid_keyword_weight` (default: `0.3`, env: `REMIND_HYBRID_KEYWORD_WEIGHT`) — Controls the blend between embedding similarity and keyword overlap in retrieval scoring. Set to `0.0` for pure embedding search, `1.0` for pure keyword matching. The default `0.3` means 70% embedding + 30% keyword overlap, which helps surface exact term matches that embeddings miss.
+
+### Vector Search
+
+Remind uses native vector indexes when available:
+- **SQLite**: `sqlite-vec` is included as a dependency and used automatically
+- **PostgreSQL**: Install with `pip install "remind-mcp[postgres]"` which includes `pgvector`
+
+If neither extension is available, Remind falls back to brute-force cosine similarity in Python.
+
 ## Best Practices
 
 1. Be selective — skip trivial info

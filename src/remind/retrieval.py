@@ -11,12 +11,30 @@ from datetime import datetime, timedelta
 from typing import Optional
 import logging
 import math
+import re
 
 from remind.models import Concept, Episode, Entity, RelationType
 from remind.store import MemoryStore
 from remind.providers.base import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _keyword_score(query: str, text: str) -> float:
+    """Compute normalized keyword overlap between query tokens and text.
+
+    Returns a score in [0.0, 1.0] representing the fraction of query tokens
+    found in the text (case-insensitive). Tokens shorter than 2 chars are
+    ignored to filter noise words.
+    """
+    if not query or not text:
+        return 0.0
+    query_tokens = [t.lower() for t in re.split(r'\W+', query) if len(t) >= 2]
+    if not query_tokens:
+        return 0.0
+    text_lower = text.lower()
+    matches = sum(1 for t in query_tokens if t in text_lower)
+    return matches / len(query_tokens)
 
 # Metadata keys to suppress in recall output (internal bookkeeping)
 _HIDDEN_METADATA_KEYS = {"source", "triage_density"}
@@ -102,6 +120,8 @@ class MemoryRetriever:
         spread_hops: int = 2,  # how many hops to spread
         spread_decay: float = 0.5,  # activation decay per hop
         activation_threshold: float = 0.1,  # minimum activation to spread
+        # Hybrid scoring
+        hybrid_keyword_weight: float = 0.0,  # 0.0 = pure embedding, 1.0 = pure keyword
         # Relation type weights (how much different relations spread activation)
         relation_weights: Optional[dict[RelationType, float]] = None,
     ):
@@ -111,6 +131,7 @@ class MemoryRetriever:
         self.spread_hops = spread_hops
         self.spread_decay = spread_decay
         self.activation_threshold = activation_threshold
+        self.hybrid_keyword_weight = max(0.0, min(1.0, hybrid_keyword_weight))
         
         # Default relation weights - some relations spread activation more
         self.relation_weights = relation_weights or {
@@ -173,13 +194,20 @@ class MemoryRetriever:
         # Build activation map: concept_id -> (activation, source, hops)
         activation_map: dict[str, tuple[float, str, int]] = {}
         concept_cache: dict[str, Concept] = {}
-        
+
+        kw = self.hybrid_keyword_weight
         for concept, similarity in initial_matches:
-            # Weight similarity by concept confidence
-            weighted_activation = similarity * concept.confidence
-            # Apply decay factor - concepts with low decay_factor rank lower
+            if kw > 0.0:
+                concept_text = f"{concept.title or ''} {concept.summary or ''}"
+                kw_score = _keyword_score(query, concept_text)
+                fused = (1.0 - kw) * similarity + kw * kw_score
+            else:
+                fused = similarity
+
+            weighted_activation = fused * concept.confidence
             decay_factor = max(0.0, min(1.0, concept.decay_factor))
             final_activation = weighted_activation * decay_factor
+
             if final_activation > self.activation_threshold:
                 activation_map[concept.id] = (final_activation, "embedding", 0)
                 concept_cache[concept.id] = concept
@@ -434,10 +462,18 @@ class MemoryRetriever:
         query_embedding = await self.embedding.embed(query)
         matches = self.store.find_episodes_by_embedding(query_embedding, k=k)
 
+        kw = self.hybrid_keyword_weight
         results = []
         for episode, similarity in matches:
-            results.append(ScoredEpisode(episode=episode, score=similarity))
+            if kw > 0.0:
+                kw_score = _keyword_score(query, episode.content or "")
+                fused = (1.0 - kw) * similarity + kw * kw_score
+            else:
+                fused = similarity
 
+            results.append(ScoredEpisode(episode=episode, score=fused))
+
+        results.sort(key=lambda s: s.score, reverse=True)
         return results
 
     async def retrieve_by_entity(

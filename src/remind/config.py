@@ -122,6 +122,9 @@ class RemindConfig:
     # Database URL (overrides db_path when set)
     db_url: Optional[str] = None
 
+    # Retrieval tuning
+    hybrid_keyword_weight: float = 0.3
+
     # Logging
     logging_enabled: bool = False
 
@@ -228,6 +231,10 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
     # Database URL
     if "db_url" in file_config:
         config.db_url = str(file_config["db_url"])
+
+    # Retrieval tuning
+    if "hybrid_keyword_weight" in file_config:
+        config.hybrid_keyword_weight = float(file_config["hybrid_keyword_weight"])
 
     # Logging
     if "logging_enabled" in file_config:
@@ -412,6 +419,13 @@ def _apply_env_vars(config: RemindConfig) -> None:
     # Database URL
     if db_url := os.environ.get("REMIND_DB_URL"):
         config.db_url = db_url
+
+    # Retrieval tuning
+    if hybrid_weight := os.environ.get("REMIND_HYBRID_KEYWORD_WEIGHT"):
+        try:
+            config.hybrid_keyword_weight = float(hybrid_weight)
+        except ValueError:
+            logger.warning(f"Invalid REMIND_HYBRID_KEYWORD_WEIGHT: {hybrid_weight}")
 
     # Logging
     if logging_enabled := os.environ.get("REMIND_LOGGING_ENABLED"):
