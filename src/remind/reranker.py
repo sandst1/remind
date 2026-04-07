@@ -5,6 +5,8 @@ Requires the `rerank` extra: pip install "remind-mcp[rerank]"
 """
 
 import logging
+import os
+import warnings
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -13,6 +15,16 @@ _INSTALL_HINT = (
     'Reranking requires sentence-transformers. '
     'Install with: pip install "remind-mcp[rerank]"'
 )
+
+
+def _model_is_cached(model_name: str) -> bool:
+    """Check if a HuggingFace model is already downloaded locally."""
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        result = try_to_load_from_cache(model_name, "config.json")
+        return isinstance(result, str)
+    except Exception:
+        return False
 
 
 class Reranker:
@@ -34,8 +46,43 @@ class Reranker:
     def _load_model(self):
         from sentence_transformers import CrossEncoder
 
-        logger.info(f"Loading reranker model: {self._model_name}")
-        self._model = CrossEncoder(self._model_name)
+        cached = _model_is_cached(self._model_name)
+        if not cached:
+            logger.info(f"Downloading reranker model: {self._model_name} (first time only)")
+
+        saved_env = {}
+        env_overrides = {
+            "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+            "TQDM_DISABLE": "1",
+            "TRANSFORMERS_VERBOSITY": "error",
+        }
+        for key, val in env_overrides.items():
+            saved_env[key] = os.environ.get(key)
+            os.environ[key] = val
+
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*unauthenticated.*")
+                warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
+
+                noisy_loggers = [
+                    logging.getLogger(name)
+                    for name in ("huggingface_hub", "sentence_transformers", "transformers")
+                ]
+                old_levels = [lg.level for lg in noisy_loggers]
+                for lg in noisy_loggers:
+                    lg.setLevel(logging.ERROR)
+                try:
+                    self._model = CrossEncoder(self._model_name)
+                finally:
+                    for lg, lvl in zip(noisy_loggers, old_levels):
+                        lg.setLevel(lvl)
+        finally:
+            for key, old_val in saved_env.items():
+                if old_val is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old_val
 
     def score(self, query: str, documents: list[str]) -> list[float]:
         """Score each document's relevance to *query*.
