@@ -14,7 +14,9 @@ pip install "remind-mcp[postgres]"
 
 ## Quickstart
 
-### 1. Start PostgreSQL
+### 1. Start PostgreSQL with pgvector
+
+The docker-compose uses the [`pgvector/pgvector`](https://github.com/pgvector/pgvector#docker) image, which bundles the `vector` extension needed for native embedding search. A vanilla `postgres` image will fall back to brute-force similarity.
 
 ```bash
 docker compose up -d

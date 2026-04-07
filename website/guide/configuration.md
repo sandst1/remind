@@ -269,7 +269,7 @@ pip install "remind-mcp[mysql]"      # MySQL (PyMySQL)
 Remind uses native vector indexes for embedding search when available:
 
 - **SQLite**: `sqlite-vec` is included as a dependency and enabled automatically. Embeddings are stored in `vec0` virtual tables with cosine distance KNN.
-- **PostgreSQL**: `pgvector` is included with `remind-mcp[postgres]`. Embeddings are stored in `vector(N)` columns with HNSW indexes. The `vector` extension is created automatically.
+- **PostgreSQL**: The Python driver is included with `remind-mcp[postgres]`. Embeddings are stored in `vector(N)` columns with HNSW indexes. The `vector` extension is created automatically — but the **PostgreSQL server** must have pgvector installed (e.g. use the [`pgvector/pgvector`](https://hub.docker.com/r/pgvector/pgvector) Docker image instead of vanilla `postgres`).
 - **Fallback**: If neither extension is available, Remind uses brute-force NumPy cosine similarity.
 
 Vector tables are created lazily when the first embedding is written. No manual schema setup is needed.
