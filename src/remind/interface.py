@@ -1562,8 +1562,10 @@ def create_memory(
     # Create embedding provider with config values
     if embedding_provider == "openai":
         embedding = OpenAIEmbedding(
+            model=config.openai.embedding_model,
             api_key=config.openai.api_key,
             base_url=config.openai.base_url,
+            dimensions=config.openai.embedding_size,
         )
     elif embedding_provider == "azure_openai":
         embedding = AzureOpenAIEmbedding(

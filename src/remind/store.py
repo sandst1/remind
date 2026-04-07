@@ -829,6 +829,9 @@ class SQLAlchemyMemoryStore(MemoryStore):
                         "INSERT INTO vec_episodes(episode_id, embedding) VALUES (:id, :emb)"
                     ), {"id": row.id, "emb": vec.tobytes()})
 
+    # pgvector HNSW indexes support at most 2000 dimensions.
+    _PGVECTOR_HNSW_MAX_DIMS = 2000
+
     def _init_pgvector(self) -> None:
         """Enable pgvector extension and create vector columns/indexes if needed."""
         with self.engine.connect() as conn:
@@ -841,34 +844,34 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 return
 
             insp = inspect(self.engine)
+            dims = self._vec_dimensions
 
-            if not _has_column_in_list(insp.get_columns("concepts"), "embedding_vec"):
-                if self._vec_dimensions:
-                    dims = self._vec_dimensions
+            for table_name in ("concepts", "episodes"):
+                if _has_column_in_list(insp.get_columns(table_name), "embedding_vec"):
+                    continue
+                if not dims:
+                    continue
+
+                conn.execute(text(
+                    f"ALTER TABLE {table_name} ADD COLUMN embedding_vec vector({dims})"
+                ))
+                self._backfill_pgvector(conn, table_name)
+                conn.commit()
+
+                if dims <= self._PGVECTOR_HNSW_MAX_DIMS:
                     conn.execute(text(
-                        f"ALTER TABLE concepts ADD COLUMN embedding_vec vector({dims})"
-                    ))
-                    self._backfill_pgvector(conn, "concepts")
-                    conn.execute(text(
-                        "CREATE INDEX IF NOT EXISTS idx_concepts_embedding_vec "
-                        "ON concepts USING hnsw (embedding_vec vector_cosine_ops)"
+                        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding_vec "
+                        f"ON {table_name} USING hnsw (embedding_vec vector_cosine_ops)"
                     ))
                     conn.commit()
-                    logger.info(f"Created concepts.embedding_vec column ({dims} dims)")
+                else:
+                    logger.warning(
+                        f"Skipping HNSW index on {table_name}.embedding_vec: "
+                        f"{dims} dims exceeds pgvector limit of {self._PGVECTOR_HNSW_MAX_DIMS}. "
+                        f"Vector search will use exact (sequential) scan."
+                    )
 
-            if not _has_column_in_list(insp.get_columns("episodes"), "embedding_vec"):
-                if self._vec_dimensions:
-                    dims = self._vec_dimensions
-                    conn.execute(text(
-                        f"ALTER TABLE episodes ADD COLUMN embedding_vec vector({dims})"
-                    ))
-                    self._backfill_pgvector(conn, "episodes")
-                    conn.execute(text(
-                        "CREATE INDEX IF NOT EXISTS idx_episodes_embedding_vec "
-                        "ON episodes USING hnsw (embedding_vec vector_cosine_ops)"
-                    ))
-                    conn.commit()
-                    logger.info(f"Created episodes.embedding_vec column ({dims} dims)")
+                logger.info(f"Created {table_name}.embedding_vec column ({dims} dims)")
 
     def _backfill_pgvector(self, conn, table: str) -> None:
         """Convert existing LargeBinary embeddings to pgvector format."""

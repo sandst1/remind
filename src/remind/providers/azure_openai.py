@@ -183,10 +183,11 @@ class AzureOpenAIEmbedding(EmbeddingProvider):
         """Generate an embedding for a single text."""
         client = self._get_client()
 
-        response = await client.embeddings.create(
-            model=self.deployment_name,
-            input=text,
-        )
+        kwargs: dict = {"model": self.deployment_name, "input": text}
+        if self._dimensions:
+            kwargs["dimensions"] = self._dimensions
+
+        response = await client.embeddings.create(**kwargs)
 
         return response.data[0].embedding
 
@@ -197,10 +198,11 @@ class AzureOpenAIEmbedding(EmbeddingProvider):
 
         client = self._get_client()
 
-        response = await client.embeddings.create(
-            model=self.deployment_name,
-            input=texts,
-        )
+        kwargs: dict = {"model": self.deployment_name, "input": texts}
+        if self._dimensions:
+            kwargs["dimensions"] = self._dimensions
+
+        response = await client.embeddings.create(**kwargs)
 
         sorted_embeddings = sorted(response.data, key=lambda x: x.index)
         return [e.embedding for e in sorted_embeddings]

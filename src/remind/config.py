@@ -54,6 +54,7 @@ class OpenAIConfig:
     base_url: Optional[str] = None
     model: str = "gpt-4.1"
     embedding_model: str = "text-embedding-3-small"
+    embedding_size: int = 1536
     ingest_model: Optional[str] = None
 
 
@@ -373,6 +374,11 @@ def _apply_env_vars(config: RemindConfig) -> None:
         config.openai.model = model
     if embed_model := os.environ.get("OPENAI_EMBEDDING_MODEL"):
         config.openai.embedding_model = embed_model
+    if embed_size := os.environ.get("OPENAI_EMBEDDING_SIZE"):
+        try:
+            config.openai.embedding_size = int(embed_size)
+        except ValueError:
+            pass
     if ingest_model := os.environ.get("OPENAI_INGEST_MODEL"):
         config.openai.ingest_model = ingest_model
 
