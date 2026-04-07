@@ -133,7 +133,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `REMIND_HYBRID_KEYWORD_WEIGHT` | `hybrid_keyword_weight` | float | `0.3` |
 | `REMIND_RECALL_INITIAL_CANDIDATES` | `recall_initial_candidates` | int | `10` |
 | `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
-| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-2-v2` |
+| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
 | `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
@@ -327,12 +327,16 @@ pip install "remind-mcp[rerank]"
 | Option | Default | Description |
 |--------|---------|-------------|
 | `reranking_enabled` | `false` | Enable cross-encoder reranking during recall |
-| `reranking_model` | `cross-encoder/ms-marco-MiniLM-L-2-v2` | Which cross-encoder model to use |
+| `reranking_model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Which cross-encoder model to use |
+| `cli_recall_worker_enabled` | `true` | Use a persistent CLI recall worker when reranking is enabled |
+| `cli_recall_worker_idle_seconds` | `600` | Idle timeout before the CLI recall worker exits |
 
 | Env variable | Config field | Type | Default |
 |---|---|---|---|
 | `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
-| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-2-v2` |
+| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `REMIND_CLI_RECALL_WORKER_ENABLED` | `cli_recall_worker_enabled` | bool | `true` |
+| `REMIND_CLI_RECALL_WORKER_IDLE_SECONDS` | `cli_recall_worker_idle_seconds` | int | `600` |
 
 Enable via config file:
 
@@ -350,7 +354,11 @@ REMIND_RERANKING_ENABLED=true
 REMIND_RECALL_INITIAL_CANDIDATES=15
 ```
 
-The model is loaded lazily on the first recall — there is no startup cost if reranking is enabled but recall hasn't been called yet. See [Retrieval — Reranking](/concepts/retrieval#reranking) for details on how reranking interacts with spreading activation.
+When reranking is enabled, the CLI (`remind recall`) starts/reuses a local background recall worker automatically so the reranker stays warm between calls. The worker exits after `cli_recall_worker_idle_seconds` of inactivity.
+
+If worker startup or IPC fails, CLI recall falls back to one-shot in-process recall and still returns results.
+
+The model is loaded lazily on the first recall request that actually runs reranking. See [Retrieval — Reranking](/concepts/retrieval#reranking) for details on how reranking interacts with spreading activation.
 
 ## Auto-ingest
 

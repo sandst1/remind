@@ -1,4 +1,5 @@
 
 
 - consolidation 
--> when searching contradictions, batch the concepts after a certain amount
+-> reranking instead of finding conflicts for everything..?
+

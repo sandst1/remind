@@ -214,7 +214,7 @@ class RemindConfig:
  recall_initial_candidates: int = 10
  # Reranking (requires `pip install "remind-mcp[rerank]"`)
  reranking_enabled: bool = False
- reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-2-v2"
+ reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
  # Logging
  logging_enabled: bool = False
  # Episode types (controls which types are valid + gates CLI/MCP features)

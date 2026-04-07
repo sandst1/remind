@@ -18,9 +18,10 @@ import asyncio
 import importlib.resources
 import json
 import sys
+from dataclasses import asdict
 from importlib.metadata import version
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import click
 from dotenv import load_dotenv
@@ -60,6 +61,98 @@ def get_memory(db_path: str, llm: str, embedding: str, project_dir: Optional[Pat
 def run_async(coro):
     """Run an async function synchronously."""
     return asyncio.run(coro)
+
+
+def _recall_config_fingerprint(config: Any) -> str:
+    """Build stable fingerprint for recall worker identity."""
+    payload = asdict(config)
+    # Fingerprint does not need secrets in cleartext; hash happens in background helpers.
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _deserialize_worker_raw_result(result_type: str, payload: list[dict[str, Any]]):
+    """Convert worker JSON payload back to rich Python objects used by CLI output."""
+    if result_type == "entity_raw":
+        from remind.models import Episode
+
+        return [Episode.from_dict(item) for item in payload]
+
+    if result_type == "semantic_raw":
+        from remind.models import Concept
+        from remind.retrieval import ActivatedConcept
+
+        output = []
+        for item in payload:
+            concept_data = item.get("concept") or {}
+            output.append(ActivatedConcept(
+                concept=Concept.from_dict(concept_data),
+                activation=float(item.get("activation", 0.0)),
+                source=str(item.get("source", "embedding")),
+                hops=int(item.get("hops", 0)),
+            ))
+        return output
+
+    return payload
+
+
+def _run_recall_via_worker(
+    ctx,
+    *,
+    query: Optional[str],
+    k: int,
+    episode_k: int,
+    context: Optional[str],
+    entity: Optional[str],
+    topic: Optional[str],
+    raw: bool,
+):
+    """Run recall over persistent worker, with one-shot fallback on failure."""
+    from remind.background import (
+        DEFAULT_RECALL_WORKER_IDLE_SECONDS,
+        build_recall_worker_key,
+        ensure_recall_worker,
+        request_recall_worker,
+    )
+    from remind.config import load_config
+
+    config = load_config(project_dir=Path.cwd())
+    worker_key = build_recall_worker_key(
+        db_url=ctx.obj["db"],
+        llm_provider=ctx.obj["llm"],
+        embedding_provider=ctx.obj["embedding"],
+        config_fingerprint=_recall_config_fingerprint(config),
+    )
+    socket_path = ensure_recall_worker(
+        db_url=ctx.obj["db"],
+        llm_provider=ctx.obj["llm"],
+        embedding_provider=ctx.obj["embedding"],
+        worker_key=worker_key,
+        idle_seconds=getattr(config, "cli_recall_worker_idle_seconds", DEFAULT_RECALL_WORKER_IDLE_SECONDS),
+        remind_dir=ctx.obj.get("remind_dir"),
+    )
+    if socket_path is None:
+        raise RuntimeError("Recall worker unavailable")
+
+    response = request_recall_worker(
+        socket_path,
+        query=query,
+        k=k,
+        episode_k=episode_k,
+        context=context,
+        entity=entity,
+        topic=topic,
+        raw=raw,
+    )
+    if not response:
+        raise RuntimeError("No response from recall worker")
+    if not response.get("ok"):
+        raise RuntimeError(response.get("error", "Recall worker request failed"))
+
+    result_type = str(response.get("result_type", "text"))
+    result = response.get("result")
+    if raw and isinstance(result, list):
+        return _deserialize_worker_raw_result(result_type, result)
+    return result
 
 
 @click.group()
@@ -205,13 +298,53 @@ def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[
     """
     if not query and not entity:
         raise click.UsageError("Either QUERY or --entity must be provided.")
-    
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-    
-    async def _recall():
-        return await memory.recall(query, k=k, context=context, entity=entity, raw=raw, episode_k=episode_k, topic=topic)
-    
-    result = run_async(_recall())
+
+    from remind.config import load_config
+
+    config = load_config(project_dir=Path.cwd())
+    use_recall_worker = bool(
+        config.reranking_enabled and getattr(config, "cli_recall_worker_enabled", True)
+    )
+
+    result = None
+    if use_recall_worker:
+        try:
+            result = _run_recall_via_worker(
+                ctx,
+                query=query,
+                k=k,
+                episode_k=episode_k,
+                context=context,
+                entity=entity,
+                topic=topic,
+                raw=raw,
+            )
+        except Exception as e:
+            reason = str(e).strip()
+            if reason.lower() in {"recall worker unavailable", "no response from recall worker"}:
+                console.print(
+                    "[dim]Recall worker is still starting up; using one-shot recall for this request.[/dim]"
+                )
+            else:
+                console.print(
+                    f"[dim]Recall worker unavailable ({reason}); using one-shot recall for this request.[/dim]"
+                )
+
+    if result is None:
+        memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+        async def _recall():
+            return await memory.recall(
+                query,
+                k=k,
+                context=context,
+                entity=entity,
+                raw=raw,
+                episode_k=episode_k,
+                topic=topic,
+            )
+
+        result = run_async(_recall())
     
     if entity:
         # Entity-based result
@@ -974,14 +1107,18 @@ def status(ctx):
     pending episodes, queued ingest chunks.
     """
     from remind.background import (
+        build_recall_worker_key,
         is_consolidation_running,
         is_ingest_running,
+        is_recall_running,
         get_ingest_queue_dir,
     )
+    from remind.config import load_config
 
     db_path = ctx.obj["db"]
     memory = get_memory(db_path, ctx.obj["llm"], ctx.obj["embedding"])
     stats_data = memory.get_stats()
+    config = load_config(project_dir=Path.cwd())
 
     # Consolidation status
     remind_dir = ctx.obj.get("remind_dir")
@@ -1012,6 +1149,27 @@ def status(ctx):
         lines.append("[bold green]● Ingest worker[/bold green]  [green]running[/green]")
     else:
         lines.append("[bold dim]○ Ingest worker[/bold dim]  [dim]idle[/dim]")
+
+    if config.reranking_enabled and config.cli_recall_worker_enabled:
+        worker_key = build_recall_worker_key(
+            db_url=db_path,
+            llm_provider=ctx.obj["llm"],
+            embedding_provider=ctx.obj["embedding"],
+            config_fingerprint=_recall_config_fingerprint(config),
+        )
+        recall_running = is_recall_running(
+            db_path,
+            worker_key=worker_key,
+            remind_dir=ctx.obj.get("remind_dir"),
+        )
+        if recall_running:
+            lines.append("[bold green]● Recall worker[/bold green]  [green]running[/green]")
+        else:
+            lines.append("[bold dim]○ Recall worker[/bold dim]  [dim]idle[/dim] [dim](auto-starts on recall)[/dim]")
+    elif config.reranking_enabled:
+        lines.append("[bold dim]○ Recall worker[/bold dim]  [dim]disabled by config[/dim]")
+    else:
+        lines.append("[bold dim]○ Recall worker[/bold dim]  [dim]inactive (reranking disabled)[/dim]")
 
     lines.append("")
 

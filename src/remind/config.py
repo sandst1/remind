@@ -129,7 +129,9 @@ class RemindConfig:
 
     # Reranking (requires `pip install "remind-mcp[rerank]"`)
     reranking_enabled: bool = False
-    reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-2-v2"
+    reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    cli_recall_worker_enabled: bool = True
+    cli_recall_worker_idle_seconds: int = 600
 
     # Logging
     logging_enabled: bool = False
@@ -249,6 +251,10 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         config.reranking_enabled = bool(file_config["reranking_enabled"])
     if "reranking_model" in file_config:
         config.reranking_model = str(file_config["reranking_model"])
+    if "cli_recall_worker_enabled" in file_config:
+        config.cli_recall_worker_enabled = bool(file_config["cli_recall_worker_enabled"])
+    if "cli_recall_worker_idle_seconds" in file_config:
+        config.cli_recall_worker_idle_seconds = int(file_config["cli_recall_worker_idle_seconds"])
 
     # Logging
     if "logging_enabled" in file_config:
@@ -456,6 +462,15 @@ def _apply_env_vars(config: RemindConfig) -> None:
         config.reranking_enabled = reranking_enabled.lower() in ("true", "1", "yes")
     if reranking_model := os.environ.get("REMIND_RERANKING_MODEL"):
         config.reranking_model = reranking_model
+    if cli_worker_enabled := os.environ.get("REMIND_CLI_RECALL_WORKER_ENABLED"):
+        config.cli_recall_worker_enabled = cli_worker_enabled.lower() in ("true", "1", "yes")
+    if cli_worker_idle := os.environ.get("REMIND_CLI_RECALL_WORKER_IDLE_SECONDS"):
+        try:
+            config.cli_recall_worker_idle_seconds = int(cli_worker_idle)
+        except ValueError:
+            logger.warning(
+                f"Invalid REMIND_CLI_RECALL_WORKER_IDLE_SECONDS: {cli_worker_idle}"
+            )
 
     # Logging
     if logging_enabled := os.environ.get("REMIND_LOGGING_ENABLED"):

@@ -87,7 +87,7 @@ Enable in config (`~/.remind/remind.config.json`):
 ```json
 {
   "reranking_enabled": true,
-  "reranking_model": "cross-encoder/ms-marco-MiniLM-L-2-v2"
+  "reranking_model": "cross-encoder/ms-marco-MiniLM-L-6-v2"
 }
 ```
 
@@ -95,10 +95,17 @@ Or via environment variables:
 
 ```bash
 REMIND_RERANKING_ENABLED=true
-REMIND_RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-2-v2
+REMIND_RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 ```
 
-The default model (`ms-marco-MiniLM-L-2-v2`) is ~50MB, loads in under a second, and scores 30 candidates in ~25-50ms on CPU. Hardware acceleration (CUDA, MPS) is auto-detected.
+The default model (`ms-marco-MiniLM-L-6-v2`) is ~88MB on disk, typically loads in ~0.3-1.0s from cache, and scores 30 candidates in ~20-30ms on CPU. Hardware acceleration (CUDA, MPS) is auto-detected.
+
+### Runtime behavior: CLI vs MCP
+
+- **MCP server** is long-lived, so reranker model load is amortized naturally across many recall calls.
+- **CLI (`remind recall`)** is normally one-shot, but when `reranking_enabled=true` it transparently routes requests through a persistent local recall worker so reranker load is reused across calls.
+- The CLI worker exits after `cli_recall_worker_idle_seconds` of inactivity (default: 600s).
+- If the worker is unavailable, CLI falls back to one-shot recall so commands remain functional.
 
 ### Tuning with recall_initial_candidates
 

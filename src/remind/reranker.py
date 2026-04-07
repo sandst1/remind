@@ -50,7 +50,7 @@ class Reranker:
     construction is cheap and import-time side effects are avoided.
     """
 
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-2-v2"):
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         try:
             import sentence_transformers  # noqa: F401
         except ImportError:

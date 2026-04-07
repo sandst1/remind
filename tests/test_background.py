@@ -11,13 +11,19 @@ import pytest
 
 from remind.background import (
     _db_hash,
+    build_recall_worker_key,
+    get_recall_socket_path,
+    get_recall_lock_path,
     enqueue_ingest_chunk,
     get_ingest_queue_dir,
     get_ingest_lock_path,
     is_ingest_running,
+    is_recall_running,
+    spawn_recall_worker,
     spawn_ingest_worker,
     get_consolidation_lock_path,
     is_consolidation_running,
+    DEFAULT_RECALL_WORKER_IDLE_SECONDS,
     INGEST_WORKER_GRACE_SECONDS,
 )
 from remind.background_worker import _next_queued_chunk, run_ingest_worker
@@ -41,6 +47,31 @@ class TestIngestQueueDir:
         path = get_ingest_queue_dir("/tmp/test.db")
         assert "ingest-queue" in str(path)
         assert path.name == _db_hash("/tmp/test.db")
+
+
+class TestRecallWorkerIdentity:
+    def test_build_recall_worker_key_deterministic(self):
+        key1 = build_recall_worker_key(
+            "sqlite:////tmp/test.db",
+            "anthropic",
+            "openai",
+            '{"reranking_enabled":true}',
+        )
+        key2 = build_recall_worker_key(
+            "sqlite:////tmp/test.db",
+            "anthropic",
+            "openai",
+            '{"reranking_enabled":true}',
+        )
+        assert key1 == key2
+        assert len(key1) == 16
+
+    def test_socket_and_lock_paths_include_worker_key(self, tmp_path):
+        sock = get_recall_socket_path("/tmp/test.db", "abcd1234", remind_dir=tmp_path)
+        lock = get_recall_lock_path("/tmp/test.db", "abcd1234", remind_dir=tmp_path)
+        assert sock.name.endswith("abcd1234.sock")
+        assert "sockets" in str(sock.parent)
+        assert lock.name.endswith("abcd1234.lock")
 
 
 class TestEnqueueIngestChunk:
@@ -108,6 +139,32 @@ class TestIngestLocking:
             lock.acquire()
             try:
                 result = spawn_ingest_worker("/tmp/test.db", "anthropic", "openai")
+                assert result is False
+            finally:
+                lock.release()
+
+
+class TestRecallLocking:
+    def test_is_recall_running_false_when_unlocked(self, tmp_path):
+        with patch("remind.background.REMIND_DIR", tmp_path):
+            assert not is_recall_running("/tmp/test.db", "key1")
+
+    def test_spawn_recall_worker_returns_false_when_locked(self, tmp_path):
+        from filelock import FileLock
+
+        with patch("remind.background.REMIND_DIR", tmp_path):
+            lock_path = get_recall_lock_path("/tmp/test.db", "key1")
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock = FileLock(str(lock_path))
+            lock.acquire()
+            try:
+                result = spawn_recall_worker(
+                    "/tmp/test.db",
+                    "anthropic",
+                    "openai",
+                    worker_key="key1",
+                    idle_seconds=DEFAULT_RECALL_WORKER_IDLE_SECONDS,
+                )
                 assert result is False
             finally:
                 lock.release()

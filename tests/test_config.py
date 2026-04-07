@@ -63,6 +63,8 @@ _ALL_CONFIG_ENV_VARS = [
     "REMIND_DECAY_INTERVAL",
     "REMIND_DECAY_RATE",
     "REMIND_LOGGING_ENABLED",
+    "REMIND_CLI_RECALL_WORKER_ENABLED",
+    "REMIND_CLI_RECALL_WORKER_IDLE_SECONDS",
     "REMIND_EPISODE_TYPES",
     "ENTITY_EXTRACTION_BATCH_SIZE",
     "LLM_CONCURRENCY",
@@ -101,6 +103,8 @@ class TestDefaults:
         assert config.consolidation_batch_size == 25
         assert config.llm_concurrency == 3
         assert config.ingest_buffer_size == 4000
+        assert config.cli_recall_worker_enabled is True
+        assert config.cli_recall_worker_idle_seconds == 600
         assert config.logging_enabled is False
 
     def test_anthropic_defaults(self):
@@ -169,6 +173,8 @@ class TestApplyFileConfig:
             "concepts_per_pass": 128,
             "auto_consolidate": False,
             "ingest_buffer_size": 8000,
+            "cli_recall_worker_enabled": False,
+            "cli_recall_worker_idle_seconds": 120,
             "logging_enabled": True,
         })
         assert config.llm_provider == "openai"
@@ -177,6 +183,8 @@ class TestApplyFileConfig:
         assert config.concepts_per_pass == 128
         assert config.auto_consolidate is False
         assert config.ingest_buffer_size == 8000
+        assert config.cli_recall_worker_enabled is False
+        assert config.cli_recall_worker_idle_seconds == 120
         assert config.logging_enabled is True
 
     def test_partial_config_preserves_unset_fields(self):
@@ -419,6 +427,14 @@ class TestEnvVarOverrides:
     def test_logging_enabled(self):
         c = self._config_with_env(REMIND_LOGGING_ENABLED="true")
         assert c.logging_enabled is True
+
+    def test_cli_recall_worker_enabled(self):
+        c = self._config_with_env(REMIND_CLI_RECALL_WORKER_ENABLED="false")
+        assert c.cli_recall_worker_enabled is False
+
+    def test_cli_recall_worker_idle_seconds(self):
+        c = self._config_with_env(REMIND_CLI_RECALL_WORKER_IDLE_SECONDS="180")
+        assert c.cli_recall_worker_idle_seconds == 180
 
     def test_extraction_batch_size(self):
         c = self._config_with_env(EXTRACTION_BATCH_SIZE="60")

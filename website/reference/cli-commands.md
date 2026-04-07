@@ -123,6 +123,16 @@ remind types
 
 Show processing status: running workers, pending episodes, queued ingest chunks.
 
+Includes three worker lines:
+- **Consolidation** worker state
+- **Ingest worker** state
+- **Recall worker** state
+
+Recall worker behavior:
+- When `reranking_enabled=false`, status shows recall worker as inactive.
+- When reranking is enabled and `cli_recall_worker_enabled=true`, status shows `idle` (auto-starts on `remind recall`) or `running`.
+- When reranking is enabled but `cli_recall_worker_enabled=false`, status shows recall worker as disabled by config.
+
 ```bash
 remind status
 ```
