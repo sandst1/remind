@@ -129,7 +129,7 @@ class RemindConfig:
 
     # Reranking (requires `pip install "remind-mcp[rerank]"`)
     reranking_enabled: bool = False
-    reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-2-v2"
 
     # Logging
     logging_enabled: bool = False

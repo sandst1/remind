@@ -133,7 +133,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `REMIND_HYBRID_KEYWORD_WEIGHT` | `hybrid_keyword_weight` | float | `0.3` |
 | `REMIND_RECALL_INITIAL_CANDIDATES` | `recall_initial_candidates` | int | `10` |
 | `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
-| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-2-v2` |
 | `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
 | `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
@@ -327,12 +327,12 @@ pip install "remind-mcp[rerank]"
 | Option | Default | Description |
 |--------|---------|-------------|
 | `reranking_enabled` | `false` | Enable cross-encoder reranking during recall |
-| `reranking_model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Which cross-encoder model to use |
+| `reranking_model` | `cross-encoder/ms-marco-MiniLM-L-2-v2` | Which cross-encoder model to use |
 
 | Env variable | Config field | Type | Default |
 |---|---|---|---|
 | `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
-| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-2-v2` |
 
 Enable via config file:
 

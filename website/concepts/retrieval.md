@@ -87,7 +87,7 @@ Enable in config (`~/.remind/remind.config.json`):
 ```json
 {
   "reranking_enabled": true,
-  "reranking_model": "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  "reranking_model": "cross-encoder/ms-marco-MiniLM-L-2-v2"
 }
 ```
 
@@ -95,10 +95,10 @@ Or via environment variables:
 
 ```bash
 REMIND_RERANKING_ENABLED=true
-REMIND_RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+REMIND_RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-2-v2
 ```
 
-The default model (`ms-marco-MiniLM-L-6-v2`) is ~80MB, loads in under a second, and scores 30 candidates in ~50-100ms on CPU.
+The default model (`ms-marco-MiniLM-L-2-v2`) is ~50MB, loads in under a second, and scores 30 candidates in ~25-50ms on CPU. Hardware acceleration (CUDA, MPS) is auto-detected.
 
 ### Tuning with recall_initial_candidates
 

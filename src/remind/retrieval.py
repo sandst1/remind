@@ -12,6 +12,7 @@ from typing import Optional, TYPE_CHECKING
 import logging
 import math
 import re
+import time
 
 from remind.models import Concept, Episode, Entity, RelationType
 from remind.store import MemoryStore
@@ -177,27 +178,35 @@ class MemoryRetriever:
         Returns:
             List of ActivatedConcept objects, sorted by activation
         """
+        t_start = time.perf_counter()
         # Combine query with context if provided
         embed_text = query
         if context:
             embed_text = f"{query}\n\nContext: {context}"
         
         # Get query embedding
+        t_embed_start = time.perf_counter()
         query_embedding = await self.embedding.embed(embed_text)
+        t_embed_ms = (time.perf_counter() - t_embed_start) * 1000.0
         
         # Step 1: Initial activation from embedding similarity
+        t_initial_search_start = time.perf_counter()
         initial_matches = self.store.find_by_embedding(
             query_embedding, 
             k=self.initial_k * 2  # Get more initially, we'll filter
         )
+        t_initial_search_ms = (time.perf_counter() - t_initial_search_start) * 1000.0
 
+        t_topic_filter_start = time.perf_counter()
         if topic:
             initial_matches = [
                 (c, sim) for c, sim in initial_matches
                 if c.topic_id == topic or c.topic_id is None
             ]
+        t_topic_filter_ms = (time.perf_counter() - t_topic_filter_start) * 1000.0
         
         # Build activation map: concept_id -> (activation, source, hops)
+        t_initial_activation_start = time.perf_counter()
         activation_map: dict[str, tuple[float, str, int]] = {}
         concept_cache: dict[str, Concept] = {}
 
@@ -219,10 +228,12 @@ class MemoryRetriever:
                 concept_cache[concept.id] = concept
                 if decay_factor < 0.5:
                     logger.debug(f"Concept {concept.id} activation reduced by decay_factor {decay_factor:.2f}: {weighted_activation:.3f} -> {final_activation:.3f}")
+        t_initial_activation_ms = (time.perf_counter() - t_initial_activation_start) * 1000.0
         
         logger.debug(f"Initial activation: {len(activation_map)} concepts (topic={topic})")
         
         # Step 2: Spreading activation
+        t_spread_start = time.perf_counter()
         for hop in range(self.spread_hops):
             new_activations: dict[str, tuple[float, str, int]] = {}
             
@@ -272,8 +283,10 @@ class MemoryRetriever:
                     activation_map[cid] = (act, src, hops)
             
             logger.debug(f"After hop {hop + 1}: {len(activation_map)} concepts")
+        t_spread_ms = (time.perf_counter() - t_spread_start) * 1000.0
         
         # Step 2.5: Entity name matching (fast, no embedding needed)
+        t_entity_start = time.perf_counter()
         entity_matches, self._last_matched_entities = self._entity_name_matches(
             query, max_concepts=k
         )
@@ -289,9 +302,12 @@ class MemoryRetriever:
                 if src == "entity_name"
             )
             logger.debug(f"Entity name matching: {entity_sourced} concepts from entities")
+        t_entity_ms = (time.perf_counter() - t_entity_start) * 1000.0
 
         # Step 2.75: Cross-encoder reranking
+        t_rerank_ms = 0.0
         if self.reranker and activation_map:
+            t_rerank_start = time.perf_counter()
             rerank_ids = list(activation_map.keys())
             rerank_docs = []
             for cid in rerank_ids:
@@ -309,8 +325,10 @@ class MemoryRetriever:
                 activation_map[cid] = (blended, src, hops)
 
             logger.debug(f"Reranked {len(rerank_ids)} concepts")
+            t_rerank_ms = (time.perf_counter() - t_rerank_start) * 1000.0
 
         # Step 3: Build result list
+        t_finalize_start = time.perf_counter()
         results = []
         for concept_id, (activation, source, hops) in activation_map.items():
             if not include_weak and activation < self.activation_threshold * 2:
@@ -332,7 +350,27 @@ class MemoryRetriever:
         results.sort(key=lambda x: x.activation, reverse=True)
         if not include_weak:
             results = [r for r in results if r.activation >= min_activation]
-        return results[:k]
+        results = results[:k]
+        t_finalize_ms = (time.perf_counter() - t_finalize_start) * 1000.0
+        t_total_ms = (time.perf_counter() - t_start) * 1000.0
+
+        logger.debug(
+            "Recall timing (retrieve): embed=%.1fms vector=%.1fms topic_filter=%.1fms "
+            "initial_activation=%.1fms spread=%.1fms entity_match=%.1fms rerank=%.1fms "
+            "finalize=%.1fms total=%.1fms candidates=%d returned=%d",
+            t_embed_ms,
+            t_initial_search_ms,
+            t_topic_filter_ms,
+            t_initial_activation_ms,
+            t_spread_ms,
+            t_entity_ms,
+            t_rerank_ms,
+            t_finalize_ms,
+            t_total_ms,
+            len(activation_map),
+            len(results),
+        )
+        return results
     
     def _entity_name_matches(
         self,
@@ -470,6 +508,7 @@ class MemoryRetriever:
         self,
         query: str,
         k: int = 5,
+        query_embedding: Optional[list[float]] = None,
     ) -> list[ScoredEpisode]:
         """
         Retrieve episodes by direct embedding similarity search.
@@ -481,11 +520,14 @@ class MemoryRetriever:
         Args:
             query: The query text to search for.
             k: Maximum number of episodes to return.
+            query_embedding: Pre-computed embedding to reuse. When provided
+                the embedding API call is skipped.
 
         Returns:
             Scored episodes sorted by similarity, highest first.
         """
-        query_embedding = await self.embedding.embed(query)
+        if query_embedding is None:
+            query_embedding = await self.embedding.embed(query)
         matches = self.store.find_episodes_by_embedding(query_embedding, k=k)
 
         kw = self.hybrid_keyword_weight
@@ -507,6 +549,257 @@ class MemoryRetriever:
 
         results.sort(key=lambda s: s.score, reverse=True)
         return results
+
+    async def retrieve_all(
+        self,
+        query: str,
+        k: int = 3,
+        episode_k: int = 5,
+        min_activation: float = 0.15,
+        context: Optional[str] = None,
+        topic: Optional[str] = None,
+    ) -> tuple[list[ActivatedConcept], Optional[list[ScoredEpisode]]]:
+        """Retrieve concepts and episodes in a single pass.
+
+        Combines :meth:`retrieve` and :meth:`retrieve_episodes_by_embedding`
+        while computing the query embedding only once and batching the
+        cross-encoder reranker into a single ``predict()`` call.
+
+        Args:
+            query: The query text.
+            k: Maximum number of concepts to return.
+            episode_k: Maximum number of episodes to return (0 to skip).
+            min_activation: Minimum activation score for concepts.
+            context: Optional additional context for the concept embedding.
+            topic: Optional topic filter for concept retrieval.
+
+        Returns:
+            ``(activated_concepts, scored_episodes)`` — the same objects
+            that ``retrieve()`` and ``retrieve_episodes_by_embedding()``
+            would return individually.
+        """
+        t_start = time.perf_counter()
+        # --- single embedding ------------------------------------------
+        embed_text = query
+        if context:
+            embed_text = f"{query}\n\nContext: {context}"
+        t_embed_start = time.perf_counter()
+        query_embedding = await self.embedding.embed(embed_text)
+        t_embed_ms = (time.perf_counter() - t_embed_start) * 1000.0
+
+        # --- concept vector search + spreading activation ---------------
+        t_initial_search_start = time.perf_counter()
+        initial_matches = self.store.find_by_embedding(
+            query_embedding,
+            k=self.initial_k * 2,
+        )
+        t_initial_search_ms = (time.perf_counter() - t_initial_search_start) * 1000.0
+
+        t_topic_filter_start = time.perf_counter()
+        if topic:
+            initial_matches = [
+                (c, sim) for c, sim in initial_matches
+                if c.topic_id == topic or c.topic_id is None
+            ]
+        t_topic_filter_ms = (time.perf_counter() - t_topic_filter_start) * 1000.0
+
+        t_initial_activation_start = time.perf_counter()
+        activation_map: dict[str, tuple[float, str, int]] = {}
+        concept_cache: dict[str, Concept] = {}
+
+        kw = self.hybrid_keyword_weight
+        for concept, similarity in initial_matches:
+            if kw > 0.0:
+                concept_text = f"{concept.title or ''} {concept.summary or ''}"
+                kw_score = _keyword_score(query, concept_text)
+                fused = (1.0 - kw) * similarity + kw * kw_score
+            else:
+                fused = similarity
+
+            weighted_activation = fused * concept.confidence
+            decay_factor = max(0.0, min(1.0, concept.decay_factor))
+            final_activation = weighted_activation * decay_factor
+
+            if final_activation > self.activation_threshold:
+                activation_map[concept.id] = (final_activation, "embedding", 0)
+                concept_cache[concept.id] = concept
+                if decay_factor < 0.5:
+                    logger.debug(
+                        f"Concept {concept.id} activation reduced by decay_factor "
+                        f"{decay_factor:.2f}: {weighted_activation:.3f} -> {final_activation:.3f}"
+                    )
+        t_initial_activation_ms = (time.perf_counter() - t_initial_activation_start) * 1000.0
+
+        logger.debug(f"Initial activation: {len(activation_map)} concepts (topic={topic})")
+
+        t_spread_start = time.perf_counter()
+        for hop in range(self.spread_hops):
+            new_activations: dict[str, tuple[float, str, int]] = {}
+
+            for concept_id, (activation, _, _) in list(activation_map.items()):
+                if activation < self.activation_threshold:
+                    continue
+
+                related = self.store.get_related(concept_id, depth=1)
+
+                for related_concept, relation in related:
+                    relation_weight = self.relation_weights.get(relation.type, 0.5)
+                    target_decay = max(0.0, min(1.0, related_concept.decay_factor))
+                    spread_activation = (
+                        activation
+                        * relation.strength
+                        * relation_weight
+                        * (self.spread_decay ** (hop + 1))
+                        * related_concept.confidence
+                        * target_decay
+                    )
+
+                    if topic and related_concept.topic_id and related_concept.topic_id != topic:
+                        spread_activation *= 0.4
+
+                    if spread_activation < self.activation_threshold:
+                        continue
+
+                    current = activation_map.get(related_concept.id, (0, "", 0))[0]
+                    spread_current = new_activations.get(related_concept.id, (0, "", 0))[0]
+
+                    if spread_activation > max(current, spread_current):
+                        new_activations[related_concept.id] = (
+                            spread_activation,
+                            "spread",
+                            hop + 1,
+                        )
+                        concept_cache[related_concept.id] = related_concept
+
+            for cid, (act, src, hops) in new_activations.items():
+                current = activation_map.get(cid, (0, "", 0))[0]
+                if act > current:
+                    activation_map[cid] = (act, src, hops)
+
+            logger.debug(f"After hop {hop + 1}: {len(activation_map)} concepts")
+        t_spread_ms = (time.perf_counter() - t_spread_start) * 1000.0
+
+        # Entity name matching
+        t_entity_start = time.perf_counter()
+        entity_matches, self._last_matched_entities = self._entity_name_matches(
+            query, max_concepts=k
+        )
+        for em in entity_matches:
+            current = activation_map.get(em.concept.id, (0, "", 0))[0]
+            if em.activation > current:
+                activation_map[em.concept.id] = (em.activation, "entity_name", 0)
+                concept_cache[em.concept.id] = em.concept
+
+        if entity_matches:
+            entity_sourced = sum(
+                1 for cid, (_, src, _) in activation_map.items()
+                if src == "entity_name"
+            )
+            logger.debug(f"Entity name matching: {entity_sourced} concepts from entities")
+        t_entity_ms = (time.perf_counter() - t_entity_start) * 1000.0
+
+        # --- episode vector search (reuses the same embedding) ----------
+        t_episode_search_start = time.perf_counter()
+        episode_results: Optional[list[ScoredEpisode]] = None
+        if episode_k > 0:
+            ep_matches = self.store.find_episodes_by_embedding(query_embedding, k=episode_k)
+            episode_results = []
+            for episode, similarity in ep_matches:
+                if kw > 0.0:
+                    kw_score = _keyword_score(query, episode.content or "")
+                    fused = (1.0 - kw) * similarity + kw * kw_score
+                else:
+                    fused = similarity
+                episode_results.append(ScoredEpisode(episode=episode, score=fused))
+        t_episode_search_ms = (time.perf_counter() - t_episode_search_start) * 1000.0
+
+        # --- single batched reranker pass -------------------------------
+        t_rerank_ms = 0.0
+        if self.reranker and (activation_map or episode_results):
+            t_rerank_start = time.perf_counter()
+            concept_ids = list(activation_map.keys()) if activation_map else []
+            concept_docs: list[str] = []
+            for cid in concept_ids:
+                c = concept_cache.get(cid) or self.store.get_concept(cid)
+                if c:
+                    concept_cache[cid] = c
+                    concept_docs.append(f"{c.title or ''} {c.summary or ''}".strip())
+                else:
+                    concept_docs.append("")
+
+            episode_docs: list[str] = []
+            if episode_results:
+                episode_docs = [se.episode.content or "" for se in episode_results]
+
+            all_docs = concept_docs + episode_docs
+            if all_docs:
+                all_scores = self.reranker.score(query, all_docs)
+
+                n_concepts = len(concept_ids)
+                for idx, cid in enumerate(concept_ids):
+                    old_act, src, hops = activation_map[cid]
+                    blended = 0.4 * old_act + 0.6 * all_scores[idx]
+                    activation_map[cid] = (blended, src, hops)
+
+                if episode_results:
+                    for idx, se in enumerate(episode_results):
+                        se.score = 0.4 * se.score + 0.6 * all_scores[n_concepts + idx]
+
+            logger.debug(
+                f"Reranked {len(concept_ids)} concepts + {len(episode_docs)} episodes"
+            )
+            t_rerank_ms = (time.perf_counter() - t_rerank_start) * 1000.0
+
+        # --- build concept results --------------------------------------
+        t_finalize_start = time.perf_counter()
+        results: list[ActivatedConcept] = []
+        for concept_id, (activation, source, hops) in activation_map.items():
+            if activation < self.activation_threshold * 2:
+                continue
+
+            concept = concept_cache.get(concept_id)
+            if not concept:
+                concept = self.store.get_concept(concept_id)
+
+            if concept:
+                results.append(ActivatedConcept(
+                    concept=concept,
+                    activation=activation,
+                    source=source,
+                    hops=hops,
+                ))
+
+        results.sort(key=lambda x: x.activation, reverse=True)
+        results = [r for r in results if r.activation >= min_activation]
+        results = results[:k]
+
+        # --- sort episodes -----------------------------------------------
+        if episode_results:
+            episode_results.sort(key=lambda s: s.score, reverse=True)
+
+        t_finalize_ms = (time.perf_counter() - t_finalize_start) * 1000.0
+        t_total_ms = (time.perf_counter() - t_start) * 1000.0
+        logger.debug(
+            "Recall timing (retrieve_all): embed=%.1fms vector=%.1fms topic_filter=%.1fms "
+            "initial_activation=%.1fms spread=%.1fms entity_match=%.1fms "
+            "episode_search=%.1fms rerank=%.1fms finalize=%.1fms total=%.1fms "
+            "candidates(concepts=%d,episodes=%d) returned(concepts=%d,episodes=%d)",
+            t_embed_ms,
+            t_initial_search_ms,
+            t_topic_filter_ms,
+            t_initial_activation_ms,
+            t_spread_ms,
+            t_entity_ms,
+            t_episode_search_ms,
+            t_rerank_ms,
+            t_finalize_ms,
+            t_total_ms,
+            len(activation_map),
+            len(episode_results) if episode_results else 0,
+            len(results),
+            len(episode_results) if episode_results else 0,
+        )
+        return results, episode_results
 
     async def retrieve_by_entity(
         self,

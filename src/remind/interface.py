@@ -13,6 +13,7 @@ from pathlib import Path
 import asyncio
 import logging
 import json
+import time
 
 from remind.models import (
     Episode, Concept, ConsolidationResult,
@@ -113,7 +114,7 @@ class MemoryInterface:
         recall_initial_candidates: int = 10,
         # Reranking
         reranking_enabled: bool = False,
-        reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-2-v2",
     ):
         self.llm = llm
         self.embedding = embedding
@@ -400,6 +401,7 @@ class MemoryInterface:
         """
         if not entity and query is None:
             raise ValueError("Either query or entity must be provided")
+        t_total_start = time.perf_counter()
         
         k = k or self.default_recall_k
         episode_k = episode_k if episode_k is not None else self.default_episode_k
@@ -410,47 +412,113 @@ class MemoryInterface:
         
         # Entity-based retrieval
         if entity:
+            t_entity_normalize_start = time.perf_counter()
             type_str, name = Entity.parse_id(entity)
             entity = Entity.make_id(type_str, normalize_entity_name(name))
+            t_entity_normalize_ms = (time.perf_counter() - t_entity_normalize_start) * 1000.0
+
+            t_entity_retrieve_start = time.perf_counter()
             episodes = await self.retriever.retrieve_by_entity(entity, limit=k * 4)
+            t_entity_retrieve_ms = (time.perf_counter() - t_entity_retrieve_start) * 1000.0
+
+            t_decay_ms = 0.0
             if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
+                t_decay_start = time.perf_counter()
                 self._trigger_decay()
+                t_decay_ms = (time.perf_counter() - t_decay_start) * 1000.0
+
             if raw:
+                t_total_ms = (time.perf_counter() - t_total_start) * 1000.0
+                logger.debug(
+                    "Recall timing (interface): mode=entity raw=True normalize=%.1fms "
+                    "retrieve=%.1fms decay=%.1fms total=%.1fms episodes=%d",
+                    t_entity_normalize_ms,
+                    t_entity_retrieve_ms,
+                    t_decay_ms,
+                    t_total_ms,
+                    len(episodes),
+                )
                 return episodes
-            return self.retriever.format_entity_context(entity, episodes)
+            t_format_start = time.perf_counter()
+            formatted = self.retriever.format_entity_context(entity, episodes)
+            t_format_ms = (time.perf_counter() - t_format_start) * 1000.0
+            t_total_ms = (time.perf_counter() - t_total_start) * 1000.0
+            logger.debug(
+                "Recall timing (interface): mode=entity raw=False normalize=%.1fms "
+                "retrieve=%.1fms format=%.1fms decay=%.1fms total=%.1fms episodes=%d",
+                t_entity_normalize_ms,
+                t_entity_retrieve_ms,
+                t_format_ms,
+                t_decay_ms,
+                t_total_ms,
+                len(episodes),
+            )
+            return formatted
         
-        # Concept-based retrieval (semantic)
-        activated = await self.retriever.retrieve(
+        # Combined concept + episode retrieval (single embed, single rerank)
+        t_retrieve_start = time.perf_counter()
+        activated, direct_episodes = await self.retriever.retrieve_all(
             query=query,
             k=k,
+            episode_k=episode_k,
             context=context,
             topic=topic,
         )
-
-        # Direct episode vector search
-        direct_episodes = None
-        if episode_k > 0:
-            direct_episodes = await self.retriever.retrieve_episodes_by_embedding(
-                query=query, k=episode_k
-            )
+        t_retrieve_ms = (time.perf_counter() - t_retrieve_start) * 1000.0
         
+        t_rejuvenate_ms = 0.0
         if activated and self.decay_config.enabled:
+            t_rejuvenate_start = time.perf_counter()
             self._rejuvenate_concepts(activated)
+            t_rejuvenate_ms = (time.perf_counter() - t_rejuvenate_start) * 1000.0
         
+        t_decay_ms = 0.0
         if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
+            t_decay_start = time.perf_counter()
             self._trigger_decay()
+            t_decay_ms = (time.perf_counter() - t_decay_start) * 1000.0
         
         if raw:
+            t_total_ms = (time.perf_counter() - t_total_start) * 1000.0
+            logger.debug(
+                "Recall timing (interface): mode=semantic raw=True retrieve_all=%.1fms "
+                "rejuvenate=%.1fms decay=%.1fms total=%.1fms concepts=%d episodes=%d",
+                t_retrieve_ms,
+                t_rejuvenate_ms,
+                t_decay_ms,
+                t_total_ms,
+                len(activated),
+                len(direct_episodes) if direct_episodes else 0,
+            )
             return activated
         
         # Build topic name map for formatting
+        t_topic_name_start = time.perf_counter()
         topic_names = self._get_topic_names()
-        return self.retriever.format_for_llm(
+        t_topic_name_ms = (time.perf_counter() - t_topic_name_start) * 1000.0
+        t_format_start = time.perf_counter()
+        formatted = self.retriever.format_for_llm(
             activated,
             direct_episodes=direct_episodes,
             group_by_topic=topic is None,
             topic_names=topic_names,
         )
+        t_format_ms = (time.perf_counter() - t_format_start) * 1000.0
+        t_total_ms = (time.perf_counter() - t_total_start) * 1000.0
+        logger.debug(
+            "Recall timing (interface): mode=semantic raw=False retrieve_all=%.1fms "
+            "topic_names=%.1fms format=%.1fms rejuvenate=%.1fms decay=%.1fms "
+            "total=%.1fms concepts=%d episodes=%d",
+            t_retrieve_ms,
+            t_topic_name_ms,
+            t_format_ms,
+            t_rejuvenate_ms,
+            t_decay_ms,
+            t_total_ms,
+            len(activated),
+            len(direct_episodes) if direct_episodes else 0,
+        )
+        return formatted
     
     async def consolidate(
         self,
