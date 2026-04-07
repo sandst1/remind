@@ -4,8 +4,10 @@ Cross-encoder reranker for retrieval post-processing.
 Requires the `rerank` extra: pip install "remind-mcp[rerank]"
 """
 
+import io
 import logging
 import os
+import sys
 import warnings
 from typing import Optional
 
@@ -60,24 +62,24 @@ class Reranker:
             saved_env[key] = os.environ.get(key)
             os.environ[key] = val
 
+        # Redirect stderr at the fd level to suppress safetensors "Loading
+        # weights" tqdm bar and sentence-transformers "LOAD REPORT" — both
+        # write directly to the C-level stderr fd, bypassing Python logging.
+        old_stderr = sys.stderr
+        stderr_fd = sys.stderr.fileno()
+        saved_fd = os.dup(stderr_fd)
         try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, stderr_fd)
+            os.close(devnull)
+            sys.stderr = io.StringIO()
             with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message=".*unauthenticated.*")
-                warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
-
-                noisy_loggers = [
-                    logging.getLogger(name)
-                    for name in ("huggingface_hub", "sentence_transformers", "transformers")
-                ]
-                old_levels = [lg.level for lg in noisy_loggers]
-                for lg in noisy_loggers:
-                    lg.setLevel(logging.ERROR)
-                try:
-                    self._model = CrossEncoder(self._model_name)
-                finally:
-                    for lg, lvl in zip(noisy_loggers, old_levels):
-                        lg.setLevel(lvl)
+                warnings.simplefilter("ignore")
+                self._model = CrossEncoder(self._model_name)
         finally:
+            os.dup2(saved_fd, stderr_fd)
+            os.close(saved_fd)
+            sys.stderr = old_stderr
             for key, old_val in saved_env.items():
                 if old_val is None:
                     os.environ.pop(key, None)
@@ -99,6 +101,23 @@ class Reranker:
         pairs = [(query, doc) for doc in documents]
         raw_scores = self._model.predict(pairs)
 
-        # ms-marco cross-encoders output logits; normalize to [0, 1]
         import math
-        return [1.0 / (1.0 + math.exp(-float(s))) for s in raw_scores]
+        results = []
+        nan_count = 0
+        for s in raw_scores:
+            val = float(s)
+            if math.isnan(val):
+                nan_count += 1
+                results.append(0.0)
+            else:
+                results.append(1.0 / (1.0 + math.exp(-val)))
+
+        if nan_count:
+            logger.error(
+                f"Reranker returned NaN for {nan_count}/{len(raw_scores)} scores "
+                f"(model={self._model_name}, device={getattr(self._model, 'device', '?')}). "
+                f"Falling back to 0.0 for affected scores. "
+                f"This is a known issue with ms-marco-MiniLM-L-6-v2 on CPU/Apple Silicon."
+            )
+
+        return results
