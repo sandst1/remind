@@ -28,6 +28,9 @@ postgres = [
 mysql = [
     "pymysql>=1.0",
 ]
+rerank = [
+    "sentence-transformers>=3.0.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
@@ -85,6 +88,7 @@ omit = [
     "src/remind/providers/openai.py",
     "src/remind/providers/azure_openai.py",
     "src/remind/providers/ollama.py",
+    "src/remind/reranker.py",
 ]
 
 [tool.coverage.report]

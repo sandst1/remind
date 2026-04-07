@@ -63,6 +63,58 @@ Configure via `~/.remind/remind.config.json`:
 
 Or environment variable: `REMIND_HYBRID_KEYWORD_WEIGHT=0.3`
 
+## Reranking
+
+Optionally, retrieval can apply a **cross-encoder reranker** after spreading activation. While embedding similarity and keyword overlap are fast, they can miss nuanced relevance — a cross-encoder reads the query and each candidate together, producing a more accurate relevance score.
+
+When enabled, reranking is applied in two places:
+
+1. **Concept retrieval** — After spreading activation and entity matching produce a candidate set, the reranker scores each concept's title + summary against the query. The final activation is blended: `0.4 × activation + 0.6 × rerank_score`.
+2. **Direct episode search** — Episode results are similarly rescored using episode content.
+
+This preserves graph structure signal (spreading activation, entity links) while letting the cross-encoder correct false positives and surface better matches.
+
+### Setup
+
+Install the reranking extra:
+
+```bash
+pip install "remind-mcp[rerank]"
+```
+
+Enable in config (`~/.remind/remind.config.json`):
+
+```json
+{
+  "reranking_enabled": true,
+  "reranking_model": "cross-encoder/ms-marco-MiniLM-L-6-v2"
+}
+```
+
+Or via environment variables:
+
+```bash
+REMIND_RERANKING_ENABLED=true
+REMIND_RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+```
+
+The default model (`ms-marco-MiniLM-L-6-v2`) is ~80MB, loads in under a second, and scores 30 candidates in ~50-100ms on CPU.
+
+### Tuning with recall_initial_candidates
+
+The `recall_initial_candidates` setting controls how many concepts are fetched from the vector index before spreading activation and reranking. The default is `10` (which queries the DB for `10 × 2 = 20` raw candidates before filtering).
+
+When reranking is enabled, increasing this value gives the reranker more candidates to evaluate, which can improve recall quality at the cost of slightly higher latency. A value of `15`-`20` is a good starting point:
+
+```json
+{
+  "reranking_enabled": true,
+  "recall_initial_candidates": 15
+}
+```
+
+Without reranking, the default of `10` is generally sufficient since the spreading activation and entity matching steps already broaden the candidate pool.
+
 ## Vector indexes
 
 Remind uses native database vector indexes when available, replacing the default brute-force Python cosine similarity:
@@ -109,6 +161,7 @@ The retrieval algorithm has a few key parameters:
 
 - **k** — Maximum number of concepts to return (default: 3)
 - **episode_k** — Number of episodes to retrieve via direct embedding search (default: 5). Set to 0 to disable.
+- **recall_initial_candidates** — How many initial embedding candidates to fetch before spreading activation and reranking (default: 10). The database actually queries for `recall_initial_candidates × 2` raw results, then filters by activation threshold. Increase when using reranking to give the cross-encoder more candidates to evaluate.
 - **min_activation** — Minimum activation score to include in results (default: 0.15). Concepts below this floor are dropped even if there's budget remaining. This prevents low-relevance noise from reaching the context.
 - **Initial activation threshold** — Minimum embedding similarity to activate a concept
 - **Spread decay** — How much activation reduces per hop (default: 0.5 per hop)

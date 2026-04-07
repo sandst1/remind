@@ -110,6 +110,10 @@ class MemoryInterface:
         episode_types: Optional[list[str]] = None,
         # Retrieval tuning
         hybrid_keyword_weight: float = 0.0,
+        recall_initial_candidates: int = 10,
+        # Reranking
+        reranking_enabled: bool = False,
+        reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
     ):
         self.llm = llm
         self.embedding = embedding
@@ -141,11 +145,18 @@ class MemoryInterface:
             valid_types=episode_types,
         )
         
+        reranker = None
+        if reranking_enabled:
+            from remind.reranker import Reranker
+            reranker = Reranker(model_name=reranking_model)
+
         self.retriever = MemoryRetriever(
             embedding=embedding,
             store=self.store,
+            initial_k=recall_initial_candidates,
             spread_hops=spread_hops,
             hybrid_keyword_weight=hybrid_keyword_weight,
+            reranker=reranker,
         )
         
         self.episode_types: list[str] = episode_types or list(DEFAULT_EPISODE_TYPES)
@@ -1509,7 +1520,13 @@ def create_memory(
         kwargs["hybrid_keyword_weight"] = config.hybrid_keyword_weight
     else:
         kwargs["hybrid_keyword_weight"] = float(kwargs["hybrid_keyword_weight"])
-    
+    if "recall_initial_candidates" not in kwargs:
+        kwargs["recall_initial_candidates"] = config.recall_initial_candidates
+    if "reranking_enabled" not in kwargs:
+        kwargs["reranking_enabled"] = config.reranking_enabled
+    if "reranking_model" not in kwargs:
+        kwargs["reranking_model"] = config.reranking_model
+
     # Import providers
     from remind.providers import (
         AnthropicLLM, OpenAILLM, OllamaLLM, AzureOpenAILLM,

@@ -124,6 +124,11 @@ class RemindConfig:
 
     # Retrieval tuning
     hybrid_keyword_weight: float = 0.3
+    recall_initial_candidates: int = 10
+
+    # Reranking (requires `pip install "remind-mcp[rerank]"`)
+    reranking_enabled: bool = False
+    reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # Logging
     logging_enabled: bool = False
@@ -235,6 +240,14 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
     # Retrieval tuning
     if "hybrid_keyword_weight" in file_config:
         config.hybrid_keyword_weight = float(file_config["hybrid_keyword_weight"])
+    if "recall_initial_candidates" in file_config:
+        config.recall_initial_candidates = int(file_config["recall_initial_candidates"])
+
+    # Reranking
+    if "reranking_enabled" in file_config:
+        config.reranking_enabled = bool(file_config["reranking_enabled"])
+    if "reranking_model" in file_config:
+        config.reranking_model = str(file_config["reranking_model"])
 
     # Logging
     if "logging_enabled" in file_config:
@@ -426,6 +439,17 @@ def _apply_env_vars(config: RemindConfig) -> None:
             config.hybrid_keyword_weight = float(hybrid_weight)
         except ValueError:
             logger.warning(f"Invalid REMIND_HYBRID_KEYWORD_WEIGHT: {hybrid_weight}")
+    if initial_candidates := os.environ.get("REMIND_RECALL_INITIAL_CANDIDATES"):
+        try:
+            config.recall_initial_candidates = int(initial_candidates)
+        except ValueError:
+            logger.warning(f"Invalid REMIND_RECALL_INITIAL_CANDIDATES: {initial_candidates}")
+
+    # Reranking
+    if reranking_enabled := os.environ.get("REMIND_RERANKING_ENABLED"):
+        config.reranking_enabled = reranking_enabled.lower() in ("true", "1", "yes")
+    if reranking_model := os.environ.get("REMIND_RERANKING_MODEL"):
+        config.reranking_model = reranking_model
 
     # Logging
     if logging_enabled := os.environ.get("REMIND_LOGGING_ENABLED"):

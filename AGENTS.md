@@ -19,6 +19,7 @@ src/remind/
 ├── consolidation.py   # LLM-powered episode → concept transformation
 ├── extraction.py      # Entity/type extraction from episodes
 ├── retrieval.py       # Spreading activation retrieval
+├── reranker.py        # Optional cross-encoder reranking (requires [rerank] extra)
 ├── triage.py          # Auto-ingest: buffered intake + density scoring + topic inference
 ├── cli.py             # Command-line interface (project-aware)
 ├── mcp_server.py      # MCP (Model Context Protocol) server
@@ -126,11 +127,14 @@ Pipeline: `ingest()` → buffer → triage + extract + topic inference (LLM) →
 2. Embedding scores are optionally fused with keyword overlap scores (`hybrid_keyword_weight` config, default 0.3)
 3. Matched concepts activate related concepts through the graph
 4. Activation spreads with decay over multiple hops
-5. Highest-activation concepts are returned with source episodes (including type labels and entity context)
+5. Optional cross-encoder reranking blends activation scores with query-document relevance (`reranking_enabled` config, requires `[rerank]` extra)
+6. Highest-activation concepts are returned with source episodes (including type labels and entity context)
 
 Key class: `MemoryRetriever` with `ActivatedConcept` results.
 
 Helper function: `_keyword_score(query, text)` — normalized token overlap for hybrid scoring.
+
+**Reranking** (`reranker.py`): Optional cross-encoder post-processing. When `reranking_enabled=True`, a `Reranker` wrapping sentence-transformers `CrossEncoder` rescores candidates after spreading activation. Blending: `0.4 × activation + 0.6 × rerank_score`. Model is lazy-loaded on first recall. Requires `pip install "remind-mcp[rerank]"`.
 
 ### Store (`store.py`)
 
@@ -207,6 +211,10 @@ class RemindConfig:
  ingest_buffer_size: int = 4000
  # Retrieval tuning
  hybrid_keyword_weight: float = 0.3
+ recall_initial_candidates: int = 10
+ # Reranking (requires `pip install "remind-mcp[rerank]"`)
+ reranking_enabled: bool = False
+ reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
  # Logging
  logging_enabled: bool = False
  # Episode types (controls which types are valid + gates CLI/MCP features)
@@ -440,7 +448,7 @@ When making changes, these files are most commonly modified together:
 | New data structure | `models.py`, `store.py` |
 | New provider | `providers/newprovider.py`, `providers/__init__.py`, `interface.py` |
 | Consolidation logic | `consolidation.py`, `extraction.py` |
-| Retrieval behavior | `retrieval.py`, `config.py` |
+| Retrieval behavior | `retrieval.py`, `reranker.py`, `config.py` |
 | Auto-ingest pipeline | `triage.py`, `llm_protocol.py`, `interface.py`, `config.py` |
 | CLI commands | `cli.py` |
 | Configuration | `config.py`, `interface.py`, `mcp_server.py`, `cli.py` |

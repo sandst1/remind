@@ -8,7 +8,7 @@ relationship structure, mimicking associative memory in the brain.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import logging
 import math
 import re
@@ -16,6 +16,9 @@ import re
 from remind.models import Concept, Episode, Entity, RelationType
 from remind.store import MemoryStore
 from remind.providers.base import EmbeddingProvider
+
+if TYPE_CHECKING:
+    from remind.reranker import Reranker
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +127,8 @@ class MemoryRetriever:
         hybrid_keyword_weight: float = 0.0,  # 0.0 = pure embedding, 1.0 = pure keyword
         # Relation type weights (how much different relations spread activation)
         relation_weights: Optional[dict[RelationType, float]] = None,
+        # Optional cross-encoder reranker
+        reranker: Optional["Reranker"] = None,
     ):
         self.embedding = embedding
         self.store = store
@@ -132,6 +137,7 @@ class MemoryRetriever:
         self.spread_decay = spread_decay
         self.activation_threshold = activation_threshold
         self.hybrid_keyword_weight = max(0.0, min(1.0, hybrid_keyword_weight))
+        self.reranker = reranker
         
         # Default relation weights - some relations spread activation more
         self.relation_weights = relation_weights or {
@@ -283,7 +289,27 @@ class MemoryRetriever:
                 if src == "entity_name"
             )
             logger.debug(f"Entity name matching: {entity_sourced} concepts from entities")
-        
+
+        # Step 2.75: Cross-encoder reranking
+        if self.reranker and activation_map:
+            rerank_ids = list(activation_map.keys())
+            rerank_docs = []
+            for cid in rerank_ids:
+                c = concept_cache.get(cid) or self.store.get_concept(cid)
+                if c:
+                    concept_cache[cid] = c
+                    rerank_docs.append(f"{c.title or ''} {c.summary or ''}".strip())
+                else:
+                    rerank_docs.append("")
+
+            rerank_scores = self.reranker.score(query, rerank_docs)
+            for cid, rs in zip(rerank_ids, rerank_scores):
+                old_act, src, hops = activation_map[cid]
+                blended = 0.4 * old_act + 0.6 * rs
+                activation_map[cid] = (blended, src, hops)
+
+            logger.debug(f"Reranked {len(rerank_ids)} concepts")
+
         # Step 3: Build result list
         results = []
         for concept_id, (activation, source, hops) in activation_map.items():
@@ -472,6 +498,12 @@ class MemoryRetriever:
                 fused = similarity
 
             results.append(ScoredEpisode(episode=episode, score=fused))
+
+        if self.reranker and results:
+            docs = [se.episode.content or "" for se in results]
+            rerank_scores = self.reranker.score(query, docs)
+            for se, rs in zip(results, rerank_scores):
+                se.score = 0.4 * se.score + 0.6 * rs
 
         results.sort(key=lambda s: s.score, reverse=True)
         return results

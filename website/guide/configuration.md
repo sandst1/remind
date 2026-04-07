@@ -131,6 +131,9 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `LLM_CONCURRENCY` | `llm_concurrency` | int | `3` |
 | `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
 | `REMIND_HYBRID_KEYWORD_WEIGHT` | `hybrid_keyword_weight` | float | `0.3` |
+| `REMIND_RECALL_INITIAL_CANDIDATES` | `recall_initial_candidates` | int | `10` |
+| `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
+| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
 | `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
@@ -304,8 +307,50 @@ Legacy aliases remain supported: `consolidation_concepts_per_pass`, `entity_extr
 | Option | Default | Description |
 |--------|---------|-------------|
 | `hybrid_keyword_weight` | `0.3` | Blend between embedding similarity and keyword overlap. `0.0` = pure embedding, `1.0` = pure keyword. |
+| `recall_initial_candidates` | `10` | How many initial embedding candidates to fetch before spreading activation and reranking. Increase to 15-20 when using reranking. |
 
-The default `0.3` means 70% embedding similarity + 30% keyword overlap. This helps surface results with exact term matches that embeddings alone might miss. See [Retrieval](/concepts/retrieval) for details.
+The default `0.3` keyword weight means 70% embedding similarity + 30% keyword overlap. This helps surface results with exact term matches that embeddings alone might miss. See [Retrieval](/concepts/retrieval) for details.
+
+| Env variable | Config field | Type | Default |
+|---|---|---|---|
+| `REMIND_HYBRID_KEYWORD_WEIGHT` | `hybrid_keyword_weight` | float | `0.3` |
+| `REMIND_RECALL_INITIAL_CANDIDATES` | `recall_initial_candidates` | int | `10` |
+
+## Reranking
+
+Cross-encoder reranking rescores retrieval candidates using a model that reads the query and each document together, producing more accurate relevance judgments than embedding similarity alone. Disabled by default — requires installing the `rerank` extra.
+
+```bash
+pip install "remind-mcp[rerank]"
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `reranking_enabled` | `false` | Enable cross-encoder reranking during recall |
+| `reranking_model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Which cross-encoder model to use |
+
+| Env variable | Config field | Type | Default |
+|---|---|---|---|
+| `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
+| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+
+Enable via config file:
+
+```json
+{
+  "reranking_enabled": true,
+  "recall_initial_candidates": 15
+}
+```
+
+Or environment variables:
+
+```bash
+REMIND_RERANKING_ENABLED=true
+REMIND_RECALL_INITIAL_CANDIDATES=15
+```
+
+The model is loaded lazily on the first recall — there is no startup cost if reranking is enabled but recall hasn't been called yet. See [Retrieval — Reranking](/concepts/retrieval#reranking) for details on how reranking interacts with spreading activation.
 
 ## Auto-ingest
 
