@@ -63,6 +63,10 @@ remind update-concept <id> -s "Refined understanding"
 # Update confidence
 remind update-concept <id> --confidence 0.9
 
+# Reassign or clear topic (ID or name, same as remember)
+remind update-concept <id> --topic product
+remind update-concept <id> --clear-topic
+
 # Soft delete
 remind delete-concept <id>
 

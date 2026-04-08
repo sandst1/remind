@@ -775,6 +775,36 @@ class TestMemoryInterface:
         # Verify by checking call history
         assert len(mock_llm.get_call_history()) > 0
 
+    @pytest.mark.asyncio
+    async def test_update_episode_topic_reassign_and_clear(self, memory):
+        ta = memory.create_topic("TopicAlpha", "")
+        tb = memory.create_topic("TopicBeta", "")
+        ep_id = await memory.remember("hello", topic=ta.id)
+        ep = memory.store.get_episode(ep_id)
+        assert ep.topic_id == ta.id
+
+        memory.update_episode(ep_id, topic=tb.name)
+        ep = memory.store.get_episode(ep_id)
+        assert ep.topic_id == tb.id
+
+        memory.update_episode(ep_id, topic="")
+        ep = memory.store.get_episode(ep_id)
+        assert ep.topic_id is None
+
+    def test_update_concept_topic_reassign_and_clear(self, memory):
+        ta = memory.create_topic("TopicAlpha", "")
+        tb = memory.create_topic("TopicBeta", "")
+        c = Concept(summary="concept body", topic_id=ta.id)
+        memory.store.add_concept(c)
+
+        updated = memory.update_concept(c.id, topic=tb.name)
+        assert updated is not None
+        assert updated.topic_id == tb.id
+
+        updated = memory.update_concept(c.id, topic="")
+        assert updated is not None
+        assert updated.topic_id is None
+
 
 class TestMemoryInterfaceInitialization:
     """Tests for MemoryInterface initialization."""

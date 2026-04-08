@@ -22,10 +22,10 @@ External memory layer that persists across sessions and generalizes experiences 
 | `entities([entity_type], [limit])` | List entities with mention counts |
 | `inspect_entity(entity_id, [show_relations])` | View entity details/relationships |
 | `stats()` | Memory statistics |
-| `update_episode(episode_id, [content], [episode_type], [entities])` | Correct/modify episode |
+| `update_episode(episode_id, [content], [episode_type], [entities], [topic])` | Correct/modify episode (set `topic` to ID/name; empty string clears) |
 | `delete_episode(episode_id)` | Soft delete episode |
 | `restore_episode(episode_id)` | Restore deleted episode |
-| `update_concept(concept_id, [title], [summary], [confidence], [tags])` | Refine concept |
+| `update_concept(concept_id, [title], [summary], [confidence], [tags], [topic])` | Refine concept (set `topic` to ID/name; empty string clears) |
 | `delete_concept(concept_id)` | Soft delete concept |
 | `restore_concept(concept_id)` | Restore deleted concept |
 | `list_deleted([item_type])` | List soft-deleted items |
@@ -168,17 +168,21 @@ consolidate(force=True)
 ```
 update_episode(episode_id="abc123", content="Corrected information")
 update_episode(episode_id="abc123", episode_type="decision")
+update_episode(episode_id="abc123", topic="architecture")
+update_episode(episode_id="abc123", topic="")
 ```
 
-Note: Updating content resets the episode for re-consolidation.
+Note: Updating content resets the episode for re-consolidation. Use `topic` to move the episode to another knowledge area (resolved like `remember()`); an empty string clears the episode's topic.
 
 ### Refining Concepts
 ```
 update_concept(concept_id="def456", summary="Refined understanding")
 update_concept(concept_id="def456", confidence=0.9, tags="auth,security")
+update_concept(concept_id="def456", topic="product")
+update_concept(concept_id="def456", topic="")
 ```
 
-Note: Updating summary clears the embedding (regenerated on next recall).
+Note: Updating summary clears the embedding (regenerated on next recall). Use `topic` to reassign the concept; an empty string clears its topic.
 
 ### Removing Outdated Data
 ```
@@ -274,3 +278,4 @@ If neither extension is available, Remind falls back to brute-force cosine simil
 11. Use `fact` type for concrete values, configs, and technical details that must not be generalized
 12. Assign `topic` to organize knowledge by domain — enables scoped retrieval and reduces noise
 13. Use `list_topics()` and `topic_overview()` to explore memory before targeted recall
+14. Reclassify misplaced episodes or concepts with `update_episode` / `update_concept` and `topic` (or clear with `topic=""`)

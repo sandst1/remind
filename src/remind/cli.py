@@ -2030,13 +2030,19 @@ def skill_install(names: tuple):
 @click.option("--spec", "spec_ids", multiple=True, help="Spec episode ID to link (repeatable)")
 @click.option("--depends-on", "depends_on", multiple=True, help="Task ID this depends on (repeatable)")
 @click.option("--priority", type=click.Choice(["p0", "p1", "p2"]), help="Priority")
+@click.option("--topic", default=None, help="Topic ID or name (same as remember)")
+@click.option("--clear-topic", is_flag=True, help="Remove topic from this episode")
 @click.pass_context
 def update_episode(ctx, episode_id: str, content: Optional[str],
                    episode_type: Optional[str], entities: tuple,
                    plan: Optional[str], spec_ids: tuple, depends_on: tuple,
-                   priority: Optional[str]):
+                   priority: Optional[str], topic: Optional[str], clear_topic: bool):
     """Update an existing episode."""
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    if topic is not None and clear_topic:
+        console.print("[red]Use either --topic or --clear-topic, not both.[/red]")
+        raise SystemExit(1)
 
     ep_type = episode_type or None
     entity_list = list(entities) if entities else None
@@ -2051,12 +2057,19 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
     if priority:
         meta["priority"] = priority
 
+    topic_kw: Optional[str] = None
+    if clear_topic:
+        topic_kw = ""
+    elif topic is not None:
+        topic_kw = topic
+
     updated = memory.update_episode(
         episode_id,
         content=content,
         episode_type=ep_type,
         entities=entity_list,
         metadata=meta if meta else None,
+        topic=topic_kw,
     )
 
     if updated:
@@ -2075,6 +2088,12 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
             console.print(f"  Depends on: {', '.join(depends_on)}")
         if priority:
             console.print(f"  Priority: [yellow]{priority}[/yellow]")
+        if clear_topic:
+            console.print(f"  Topic: [dim]cleared[/dim]")
+        elif topic is not None and updated.topic_id:
+            names = memory._get_topic_names()
+            tlabel = names.get(updated.topic_id, updated.topic_id)
+            console.print(f"  Topic: [blue]{tlabel}[/blue] ({updated.topic_id})")
     else:
         console.print(f"[red]Episode {episode_id} not found[/red]")
 
@@ -2148,12 +2167,19 @@ def purge_episode(ctx, episode_id: str, yes: bool):
 @click.option("--confidence", "-c", type=float, help="New confidence score (0.0-1.0)")
 @click.option("--tag", "tags", multiple=True, help="New tags (replaces existing)")
 @click.option("--relations", help='JSON array of relations, e.g. \'[{"type":"implies","target_id":"abc","strength":0.7}]\'')
+@click.option("--topic", default=None, help="Topic ID or name (same as remember)")
+@click.option("--clear-topic", is_flag=True, help="Remove topic from this concept")
 @click.pass_context
 def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional[str],
-                   confidence: Optional[float], tags: tuple, relations: Optional[str]):
+                   confidence: Optional[float], tags: tuple, relations: Optional[str],
+                   topic: Optional[str], clear_topic: bool):
     """Update an existing concept."""
     import json as _json
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    if topic is not None and clear_topic:
+        console.print("[red]Use either --topic or --clear-topic, not both.[/red]")
+        raise SystemExit(1)
 
     tag_list = list(tags) if tags else None
 
@@ -2165,6 +2191,12 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
             console.print(f"[red]Invalid relations JSON: {e}[/red]")
             return
 
+    topic_kw: Optional[str] = None
+    if clear_topic:
+        topic_kw = ""
+    elif topic is not None:
+        topic_kw = topic
+
     updated = memory.update_concept(
         concept_id,
         title=title,
@@ -2172,6 +2204,7 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
         confidence=confidence,
         tags=tag_list,
         relations=relations_list,
+        topic=topic_kw,
     )
 
     if updated:
@@ -2186,6 +2219,12 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
             console.print(f"  Tags: {', '.join(tag_list)}")
         if relations_list is not None:
             console.print(f"  Relations: {len(relations_list)} set")
+        if clear_topic:
+            console.print(f"  Topic: [dim]cleared[/dim]")
+        elif topic is not None and updated.topic_id:
+            names = memory._get_topic_names()
+            tlabel = names.get(updated.topic_id, updated.topic_id)
+            console.print(f"  Topic: [blue]{tlabel}[/blue] ({updated.topic_id})")
     else:
         console.print(f"[red]Concept {concept_id} not found[/red]")
 

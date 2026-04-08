@@ -555,6 +555,7 @@ async def tool_update_episode(
     spec_ids: Optional[str] = None,
     depends_on: Optional[str] = None,
     priority: Optional[str] = None,
+    topic: Optional[str] = None,
 ) -> str:
     """Update an existing episode."""
     from remind.models import EpisodeType
@@ -579,12 +580,17 @@ async def tool_update_episode(
     if priority:
         meta["priority"] = priority
 
+    topic_kw: Optional[str] = None
+    if topic is not None:
+        topic_kw = "" if topic.strip() == "" else topic.strip()
+
     updated = memory.update_episode(
         episode_id,
         content=content,
         episode_type=ep_type,
         entities=entity_list,
         metadata=meta if meta else None,
+        topic=topic_kw,
     )
 
     if updated:
@@ -604,6 +610,13 @@ async def tool_update_episode(
             lines.append(f"  Depends on: {depends_on}")
         if priority:
             lines.append(f"  Priority: {priority}")
+        if topic is not None:
+            if topic_kw == "":
+                lines.append("  Topic: cleared")
+            elif updated.topic_id:
+                names = memory._get_topic_names()
+                tlabel = names.get(updated.topic_id, updated.topic_id)
+                lines.append(f"  Topic: {tlabel} ({updated.topic_id})")
         if content:
             lines.append("  Note: Episode will be re-consolidated")
         return "\n".join(lines)
@@ -638,6 +651,7 @@ async def tool_update_concept(
     confidence: Optional[float] = None,
     tags: Optional[str] = None,
     relations: Optional[str] = None,
+    topic: Optional[str] = None,
 ) -> str:
     """Update an existing concept."""
     memory = await get_memory()
@@ -655,6 +669,10 @@ async def tool_update_concept(
         except _json.JSONDecodeError:
             return f"Invalid relations JSON: {relations}"
 
+    topic_kw: Optional[str] = None
+    if topic is not None:
+        topic_kw = "" if topic.strip() == "" else topic.strip()
+
     updated = memory.update_concept(
         concept_id,
         title=title,
@@ -662,6 +680,7 @@ async def tool_update_concept(
         confidence=confidence,
         tags=tag_list,
         relations=relations_list,
+        topic=topic_kw,
     )
 
     if updated:
@@ -677,6 +696,13 @@ async def tool_update_concept(
             lines.append(f"  Tags: {', '.join(tag_list)}")
         if relations_list is not None:
             lines.append(f"  Relations: {len(relations_list)} set")
+        if topic is not None:
+            if topic_kw == "":
+                lines.append("  Topic: cleared")
+            elif updated.topic_id:
+                names = memory._get_topic_names()
+                tlabel = names.get(updated.topic_id, updated.topic_id)
+                lines.append(f"  Topic: {tlabel} ({updated.topic_id})")
         if summary:
             lines.append("  Note: Embedding cleared, will regenerate on next recall")
         return "\n".join(lines)
@@ -1262,6 +1288,7 @@ def create_mcp_server(config=None):
         spec_ids: Optional[str] = None,
         depends_on: Optional[str] = None,
         priority: Optional[str] = None,
+        topic: Optional[str] = None,
     ) -> str:
         """Update an existing episode in memory.
 
@@ -1280,12 +1307,13 @@ def create_mcp_server(config=None):
             spec_ids: Comma-separated spec episode IDs to link this task to
             depends_on: Comma-separated task IDs this task depends on
             priority: Priority level: p0, p1, or p2
+            topic: Topic ID or name to assign; empty string clears the episode topic
 
         Returns:
             Confirmation or error message
         """
         return await tool_update_episode(episode_id, content, episode_type, entities,
-                                         plan_id, spec_ids, depends_on, priority)
+                                         plan_id, spec_ids, depends_on, priority, topic)
 
     @mcp.tool()
     async def delete_episode(episode_id: str) -> str:
@@ -1326,6 +1354,7 @@ def create_mcp_server(config=None):
         confidence: Optional[float] = None,
         tags: Optional[str] = None,
         relations: Optional[str] = None,
+        topic: Optional[str] = None,
     ) -> str:
         """Update an existing concept.
 
@@ -1341,11 +1370,12 @@ def create_mcp_server(config=None):
             confidence: New confidence score (0.0-1.0)
             tags: New comma-separated tags
             relations: JSON array of relations, e.g. [{"type":"implies","target_id":"abc","strength":0.7}]
+            topic: Topic ID or name to assign; empty string clears the concept topic
 
         Returns:
             Confirmation or error message
         """
-        return await tool_update_concept(concept_id, title, summary, confidence, tags, relations)
+        return await tool_update_concept(concept_id, title, summary, confidence, tags, relations, topic)
 
     @mcp.tool()
     async def delete_concept(concept_id: str) -> str:

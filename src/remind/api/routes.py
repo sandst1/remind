@@ -181,6 +181,11 @@ async def update_concept(request: Request) -> JSONResponse:
         tags = body.get("tags")
         relations = body.get("relations")
 
+        topic_arg = None
+        if "topic" in body:
+            t = body["topic"]
+            topic_arg = "" if (t is None or t == "") else str(t).strip()
+
         updated = memory.update_concept(
             concept_id,
             title=title,
@@ -190,6 +195,7 @@ async def update_concept(request: Request) -> JSONResponse:
             exceptions=exceptions,
             tags=tags,
             relations=relations,
+            topic=topic_arg,
         )
 
         if not updated:
@@ -395,12 +401,18 @@ async def update_episode(request: Request) -> JSONResponse:
         if metadata is not None and not isinstance(metadata, dict):
             return JSONResponse({"error": "metadata must be an object"}, status_code=400)
 
+        topic_arg = None
+        if "topic" in body:
+            t = body["topic"]
+            topic_arg = "" if (t is None or t == "") else str(t).strip()
+
         updated = memory.update_episode(
             episode_id,
             content=content,
             episode_type=episode_type or None,
             entities=entities,
             metadata=metadata,
+            topic=topic_arg,
         )
 
         if not updated:

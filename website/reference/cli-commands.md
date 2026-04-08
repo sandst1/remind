@@ -202,7 +202,11 @@ remind task unblock <id>              # → todo
 ```bash
 # Update
 remind update-episode <id> -c "Corrected content"
+remind update-episode <id> --topic architecture
+remind update-episode <id> --clear-topic
 remind update-concept <id> -s "Refined summary" --confidence 0.9
+remind update-concept <id> --topic product
+remind update-concept <id> --clear-topic
 
 # Soft delete (recoverable)
 remind delete-episode <id>

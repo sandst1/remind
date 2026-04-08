@@ -19,8 +19,8 @@ External memory layer that persists across sessions and generalizes experiences 
 | `remind topics overview <id>` | Top concepts for a topic |
 | `remind decisions` | Show decision episodes |
 | `remind questions` | Show open questions |
-| `remind update-episode <id> -c "<content>"` | Correct episode content |
-| `remind update-concept <id> -s "<summary>"` | Refine concept |
+| `remind update-episode <id> ...` | Correct episode (`-c`, `--topic`, `--clear-topic`, etc.) |
+| `remind update-concept <id> ...` | Refine concept (`-s`, `--topic`, `--clear-topic`, etc.) |
 | `remind delete-episode <id>` | Soft delete episode |
 | `remind delete-concept <id>` | Soft delete concept |
 | `remind restore-episode <id>` | Restore deleted episode |
@@ -94,6 +94,8 @@ Use `remind flush-ingest` to force-process whatever is in the buffer.
 
 **Workflow**: `remind topics list` → `remind topics overview <id>` → `remind recall "<query>" --topic <id>`
 
+To **move** an existing episode or concept to another topic (or remove its topic), use `remind update-episode <id> --topic <id-or-name>` or `remind update-concept <id> --topic <id-or-name>`. Use `--clear-topic` to unset `topic_id` on that record.
+
 ## Workflow
 
 **Session start**: Recall project context and user preferences
@@ -127,6 +129,9 @@ remind questions                # Show open questions
 ```bash
 remind update-episode <id> -c "Corrected information"
 remind update-concept <id> -s "Refined summary" --confidence 0.9
+remind update-episode <id> --topic architecture
+remind update-concept <id> --topic product
+remind update-episode <id> --clear-topic
 ```
 
 **Note**: Updating episode content resets it for re-consolidation.
@@ -155,3 +160,4 @@ remind restore-concept <id>       # Restore if needed
 8. Delete outdated info rather than adding corrections
 9. Use `topics list` + `topics overview` to explore before targeted recall
 10. Use `--source-type` when origin matters (slack, github, manual)
+11. Reclassify misplaced items with `update-episode` / `update-concept` and `--topic` (or `--clear-topic`)

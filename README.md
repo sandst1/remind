@@ -161,8 +161,8 @@ Task management (requires task type enabled)
   task unblock        Return a blocked task to todo
 
 Editing
-  update-episode      Update content, type, entities, or metadata (--plan, --spec, --depends-on, --priority)
-  update-concept      Update title, summary, confidence, tags, or relations
+  update-episode      Update content, type, entities, metadata, or topic (--plan, --spec, --depends-on, --priority, --topic, --clear-topic)
+  update-concept      Update title, summary, confidence, tags, relations, or topic (--topic, --clear-topic)
   extract-relations   Backfill entity relationships from existing episodes
 
 Soft delete / restore

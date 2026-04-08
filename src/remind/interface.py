@@ -1319,6 +1319,7 @@ class MemoryInterface:
         exceptions: Optional[list[str]] = None,
         tags: Optional[list[str]] = None,
         relations: Optional[list[dict]] = None,
+        topic: Optional[str] = None,
     ) -> Optional[Concept]:
         """
         Update an existing concept.
@@ -1336,6 +1337,8 @@ class MemoryInterface:
             tags: New tags list
             relations: New relations list (replaces existing). Each dict has
                 type, target_id, strength, context.
+            topic: New topic ID or name (same resolution as remember/update_episode);
+                use empty string to clear topic_id.
 
         Returns:
             Updated Concept object, or None if not found
@@ -1373,6 +1376,9 @@ class MemoryInterface:
                 )
                 for r in relations
             ]
+
+        if topic is not None:
+            concept.topic_id = self._resolve_topic_id(topic) if topic else None
 
         concept.updated_at = datetime.now()
         self.store.update_concept(concept)

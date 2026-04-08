@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-04-08
+
+### Added
+- Topic reassignment for existing episodes and concepts: `update_episode` / `update_concept` accept `--topic` and `--clear-topic` on the CLI; REST `PATCH`/`PUT` bodies may include `topic`; MCP tools accept optional `topic` (empty string clears).
+
 ## [0.10.2] - 2026-04-08
 
 ### Fixed

@@ -4,6 +4,11 @@ All notable changes to Remind.
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-04-08
+
+### Added
+- **Topic reassignment** — Existing episodes and concepts can be moved between topics (or cleared) via `update-episode` / `update-concept` (`--topic`, `--clear-topic`), REST `topic` field on updates, and MCP `topic` (empty string clears).
+
 ## [0.10.2] - 2026-04-08
 
 ### Fixed

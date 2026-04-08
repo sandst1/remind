@@ -131,6 +131,10 @@ Auto-ingest (`ingest()`) detects action-result pairs automatically and creates o
 # Update content (resets for re-consolidation)
 remind update-episode <id> -c "Corrected information"
 
+# Move to another topic (ID or name, same as remember) or clear
+remind update-episode <id> --topic architecture
+remind update-episode <id> --clear-topic
+
 # Soft delete (recoverable)
 remind delete-episode <id>
 
