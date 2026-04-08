@@ -264,6 +264,11 @@ class MemoryStore(ABC):
         ...
 
     @abstractmethod
+    def get_all_episodes(self) -> list[Episode]:
+        """Get all non-deleted episodes."""
+        ...
+
+    @abstractmethod
     def get_episodes_by_date_range(
         self,
         start_date: Optional[str] = None,
@@ -441,6 +446,18 @@ class MemoryStore(ABC):
 
         Also clears entity_ids and concepts_activated lists.
         Returns count of episodes reset.
+        """
+        ...
+
+    @abstractmethod
+    def clear_embeddings(
+        self,
+        include_episodes: bool = True,
+        include_concepts: bool = True,
+    ) -> dict[str, int]:
+        """Clear stored embeddings for selected record types.
+
+        Returns counts for cleared concept and episode rows.
         """
         ...
 
@@ -903,7 +920,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 f"Embedding dimensions changed ({self._vec_dimensions} -> {dims}), "
                 f"recreating vector tables"
             )
-            self._drop_vector_tables()
+            self._drop_vector_tables(conn=conn)
 
         self._vec_dimensions = dims
 
@@ -924,9 +941,9 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
         self._init_vector_tables()
 
-    def _drop_vector_tables(self) -> None:
+    def _drop_vector_tables(self, conn=None) -> None:
         """Drop vector index tables for recreation."""
-        with self.engine.connect() as conn:
+        if conn is not None:
             if self._vec_backend == "sqlite-vec":
                 conn.execute(text("DROP TABLE IF EXISTS vec_concepts"))
                 conn.execute(text("DROP TABLE IF EXISTS vec_episodes"))
@@ -934,6 +951,16 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 conn.execute(text("ALTER TABLE concepts DROP COLUMN IF EXISTS embedding_vec"))
                 conn.execute(text("ALTER TABLE episodes DROP COLUMN IF EXISTS embedding_vec"))
             conn.commit()
+            return
+
+        with self.engine.connect() as fresh_conn:
+            if self._vec_backend == "sqlite-vec":
+                fresh_conn.execute(text("DROP TABLE IF EXISTS vec_concepts"))
+                fresh_conn.execute(text("DROP TABLE IF EXISTS vec_episodes"))
+            elif self._vec_backend == "pgvector":
+                fresh_conn.execute(text("ALTER TABLE concepts DROP COLUMN IF EXISTS embedding_vec"))
+                fresh_conn.execute(text("ALTER TABLE episodes DROP COLUMN IF EXISTS embedding_vec"))
+            fresh_conn.commit()
 
     def _upsert_vec_concept(self, conn, concept_id: str, embedding: Optional[list[float]]) -> None:
         """Sync a concept embedding to the vector index."""
@@ -1661,6 +1688,23 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     break
             return results
 
+    def get_all_episodes(self) -> list[Episode]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(episodes_table.c.data, episodes_table.c.embedding)
+                .order_by(episodes_table.c.timestamp.desc())
+            ).fetchall()
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                ep = Episode.from_dict(data)
+                if row.embedding:
+                    ep.embedding = _bytes_to_embedding(row.embedding)
+                results.append(ep)
+            return results
+
     def get_episodes_by_date_range(
         self,
         start_date: Optional[str] = None,
@@ -2347,6 +2391,54 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 )
                 count += 1
             return count
+
+    def clear_embeddings(
+        self,
+        include_episodes: bool = True,
+        include_concepts: bool = True,
+    ) -> dict[str, int]:
+        cleared_concepts = 0
+        cleared_episodes = 0
+
+        with self._connect() as conn:
+            if include_concepts:
+                result = conn.execute(
+                    concepts_table.update().values(embedding=None)
+                )
+                cleared_concepts = result.rowcount or 0
+
+                if self._vec_backend == "sqlite-vec":
+                    try:
+                        conn.execute(text("DELETE FROM vec_concepts"))
+                    except OperationalError:
+                        pass
+                elif self._vec_backend == "pgvector":
+                    try:
+                        conn.execute(text("UPDATE concepts SET embedding_vec = NULL"))
+                    except OperationalError:
+                        pass
+
+            if include_episodes:
+                result = conn.execute(
+                    episodes_table.update().values(embedding=None)
+                )
+                cleared_episodes = result.rowcount or 0
+
+                if self._vec_backend == "sqlite-vec":
+                    try:
+                        conn.execute(text("DELETE FROM vec_episodes"))
+                    except OperationalError:
+                        pass
+                elif self._vec_backend == "pgvector":
+                    try:
+                        conn.execute(text("UPDATE episodes SET embedding_vec = NULL"))
+                    except OperationalError:
+                        pass
+
+        return {
+            "concepts_cleared": cleared_concepts,
+            "episodes_cleared": cleared_episodes,
+        }
 
     # ------------------------------------------------------------------
     # Decay operations

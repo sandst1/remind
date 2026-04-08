@@ -177,6 +177,7 @@ Soft delete / restore
 
 Embeddings
   embed-episodes  Backfill embeddings for older episodes (--batch-size)
+  re-embed        Recompute episode/concept embeddings for model or dimension changes (--episodes/--concepts/--all)
 
 Import / Export
   export       Export memory to JSON

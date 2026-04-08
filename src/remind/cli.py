@@ -12,6 +12,7 @@ Commands:
     remind import <file>         - Import memory from JSON
     remind ingest "text"         - Auto-ingest with density scoring
     remind flush-ingest          - Force-flush ingestion buffer
+    remind re-embed              - Recompute embeddings for episodes/concepts
 """
 
 import asyncio
@@ -622,6 +623,67 @@ def embed_episodes(ctx, batch_size: int):
     console.print("[cyan]Embedding un-embedded episodes...[/cyan]")
     count = run_async(_embed())
     console.print(f"[green]✓[/green] Embedded {count} episodes")
+
+
+@main.command("re-embed")
+@click.option("--episodes", is_flag=True, help="Re-embed episodes only")
+@click.option("--concepts", is_flag=True, help="Re-embed concepts only")
+@click.option("--all", "all_targets", is_flag=True, help="Re-embed both episodes and concepts (default)")
+@click.option("--batch-size", default=50, help="Number of records to embed per batch")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.pass_context
+def re_embed(ctx, episodes: bool, concepts: bool, all_targets: bool, batch_size: int, yes: bool):
+    """Recompute stored embeddings using the current embedding provider.
+
+    Use this when embedding model or dimensions change and existing vectors
+    need to be rewritten.
+    """
+    if batch_size <= 0:
+        raise click.ClickException("--batch-size must be greater than 0.")
+
+    if all_targets:
+        include_episodes = True
+        include_concepts = True
+    elif episodes or concepts:
+        include_episodes = episodes
+        include_concepts = concepts
+    else:
+        include_episodes = True
+        include_concepts = True
+
+    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+
+    plan = run_async(memory.get_reembed_plan(
+        include_episodes=include_episodes,
+        include_concepts=include_concepts,
+    ))
+
+    target_parts = []
+    if include_episodes:
+        target_parts.append(f"{plan['episodes']} episodes")
+    if include_concepts:
+        target_parts.append(f"{plan['concepts']} concepts")
+    target_summary = ", ".join(target_parts)
+
+    console.print("[bold cyan]Re-embed preview[/bold cyan]")
+    console.print(f"  Targets: {target_summary}")
+    console.print(f"  Dimensions: {plan['stored_dimensions']} -> {plan['target_dimensions']}")
+
+    if not yes:
+        proceed = click.confirm("Proceed with re-embedding?", default=True)
+        if not proceed:
+            console.print("[yellow]Cancelled. No changes made.[/yellow]")
+            return
+
+    result = run_async(memory.reembed(
+        include_episodes=include_episodes,
+        include_concepts=include_concepts,
+        batch_size=batch_size,
+    ))
+    console.print("[green]✓ Re-embed complete[/green]")
+    console.print(f"  Re-embedded concepts: {result['concepts_embedded']}")
+    console.print(f"  Re-embedded episodes: {result['episodes_embedded']}")
+    console.print(f"  Dimensions: {result['stored_dimensions']} -> {result['target_dimensions']}")
 
 
 @main.command()

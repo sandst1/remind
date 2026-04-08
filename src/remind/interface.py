@@ -600,6 +600,117 @@ class MemoryInterface:
         logger.info(f"Embedded {total_embedded} episodes")
         return total_embedded
 
+    async def get_reembed_plan(
+        self,
+        include_episodes: bool = True,
+        include_concepts: bool = True,
+    ) -> dict[str, Optional[int]]:
+        """Inspect what a re-embedding run would do.
+
+        Returns counts plus stored/target embedding dimensions.
+        """
+        if not include_episodes and not include_concepts:
+            raise ValueError("Select at least one target: episodes or concepts.")
+        if not self.embedding:
+            raise RuntimeError("No embedding provider configured.")
+
+        episodes = self.store.get_all_episodes() if include_episodes else []
+        concepts = self.store.get_all_concepts() if include_concepts else []
+
+        stored_dims_raw = self.store.get_metadata("embedding_dimensions")
+        stored_dims = int(stored_dims_raw) if stored_dims_raw else None
+
+        sample_text = None
+        if include_episodes and episodes:
+            sample_text = episodes[0].content
+        elif include_concepts and concepts:
+            sample_text = concepts[0].summary
+
+        target_dims = None
+        if sample_text:
+            target_dims = len(await self.embedding.embed(sample_text))
+        elif getattr(self.embedding, "dimensions", None):
+            target_dims = int(self.embedding.dimensions)
+
+        return {
+            "episodes": len(episodes),
+            "concepts": len(concepts),
+            "stored_dimensions": stored_dims,
+            "target_dimensions": target_dims,
+        }
+
+    async def reembed(
+        self,
+        include_episodes: bool = True,
+        include_concepts: bool = True,
+        batch_size: int = 50,
+    ) -> dict[str, Optional[int]]:
+        """Recompute embeddings for selected record types using current provider."""
+        plan = await self.get_reembed_plan(
+            include_episodes=include_episodes,
+            include_concepts=include_concepts,
+        )
+        stored_dims = plan["stored_dimensions"]
+        target_dims = plan["target_dimensions"]
+
+        if (
+            stored_dims is not None
+            and target_dims is not None
+            and stored_dims != target_dims
+            and not (include_episodes and include_concepts)
+        ):
+            raise ValueError(
+                "Embedding dimensions are changing. Re-embedding only one type "
+                "can leave mixed dimensions. Re-run with --all."
+            )
+
+        clear_stats = self.store.clear_embeddings(
+            include_episodes=include_episodes,
+            include_concepts=include_concepts,
+        )
+
+        concepts_embedded = 0
+        episodes_embedded = 0
+
+        if include_concepts:
+            concepts = self.store.get_all_concepts()
+            for i in range(0, len(concepts), batch_size):
+                batch = concepts[i:i + batch_size]
+                summaries = [c.summary for c in batch]
+                embeddings = await self.embedding.embed_batch(summaries)
+                for concept, embedding in zip(batch, embeddings):
+                    concept.embedding = embedding
+                    self.store.update_concept(concept)
+                    concepts_embedded += 1
+
+        if include_episodes:
+            episodes = self.store.get_all_episodes()
+            for i in range(0, len(episodes), batch_size):
+                batch = episodes[i:i + batch_size]
+                contents = [ep.content for ep in batch]
+                embeddings = await self.embedding.embed_batch(contents)
+                for episode, embedding in zip(batch, embeddings):
+                    episode.embedding = embedding
+                    self.store.update_episode(episode)
+                    episodes_embedded += 1
+
+        logger.info(
+            "Re-embedded memory (concepts=%s, episodes=%s, dims=%s->%s)",
+            concepts_embedded,
+            episodes_embedded,
+            stored_dims,
+            target_dims,
+        )
+
+        return {
+            "concepts_embedded": concepts_embedded,
+            "episodes_embedded": episodes_embedded,
+            "concepts_cleared": clear_stats["concepts_cleared"],
+            "episodes_cleared": clear_stats["episodes_cleared"],
+            "stored_dimensions": stored_dims,
+            "target_dimensions": target_dims,
+        }
+
     async def end_session(self) -> ConsolidationResult:
         """
         Hook for ending a session/conversation.

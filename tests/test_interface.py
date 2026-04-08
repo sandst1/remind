@@ -320,6 +320,59 @@ class TestMemoryInterface:
         calls = mock_embedding.get_call_history()
         assert any("additional context" in c.get("text", "") for c in calls)
 
+    @pytest.mark.asyncio
+    async def test_get_reembed_plan(self, memory, sample_concept):
+        """Test re-embed preview counts and dimensions."""
+        memory.store.add_concept(sample_concept)
+        await memory.remember("Episode for re-embed planning")
+
+        plan = await memory.get_reembed_plan()
+
+        assert plan["episodes"] == 1
+        assert plan["concepts"] == 1
+        assert plan["stored_dimensions"] == 128
+        assert plan["target_dimensions"] == 128
+
+    @pytest.mark.asyncio
+    async def test_reembed_all_rewrites_embeddings(self, memory, sample_concept, mock_embedding):
+        """Re-embed all should rewrite both concepts and episodes."""
+        old_concept_embedding = [0.25] * 128
+        sample_concept.embedding = old_concept_embedding
+        memory.store.add_concept(sample_concept)
+        episode_id = await memory.remember("Episode to re-embed")
+        original_episode = memory.store.get_episode(episode_id)
+        assert original_episode.embedding is not None
+        assert len(original_episode.embedding) == 128
+
+        # Simulate switching to a different embedding dimensionality.
+        mock_embedding._dimensions = 64
+
+        result = await memory.reembed()
+
+        assert result["concepts_embedded"] == 1
+        assert result["episodes_embedded"] == 1
+        assert result["stored_dimensions"] == 128
+        assert result["target_dimensions"] == 64
+
+        updated_concept = memory.store.get_concept(sample_concept.id)
+        updated_episode = memory.store.get_episode(episode_id)
+        assert updated_concept.embedding is not None
+        assert updated_episode.embedding is not None
+        assert len(updated_concept.embedding) == 64
+        assert len(updated_episode.embedding) == 64
+        assert memory.store.get_metadata("embedding_dimensions") == "64"
+
+    @pytest.mark.asyncio
+    async def test_reembed_partial_scope_blocks_dimension_change(self, memory, mock_embedding):
+        """Dimension-changing re-embed requires --all scope."""
+        await memory.remember("Episode to re-embed")
+        assert memory.store.get_metadata("embedding_dimensions") == "128"
+
+        mock_embedding._dimensions = 64
+
+        with pytest.raises(ValueError, match="Re-run with --all"):
+            await memory.reembed(include_episodes=True, include_concepts=False)
+
     # =========================================================================
     # consolidate() and end_session() tests
     # =========================================================================
