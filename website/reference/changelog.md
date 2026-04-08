@@ -4,6 +4,14 @@ All notable changes to Remind.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-04-08
+
+### Fixed
+- **SQLite startup crash with sqlite-vec** — If `sqlite-vec` was installed but Python’s `sqlite3` could not load extensions (common on macOS / some pyenv builds), Remind could crash on first DB connection. Remind now detects this and falls back to brute-force vector similarity.
+
+### Documentation
+- **SQLite vector search** — Requirements for native sqlite-vec indexes, how to verify `enable_load_extension`, and typical Homebrew + pyenv setup are documented under Configuration and Retrieval, plus the SQLite example README.
+
 ## [0.10.1] - 2026-04-08
 
 ### Added

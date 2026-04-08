@@ -109,6 +109,8 @@ pip install "remind-mcp[rerank]"     # Cross-encoder reranking (sentence-transfo
 
 PostgreSQL installations get `pgvector` for HNSW-indexed vector search. Enable the extension with `CREATE EXTENSION vector` (Remind does this automatically).
 
+**SQLite note:** sqlite-vec only activates if your Python build supports SQLite extension loading (`enable_load_extension`). Some macOS/pyenv Pythons do not; Remind then falls back to in-process similarity. See [Configuration — Vector search](https://sandst1.github.io/remind/guide/configuration.html#vector-search).
+
 Point Remind at your database via config file, environment variable, or CLI flag:
 
 ```json

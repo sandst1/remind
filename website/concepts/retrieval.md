@@ -128,11 +128,23 @@ Remind uses native database vector indexes when available, replacing the default
 
 | Backend | Extension | How it works |
 |---------|-----------|-------------|
-| SQLite | [sqlite-vec](https://github.com/asg017/sqlite-vec) | `vec0` virtual tables with cosine distance KNN. Included as a pip dependency. |
+| SQLite | [sqlite-vec](https://github.com/asg017/sqlite-vec) | `vec0` virtual tables with cosine distance KNN. The package is installed with Remind; see below for when it can actually load. |
 | PostgreSQL | [pgvector](https://github.com/pgvector/pgvector) | `vector(N)` columns with HNSW indexes. Installed with `pip install "remind-mcp[postgres]"`. |
 | Fallback | — | NumPy brute-force cosine similarity (O(n) per query). |
 
 Vector tables are created automatically on first embedding write. No manual setup is needed — Remind detects the backend at startup and chooses the best available path.
+
+### SQLite (sqlite-vec) requirements
+
+sqlite-vec loads as a **SQLite extension**. Your Python `sqlite3` connection must support `enable_load_extension`. Some builds (notably macOS interpreters linked against a minimal system SQLite) do not — then Remind skips sqlite-vec and uses brute-force similarity; recall still works.
+
+To **use** native SQLite vector search, run Remind under a Python built with loadable SQLite extensions, typically by linking against Homebrew’s SQLite when installing Python (e.g. pyenv with `PYTHON_CONFIGURE_OPTS=--enable-loadable-sqlite-extensions` and `LDFLAGS`/`CPPFLAGS` pointing at `brew --prefix sqlite`). Verify with:
+
+```bash
+python -c "import sqlite3; c=sqlite3.connect(':memory:'); print(hasattr(c, 'enable_load_extension'))"
+```
+
+Full step-by-step notes are in [Configuration — Vector search](/guide/configuration#vector-search).
 
 ## Entity name matching
 

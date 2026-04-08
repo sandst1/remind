@@ -268,11 +268,39 @@ pip install "remind-mcp[mysql]"      # MySQL (PyMySQL)
 
 Remind uses native vector indexes for embedding search when available:
 
-- **SQLite**: `sqlite-vec` is included as a dependency and enabled automatically. Embeddings are stored in `vec0` virtual tables with cosine distance KNN.
+- **SQLite**: [sqlite-vec](https://github.com/asg017/sqlite-vec) is pulled in as a dependency. When your Python build can load SQLite extensions, Remind loads sqlite-vec and stores embeddings in `vec0` virtual tables with cosine-distance KNN.
 - **PostgreSQL**: The Python driver is included with `remind-mcp[postgres]`. Embeddings are stored in `vector(N)` columns with HNSW indexes. The `vector` extension is created automatically — but the **PostgreSQL server** must have pgvector installed (e.g. use the [`pgvector/pgvector`](https://hub.docker.com/r/pgvector/pgvector) Docker image instead of vanilla `postgres`).
-- **Fallback**: If neither extension is available, Remind uses brute-force NumPy cosine similarity.
+- **Fallback**: If sqlite-vec cannot be loaded (see below) or pgvector is unavailable, Remind uses brute-force NumPy cosine similarity. Results are the same; large databases may be slower on recall.
 
 Vector tables are created lazily when the first embedding is written. No manual schema setup is needed.
+
+#### SQLite: when sqlite-vec is not used
+
+sqlite-vec is a **loadable extension**. Python’s `sqlite3` module only exposes `enable_load_extension` when the interpreter was built against a SQLite library that supports loadable extensions. Many **macOS** Python builds (including some **pyenv** installs linked against the system SQLite) omit this, so Remind cannot load sqlite-vec even though the `sqlite-vec` package is installed. In that case Remind logs an informational message and uses the brute-force path instead of crashing.
+
+**Check your interpreter:**
+
+```bash
+python -c "import sqlite3; c=sqlite3.connect(':memory:'); print('load_extension:', hasattr(c, 'enable_load_extension'))"
+```
+
+If this prints `load_extension: False`, native SQLite vector indexes are unavailable until you use a Python build that supports extension loading.
+
+**Typical fix with Homebrew + pyenv** (Apple Silicon and Intel; paths come from `brew --prefix`):
+
+```bash
+brew install sqlite openssl xz
+
+export PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions --with-openssl=$(brew --prefix openssl)"
+export LDFLAGS="-L$(brew --prefix sqlite)/lib"
+export CPPFLAGS="-I$(brew --prefix sqlite)/include"
+
+pyenv install 3.12.11   # or your target version
+```
+
+Then reinstall Remind into that Python. Alternatively, **Homebrew’s** `python@3.x` often works out of the box; create a venv from `$(brew --prefix python@3.12)/bin/python3.12` and install Remind there.
+
+See also [Retrieval — Vector indexes](/concepts/retrieval#vector-indexes) and the [SQLite example](/examples/sqlite/).
 
 ## Memory decay
 

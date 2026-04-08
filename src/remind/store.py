@@ -49,19 +49,47 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SQLITE_VEC_AVAILABLE: Optional[bool] = None
+_SQLITE_LOAD_EXT_AVAILABLE: Optional[bool] = None
 _PGVECTOR_AVAILABLE: Optional[bool] = None
 
 
+def _sqlite_load_extension_supported() -> bool:
+    """True if Python's sqlite3 can load extensions (sqlite-vec needs this).
+
+    macOS and some other builds omit SQLITE_ENABLE_LOAD_EXTENSION; then
+    Connection has no enable_load_extension and sqlite-vec cannot be used.
+    """
+    global _SQLITE_LOAD_EXT_AVAILABLE
+    if _SQLITE_LOAD_EXT_AVAILABLE is not None:
+        return _SQLITE_LOAD_EXT_AVAILABLE
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        _SQLITE_LOAD_EXT_AVAILABLE = hasattr(conn, "enable_load_extension")
+    finally:
+        conn.close()
+    return _SQLITE_LOAD_EXT_AVAILABLE
+
+
 def _check_sqlite_vec() -> bool:
-    """Check if sqlite-vec is installable."""
+    """Check if sqlite-vec is installable and can be loaded at runtime."""
     global _SQLITE_VEC_AVAILABLE
     if _SQLITE_VEC_AVAILABLE is not None:
         return _SQLITE_VEC_AVAILABLE
     try:
         import sqlite_vec  # noqa: F401
-        _SQLITE_VEC_AVAILABLE = True
     except ImportError:
         _SQLITE_VEC_AVAILABLE = False
+        return _SQLITE_VEC_AVAILABLE
+    if not _sqlite_load_extension_supported():
+        logger.info(
+            "sqlite-vec is installed but SQLite was built without extension loading; "
+            "using brute-force vector similarity instead"
+        )
+        _SQLITE_VEC_AVAILABLE = False
+        return _SQLITE_VEC_AVAILABLE
+    _SQLITE_VEC_AVAILABLE = True
     return _SQLITE_VEC_AVAILABLE
 
 

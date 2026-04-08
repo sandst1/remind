@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-04-08
+
+### Fixed
+- Crash on startup when the `sqlite-vec` package was installed but Python’s `sqlite3` was built without extension loading (common on macOS / some pyenv builds). Remind now detects this and falls back to brute-force vector similarity instead of calling `enable_load_extension`.
+
+### Documentation
+- Documented SQLite vector search (sqlite-vec) requirements, how to verify extension support, and typical pyenv + Homebrew steps to enable native SQLite vector indexes.
+
 ## [0.10.1] - 2026-04-08
 
 ### Added

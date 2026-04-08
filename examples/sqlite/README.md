@@ -106,6 +106,18 @@ sqlite:///relative/path/to/file.db
 
 SQLite requires four slashes (`////`) for absolute paths and three (`///`) for relative paths. See the [SQLAlchemy docs](https://docs.sqlalchemy.org/en/20/core/engines.html) for details.
 
+## Vector search (sqlite-vec)
+
+Remind can store embedding vectors in **sqlite-vec** `vec0` tables for fast KNN search. The `sqlite-vec` Python package is installed with `remind-mcp`, but the extension only activates if your **Python** was built so that `sqlite3.Connection` supports `enable_load_extension` (i.e. SQLite was compiled with loadable extensions, and Python was configured accordingly). On some macOS and pyenv setups this is off by default.
+
+**Quick check:**
+
+```bash
+python -c "import sqlite3; c=sqlite3.connect(':memory:'); print('sqlite-vec usable:', hasattr(c, 'enable_load_extension'))"
+```
+
+If that prints `False`, Remind still runs and recalls correctly using in-Python cosine similarity; only the native index path is skipped. To enable sqlite-vec, reinstall Python linked against Homebrew SQLite with `--enable-loadable-sqlite-extensions` (see [Configuration — Vector search](https://sandst1.github.io/remind/guide/configuration.html#vector-search) on the docs site).
+
 ## When to switch to PostgreSQL
 
 SQLite is great for single-user and local development use cases. Consider switching to PostgreSQL when you need:
