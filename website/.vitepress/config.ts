@@ -65,6 +65,7 @@ export default defineConfig({
           text: 'Examples',
           items: [
             { text: 'Overview', link: '/examples/' },
+            { text: 'SQLite', link: '/examples/sqlite' },
             { text: 'Project Memory', link: '/examples/project-memory' },
             { text: 'Sparring Partner', link: '/examples/sparring-partner' },
             { text: 'Research Ingestion', link: '/examples/research-ingestion' },

@@ -2,6 +2,10 @@
 
 Real-world usage patterns showing Remind in practice. Each example includes the use case, setup, walkthrough, and what the consolidated knowledge looks like.
 
+## [SQLite](./sqlite)
+
+The default backend: project-local or named SQLite files, optional sqlite-vec for vector search, and how to inspect the database. No server required.
+
 ## [Project Memory](./project-memory)
 
 The foundational use case. Your agent remembers preferences, decisions, and project context across coding sessions. Shows the remember/recall/consolidate cycle and how episodes become generalized concepts.

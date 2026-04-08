@@ -300,7 +300,7 @@ pyenv install 3.12.11   # or your target version
 
 Then reinstall Remind into that Python. Alternatively, **Homebrew’s** `python@3.x` often works out of the box; create a venv from `$(brew --prefix python@3.12)/bin/python3.12` and install Remind there.
 
-See also [Retrieval — Vector indexes](/concepts/retrieval#vector-indexes) and the [SQLite example](/examples/sqlite/).
+See also [Retrieval — Vector indexes](/concepts/retrieval#vector-indexes) and the [SQLite example](/examples/sqlite).
 
 ## Memory decay
 
