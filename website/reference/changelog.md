@@ -4,6 +4,11 @@ All notable changes to Remind.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-04-08
+
+### Added
+- **`re-embed` command** — Regenerate stored embeddings after changing embedding model or dimensions.
+
 ## [0.10.0] - 2026-04-08
 
 ### Added
