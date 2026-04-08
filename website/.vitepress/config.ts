@@ -16,7 +16,7 @@ export default defineConfig({
       { text: 'Examples', link: '/examples/' },
       { text: 'Reference', link: '/reference/cli-commands' },
       {
-        text: 'v0.9.0',
+        text: 'v0.10.0',
         items: [
           { text: 'Changelog', link: '/reference/changelog' },
           { text: 'PyPI', link: 'https://pypi.org/project/remind-mcp/' },

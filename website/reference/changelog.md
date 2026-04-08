@@ -4,7 +4,7 @@ All notable changes to Remind.
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-03-31
+## [0.10.0] - 2026-04-08
 
 ### Added
 - **Native vector indexes** — Retrieval now uses `sqlite-vec` on SQLite and `pgvector` on PostgreSQL when available, with automatic brute-force cosine fallback.
