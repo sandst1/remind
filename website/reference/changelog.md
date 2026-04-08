@@ -7,31 +7,30 @@ All notable changes to Remind.
 ## [0.9.0] - 2026-03-31
 
 ### Added
-- **Topics** — First-class `topic` on episodes and concepts for partitioning knowledge (e.g. architecture, product, infra). Consolidation runs in topic-grouped batches. Retrieval prefers the active topic with cross-topic spreading at a reduced weight.
-- **Source type** — `source_type` on episodes to track memory origin (`agent`, `slack`, `github`, etc.).
-- **`supersedes` relation** — Marks when one concept replaces another; shown in recall as a staleness signal. Low spreading weight so obsolete knowledge does not dominate recall.
-- **`list_topics` / `topic_overview`** — List topics with counts and activity; inspect top concepts per topic (CLI, MCP, Python API).
-- **`--topic` / `--source-type`** — CLI flags on `remember` and `recall` (topic) / `remember` (source type).
-- **Ingest `instructions`** — Optional steer for the triage LLM on what to extract.
-- **Ingest topics** — Topic inference during auto-ingest when no topic is supplied.
-- **Configurable `episode_types`** — Plan/spec/task CLI and MCP surface only when those types are enabled.
-- **Project config** — Optional `.remind/remind.config.json` next to the project database.
-- **SQLAlchemy databases** — PostgreSQL and MySQL via `REMIND_DB_URL` / `db_url`, not SQLite-only.
-- **Parallel consolidation** — Faster batch consolidation via concurrency.
-- **Stats** — Episode types included in memory statistics.
+- **Native vector indexes** — Retrieval now uses `sqlite-vec` on SQLite and `pgvector` on PostgreSQL when available, with automatic brute-force cosine fallback.
+- **Cross-encoder reranking** — Optional reranking stage for recall (`sentence-transformers`) with configurable `recall_initial_candidates`.
+- **Hybrid retrieval scoring** — Embedding similarity is fused with keyword overlap via configurable `hybrid_keyword_weight`.
+- **Topics as first-class partitions** — `topic` support on episodes/concepts with topic-aware consolidation and retrieval behavior.
+- **Topic APIs/tools** — `list_topics` and `topic_overview` available in CLI, MCP, and Python API.
+- **Ingest controls** — Optional ingest `instructions` plus topic inference when topic is omitted.
+- **Configurable `episode_types`** — Plan/spec/task CLI and MCP surfaces register only when enabled.
+- **Project-local config** — `.remind/remind.config.json` supported alongside project database.
+- **SQLAlchemy databases** — PostgreSQL and MySQL support through `REMIND_DB_URL` / `db_url`.
+- **Parallel consolidation and richer stats** — Faster batch consolidation and episode type breakdowns in stats.
+- **Memory metadata additions** — `source_type` on episodes and `supersedes` relation surfaced in recall.
 
 ### Changed
-- **Auto-ingest** — Removed density-threshold gating from config; improved chunking and text handling.
-- **Consolidation & extraction** — Prompts tuned for specificity; higher default max tokens; aligned batch defaults; performance and concurrency improvements.
-- **Entities** — Ensures LLM extraction runs when the pipeline requires it.
-- **Triage** — Respects custom episode types from configuration.
-- **Web UI** — Better database URL/path resolution, custom episode types and topics, task flows.
+- **Auto-ingest** — Removed configurable density-threshold gating; improved chunking and text processing.
+- **Consolidation & extraction** — Tuned prompts, token limits, and concurrency defaults for better quality/throughput.
+- **Retrieval runtime** — Improved recall performance, including reranker warm-up behavior in CLI workflows.
+- **Web UI** — Better handling for custom episode types, topics, task flows, and non-SQLite database URLs/paths.
 
 ### Fixed
 - Reconsolidation edge cases.
 - MCP episode argument parsing.
 - Task creation from the web UI.
 - Web UI and stats with PostgreSQL and other SQLAlchemy URLs.
+- Embedding dimension handling and reranker NaN-score safety.
 
 ## [0.8.0] - 2026-03-23
 
