@@ -4,6 +4,17 @@ All notable changes to Remind.
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-04-09
+
+### Added
+- **`cli_output_mode` / `REMIND_CLI_OUTPUT_MODE`** — Default `table`, or `json` / `compact-json` for machine-readable browse output; `--json`, `--compact-json`, and `--table` override per run (at most one).
+- **JSON output** — `inspect`, `specs`, `plans`, `tasks`, `topics list`/`overview`, `entities`, `search`, `mentions`, `decisions`, `questions`, `types`, `status`, `entity-relations`, `deleted` support `--json` / `cli_output_mode=json`.
+- **`--compact-json`** — Minimal `id` / `title` / `summary` payloads (plus per-command fields such as task `plan_id`/`plan`, search `score`, entities `mention_count`, status metadata wrapper).
+- **`remind tasks`** — Plan column; `--by-plan` groups by plan then status; JSON includes enriched `plan` and optional `by_plan` shape.
+
+### Documentation
+- **Docs site** — Fixed navigation links and expanded the SQLite examples page.
+
 ## [0.10.3] - 2026-04-08
 
 ### Added
