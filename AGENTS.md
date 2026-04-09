@@ -254,6 +254,7 @@ def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
  "auto_consolidate": true,
  "hybrid_keyword_weight": 0.3,
  "logging_enabled": false,
+ "cli_output_mode": "table",
  "db_url": null,
  "anthropic": { "api_key": "sk-ant-..." },
  "openai": { "api_key": "sk-..." },
@@ -261,6 +262,8 @@ def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
  "ollama": { "url": "http://localhost:11434" }
 }
 ```
+
+`cli_output_mode` may be `table` (default), `json`, or `compact-json` (minimal id/title/summary for browse commands).
 
 ### Background Consolidation (`background.py`, `background_worker.py`)
 

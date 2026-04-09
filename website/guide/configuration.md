@@ -65,6 +65,8 @@ Create `~/.remind/remind.config.json`:
 
   "logging_enabled": false,
 
+  "cli_output_mode": "table",
+
   "episode_types": ["observation", "decision", "question", "meta", "preference",
                      "spec", "plan", "task", "outcome", "fact"]
 }
@@ -110,6 +112,13 @@ The CLI automatically reads `<cwd>/.remind/remind.config.json`. When using the P
 If your project-local config contains API keys or other secrets, make sure `.remind/` is in your `.gitignore`. Better yet, keep secrets in the global config (`~/.remind/remind.config.json`) or in environment variables, and use the project-local file only for non-sensitive settings like provider choice and model selection.
 :::
 
+### CLI output mode
+
+`cli_output_mode` sets the default for browse/list commands (`inspect`, `tasks`, `plans`, `specs`, `topics`, `entities`, `status`, and others): `table` (human-readable, default), `json` (full structured stdout), or `compact-json` (minimal `id` / `title` / `summary` objects, command-specific extras such as `mention_count` on `entities` list). In JSON config you can also use the alias `cliOutputMode`, or set `compactJson` to a string such as `"compact-json"` (same normalization as `cli_output_mode`).
+
+- Per command: `--json`, `--compact-json`, or `--table` — at most one (they override the default mode).
+- Environment: `REMIND_CLI_OUTPUT_MODE=table`, `json`, or `compact-json`.
+
 ## Environment variables
 
 Every config-file setting has a corresponding environment variable. Environment variables take precedence over both config files.
@@ -136,6 +145,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
+| `REMIND_CLI_OUTPUT_MODE` | `cli_output_mode` | string | `table` (`table`, `json`, or `compact-json`; default CLI output for browse/list commands) |
 | `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
 
 #### Anthropic (Claude)

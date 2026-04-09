@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- CLI `cli_output_mode` / `cliOutputMode` config and `REMIND_CLI_OUTPUT_MODE` env: default `table`, or `json` / `compact-json` for machine-readable output on browse commands; `--json`, `--compact-json`, and `--table` override per invocation (at most one).
+- JSON output (`--json` or `cli_output_mode=json`) for `inspect`, `specs`, `plans`, `tasks`, `topics list`/`overview`, `entities`, `search`, `mentions`, `decisions`, `questions`, `types`, `status`, `entity-relations`, `deleted`.
+- **`--compact-json`** (and `cli_output_mode=compact-json`): third stdout mode with minimal `id` / `title` / `summary` payloads (plus documented per-command fields such as task `plan_id`/`plan`, search `score`, entities `mention_count`, status metadata wrapper).
+- `remind tasks`: shows linked plan in a Plan column; `--by-plan` groups by plan then status; JSON includes enriched `plan` on tasks and a `by_plan` grouping shape when `--by-plan` is set.
+
 ## [0.10.3] - 2026-04-08
 
 ### Added

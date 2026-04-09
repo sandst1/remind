@@ -136,6 +136,9 @@ class RemindConfig:
     # Logging
     logging_enabled: bool = False
 
+    # CLI browse commands: "table" (default), "json", or "compact-json" (minimal id/title/summary)
+    cli_output_mode: str = "table"
+
     # Backward-compat aliases for older config field names
     @property
     def consolidation_concepts_per_pass(self) -> int:
@@ -160,6 +163,17 @@ class RemindConfig:
     @consolidation_llm_concurrency.setter
     def consolidation_llm_concurrency(self, value: int) -> None:
         self.llm_concurrency = int(value)
+
+
+def normalize_cli_output_mode(value: str) -> str:
+    """Return 'table', 'json', or 'compact-json'; invalid values log a warning and fall back to 'table'."""
+    v = (value or "").strip().lower().replace("_", "-")
+    if v == "compactjson":
+        v = "compact-json"
+    if v in ("table", "json", "compact-json"):
+        return v
+    logger.warning("Invalid cli_output_mode %r; using 'table'", value)
+    return "table"
 
 
 def _apply_provider_config(
@@ -259,6 +273,17 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
     # Logging
     if "logging_enabled" in file_config:
         config.logging_enabled = bool(file_config["logging_enabled"])
+
+    # CLI output (table vs json vs compact-json default for browse commands)
+    raw_mode = None
+    if "cli_output_mode" in file_config:
+        raw_mode = file_config["cli_output_mode"]
+    elif "cliOutputMode" in file_config:
+        raw_mode = file_config["cliOutputMode"]
+    elif "compactJson" in file_config:
+        raw_mode = file_config["compactJson"]
+    if raw_mode is not None:
+        config.cli_output_mode = normalize_cli_output_mode(str(raw_mode))
 
 
 def _load_config_file(path: Path) -> Optional[dict]:
@@ -475,6 +500,10 @@ def _apply_env_vars(config: RemindConfig) -> None:
     # Logging
     if logging_enabled := os.environ.get("REMIND_LOGGING_ENABLED"):
         config.logging_enabled = logging_enabled.lower() in ("true", "1", "yes")
+
+    # CLI default output mode
+    if cli_out := os.environ.get("REMIND_CLI_OUTPUT_MODE"):
+        config.cli_output_mode = normalize_cli_output_mode(cli_out)
 
 
 def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:

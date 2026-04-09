@@ -39,6 +39,186 @@ from rich.syntax import Syntax
 console = Console()
 
 
+def _resolve_cli_output_format(
+    ctx: click.Context,
+    as_table: bool,
+    as_json: bool,
+    as_compact_json: bool,
+) -> str:
+    """Return 'table', 'json', or 'compact_json'. Flags override ctx.obj cli_output_mode."""
+    if int(as_table) + int(as_json) + int(as_compact_json) > 1:
+        raise click.UsageError("Use only one of --table, --json, or --compact-json.")
+    if as_table:
+        return "table"
+    if as_json:
+        return "json"
+    if as_compact_json:
+        return "compact_json"
+    mode = str((ctx.obj or {}).get("cli_output_mode") or "table").strip().lower().replace("_", "-")
+    if mode == "compactjson":
+        mode = "compact-json"
+    if mode == "compact-json":
+        return "compact_json"
+    if mode == "json":
+        return "json"
+    return "table"
+
+
+def _emit_cli_json(data: Any) -> None:
+    print(json.dumps(data, indent=2, default=str))
+
+
+def _concept_to_json_dict(concept: Any) -> dict:
+    """Concept.to_dict() without large embedding vectors."""
+    d = concept.to_dict()
+    d.pop("embedding", None)
+    return d
+
+
+def _episode_compact_summary(ep: Any, max_len: int = 240) -> Optional[str]:
+    """Prefer episode.summary; else trimmed content for compact JSON."""
+    if getattr(ep, "summary", None):
+        return ep.summary
+    raw = (getattr(ep, "content", None) or "").strip()
+    if not raw:
+        return None
+    if len(raw) <= max_len:
+        return raw
+    return raw[: max_len - 3] + "..."
+
+
+def _compact_episode(ep: Any) -> dict[str, Any]:
+    return {
+        "id": ep.id,
+        "title": ep.title,
+        "summary": _episode_compact_summary(ep),
+    }
+
+
+def _compact_concept(c: Any) -> dict[str, Any]:
+    return {"id": c.id, "title": c.title, "summary": c.summary}
+
+
+def _compact_topic_row(t: dict) -> dict[str, Any]:
+    return {
+        "id": t["id"],
+        "title": t.get("name") or "",
+        "summary": (t.get("description") or "") or "",
+    }
+
+
+def _compact_entity(e: Any) -> dict[str, Any]:
+    eid = e.id
+    if ":" in eid:
+        _type, name = eid.split(":", 1)
+    else:
+        _type, name = "id", eid
+    return {
+        "id": e.id,
+        "title": e.display_name,
+        "summary": f"{e.type.value}:{name}",
+    }
+
+
+def _compact_relation_out(rel: Any, store: Any) -> dict[str, Any]:
+    tgt = store.get_entity(rel.target_id)
+    title = tgt.display_name if tgt else None
+    sm = f"{rel.relation_type} ({rel.strength:.0%})"
+    ctx = rel.context or ""
+    if ctx:
+        sm += " — " + (ctx[:120] + ("..." if len(ctx) > 120 else ""))
+    return {
+        "target_id": rel.target_id,
+        "relation_type": rel.relation_type,
+        "title": title,
+        "summary": sm,
+    }
+
+
+def _compact_relation_in(rel: Any, store: Any) -> dict[str, Any]:
+    src = store.get_entity(rel.source_id)
+    title = src.display_name if src else None
+    sm = f"{rel.relation_type} ({rel.strength:.0%})"
+    ctx = rel.context or ""
+    if ctx:
+        sm += " — " + (ctx[:120] + ("..." if len(ctx) > 120 else ""))
+    return {
+        "source_id": rel.source_id,
+        "relation_type": rel.relation_type,
+        "title": title,
+        "summary": sm,
+    }
+
+
+def _task_compact_dict(task: Any, plan_by_id: dict[str, Any]) -> dict[str, Any]:
+    d = _compact_episode(task)
+    pid = (task.metadata or {}).get("plan_id")
+    if not pid:
+        return d
+    out = dict(d)
+    out["plan_id"] = pid
+    pe = plan_by_id.get(pid)
+    out["plan"] = _compact_episode(pe) if pe else None
+    return out
+
+
+_TASK_STATUS_ORDER = ["in_progress", "blocked", "todo", "done"]
+
+
+def _tasks_group_by_status(task_list: list) -> dict[str, list]:
+    groups: dict[str, list] = {}
+    for t in task_list:
+        s = (t.metadata or {}).get("status", "todo")
+        groups.setdefault(s, []).append(t)
+    return groups
+
+
+def _plan_episode_label(plan_ep: Any, plan_id: str) -> str:
+    """Short human-readable label for a linked plan column."""
+    if not plan_ep:
+        return f"{plan_id} (missing)"
+    title = (plan_ep.title or "").strip()
+    raw = plan_ep.content or ""
+    if title:
+        return f"{plan_id} — {title}"[:85]
+    snippet = raw[:48].strip()
+    if len(raw) > 48:
+        snippet += "..."
+    if snippet:
+        return f"{plan_id} — {snippet}"[:85]
+    return plan_id
+
+
+def _tasks_plan_key_order(task_list: list, plan_by_id: dict[str, Any]) -> list[Optional[str]]:
+    """Ordered plan_ids (None last) for --by-plan display."""
+    ordered: list[str] = []
+    for t in task_list:
+        pid = (t.metadata or {}).get("plan_id")
+        if pid and pid not in ordered:
+            ordered.append(pid)
+    with_ep = [p for p in ordered if p in plan_by_id]
+    with_ep.sort(
+        key=lambda p: (plan_by_id[p].updated_at or plan_by_id[p].created_at),
+        reverse=True,
+    )
+    missing = [p for p in ordered if p not in plan_by_id]
+    keys: list[Optional[str]] = with_ep + missing
+    if any((t.metadata or {}).get("plan_id") is None for t in task_list):
+        keys.append(None)
+    return keys
+
+
+def _task_enriched_dict(task: Any, plan_by_id: dict[str, Any]) -> dict[str, Any]:
+    d = task.to_dict()
+    pid = (task.metadata or {}).get("plan_id")
+    if not pid:
+        d["plan"] = None
+        return d
+    pe = plan_by_id.get(pid)
+    d["plan"] = pe.to_dict() if pe else None
+    return d
+
+
 SKILL_NAMES = ["remind", "remind-plan", "remind-spec", "remind-implement"]
 
 
@@ -201,6 +381,7 @@ def main(ctx, db: str, llm: str, embedding: str):
     ctx.obj["llm"] = llm
     ctx.obj["embedding"] = embedding
     ctx.obj["remind_dir"] = project_remind_dir
+    ctx.obj["cli_output_mode"] = config.cli_output_mode
 
 
 @main.command()
@@ -395,14 +576,35 @@ def topics(ctx):
 
 
 @topics.command("list")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def topics_list(ctx):
+def topics_list(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
     """List all topics with stats."""
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
     topic_list = memory.list_topics()
 
     if not topic_list:
-        console.print("[dim]No topics found. Use 'remind topics create' to add one.[/dim]")
+        if out_fmt == "json":
+            _emit_cli_json({"topics": []})
+        elif out_fmt == "compact_json":
+            _emit_cli_json({"format": "compact-json", "topics": []})
+        else:
+            console.print("[dim]No topics found. Use 'remind topics create' to add one.[/dim]")
+        return
+
+    if out_fmt == "json":
+        _emit_cli_json({"topics": topic_list})
+        return
+    if out_fmt == "compact_json":
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "topics": [_compact_topic_row(t) for t in topic_list],
+            }
+        )
         return
 
     table = Table(title="Topics")
@@ -475,12 +677,40 @@ def topics_delete(ctx, topic_id: str):
 @topics.command("overview")
 @click.argument("topic_id")
 @click.option("-k", default=5, help="Number of top concepts to show")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def topics_overview(ctx, topic_id: str, k: int):
+def topics_overview(ctx, topic_id: str, k: int, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show top concepts for a topic."""
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
     topic = memory.get_topic(topic_id)
     concepts = memory.get_topic_overview(topic_id, k=k)
+
+    if out_fmt == "json":
+        tdict = topic.to_dict() if topic else {"id": topic_id}
+        _emit_cli_json(
+            {
+                "topic": tdict,
+                "concepts": [_concept_to_json_dict(c) for c in concepts],
+            }
+        )
+        return
+    if out_fmt == "compact_json":
+        t_compact = (
+            {"id": topic.id, "title": topic.name, "summary": topic.description or ""}
+            if topic
+            else {"id": topic_id, "title": "", "summary": ""}
+        )
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "topic": t_compact,
+                "concepts": [_compact_concept(c) for c in concepts],
+            }
+        )
+        return
 
     if not concepts:
         console.print(f"[dim]No concepts found for topic '{topic_id}'.[/dim]")
@@ -942,20 +1172,49 @@ def flush_ingest(ctx):
 @click.argument("concept_id", required=False)
 @click.option("--episodes", "-e", is_flag=True, help="Show recent episodes instead")
 @click.option("--limit", "-n", default=10, help="Number of items to show")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def inspect(ctx, concept_id: Optional[str], episodes: bool, limit: int):
+def inspect(
+    ctx,
+    concept_id: Optional[str],
+    episodes: bool,
+    limit: int,
+    as_json: bool,
+    as_table: bool,
+    as_compact_json: bool,
+):
     """Inspect concepts or episodes."""
     from remind.store import SQLAlchemyMemoryStore
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
-    
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
+
     if episodes:
         # Show recent episodes
         recent = store.get_recent_episodes(limit=limit)
-        
+
         if not recent:
-            console.print("[yellow]No episodes in memory[/yellow]")
+            if out_fmt == "json":
+                _emit_cli_json([])
+            elif out_fmt == "compact_json":
+                _emit_cli_json({"format": "compact-json", "items": []})
+            else:
+                console.print("[yellow]No episodes in memory[/yellow]")
             return
-        
+
+        if out_fmt == "json":
+            _emit_cli_json([ep.to_dict() for ep in recent])
+            return
+        if out_fmt == "compact_json":
+            _emit_cli_json(
+                {
+                    "format": "compact-json",
+                    "items": [_compact_episode(ep) for ep in recent],
+                }
+            )
+            return
+
         table = Table(title="Recent Episodes")
         table.add_column("ID", style="cyan")
         table.add_column("Type", style="yellow")
@@ -981,15 +1240,25 @@ def inspect(ctx, concept_id: Optional[str], episodes: bool, limit: int):
         
         console.print(table)
         return
-    
+
     if concept_id:
         # Show specific concept
         concept = store.get_concept(concept_id)
-        
+
         if not concept:
-            console.print(f"[red]Concept {concept_id} not found[/red]")
+            if out_fmt == "json" or out_fmt == "compact_json":
+                _emit_cli_json(None)
+            else:
+                console.print(f"[red]Concept {concept_id} not found[/red]")
             return
-        
+
+        if out_fmt == "json":
+            _emit_cli_json(_concept_to_json_dict(concept))
+            return
+        if out_fmt == "compact_json":
+            _emit_cli_json({"format": "compact-json", "item": _compact_concept(concept)})
+            return
+
         tree = Tree(f"[bold cyan]{concept_id}[/bold cyan]")
         if concept.title:
             tree.add(f"[bold]Title:[/bold] {concept.title}")
@@ -1028,11 +1297,28 @@ def inspect(ctx, concept_id: Optional[str], episodes: bool, limit: int):
     else:
         # List all concepts
         concepts = store.get_all_concepts()
-        
+
         if not concepts:
-            console.print("[yellow]No concepts in memory[/yellow]")
+            if out_fmt == "json":
+                _emit_cli_json([])
+            elif out_fmt == "compact_json":
+                _emit_cli_json({"format": "compact-json", "items": []})
+            else:
+                console.print("[yellow]No concepts in memory[/yellow]")
             return
-        
+
+        if out_fmt == "json":
+            _emit_cli_json([_concept_to_json_dict(c) for c in concepts])
+            return
+        if out_fmt == "compact_json":
+            _emit_cli_json(
+                {
+                    "format": "compact-json",
+                    "items": [_compact_concept(c) for c in concepts],
+                }
+            )
+            return
+
         table = Table(title=f"All Concepts ({len(concepts)})")
         table.add_column("ID", style="cyan")
         table.add_column("Title")
@@ -1131,8 +1417,11 @@ def stats(ctx):
 
 
 @main.command("types")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def episode_types_cmd(ctx):
+def episode_types_cmd(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show configured episode types.
 
     Lists the episode types enabled for this project/environment,
@@ -1141,9 +1430,41 @@ def episode_types_cmd(ctx):
     from remind.config import load_config, DEFAULT_EPISODE_TYPES
     from remind.models import EpisodeType
 
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
     config = load_config(project_dir=Path.cwd())
     configured = config.episode_types
     builtin_values = {e.value for e in EpisodeType}
+    disabled = [t for t in DEFAULT_EPISODE_TYPES if t not in configured]
+
+    if out_fmt == "json":
+        rows = [
+            {"type": t, "builtin": t in builtin_values}
+            for t in configured
+        ]
+        _emit_cli_json(
+            {
+                "configured": rows,
+                "disabled_defaults": disabled,
+            }
+        )
+        return
+    if out_fmt == "compact_json":
+        rows = [
+            {
+                "id": t,
+                "title": t,
+                "summary": "builtin" if t in builtin_values else "custom",
+            }
+            for t in configured
+        ]
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "configured": rows,
+                "disabled_defaults": disabled,
+            }
+        )
+        return
 
     table = Table(title="Configured Episode Types", box=box.SIMPLE_HEAVY)
     table.add_column("Type", style="cyan")
@@ -1155,14 +1476,16 @@ def episode_types_cmd(ctx):
 
     console.print(table)
 
-    disabled = [t for t in DEFAULT_EPISODE_TYPES if t not in configured]
     if disabled:
         console.print(f"\n[dim]Disabled defaults: {', '.join(disabled)}[/dim]")
 
 
 @main.command()
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Structured JSON with format marker")
 @click.pass_context
-def status(ctx):
+def status(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show consolidation and ingestion processing status.
 
     Quick view of what's currently happening: running workers,
@@ -1177,6 +1500,7 @@ def status(ctx):
     )
     from remind.config import load_config
 
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
     db_path = ctx.obj["db"]
     memory = get_memory(db_path, ctx.obj["llm"], ctx.obj["embedding"])
     stats_data = memory.get_stats()
@@ -1265,6 +1589,60 @@ def status(ctx):
     lines.append(f"[cyan]Total concepts:[/cyan]        {stats_data.get('concepts', 0)}")
     lines.append(f"[cyan]Total entities:[/cyan]        {stats_data.get('entities', 0)}")
 
+    if out_fmt in ("json", "compact_json"):
+        recall_json: Optional[dict] = None
+        if config.reranking_enabled and config.cli_recall_worker_enabled:
+            worker_key = build_recall_worker_key(
+                db_url=db_path,
+                llm_provider=ctx.obj["llm"],
+                embedding_provider=ctx.obj["embedding"],
+                config_fingerprint=_recall_config_fingerprint(config),
+            )
+            recall_json = {
+                "enabled": True,
+                "running": is_recall_running(
+                    db_path,
+                    worker_key=worker_key,
+                    remind_dir=ctx.obj.get("remind_dir"),
+                ),
+            }
+        elif config.reranking_enabled:
+            recall_json = {"enabled": False, "reason": "disabled_by_config"}
+        else:
+            recall_json = {"enabled": False, "reason": "reranking_disabled"}
+
+        queued_chars = 0
+        if queued_chunks:
+            for p in queued_chunks:
+                try:
+                    data = json.loads(p.read_text())
+                    queued_chars += len(data.get("chunk", ""))
+                except Exception:
+                    pass
+
+        payload: dict[str, Any] = {
+            "database": db_path,
+            "consolidation_running": consolidating or ingesting,
+            "ingest_worker_running": ingesting,
+            "recall_worker": recall_json,
+            "pending_consolidation": pending,
+            "pending_extraction": unextracted,
+            "consolidation_threshold": threshold,
+            "ready_to_consolidate": pending >= threshold,
+            "last_consolidation": last,
+            "queued_ingest_chunks": queued_count,
+            "queued_ingest_chars_approx": queued_chars,
+            "totals": {
+                "episodes": stats_data.get("episodes", 0),
+                "concepts": stats_data.get("concepts", 0),
+                "entities": stats_data.get("entities", 0),
+            },
+        }
+        if out_fmt == "compact_json":
+            payload = {"format": "compact-json", **payload}
+        _emit_cli_json(payload)
+        return
+
     console.print(Panel(
         "\n".join(lines),
         title="Processing Status",
@@ -1297,15 +1675,19 @@ def import_cmd(ctx, file: str):
 
 @main.command()
 @click.argument("query")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def search(ctx, query: str):
+def search(ctx, query: str, as_json: bool, as_table: bool, as_compact_json: bool):
     """Search concepts by tag or keyword."""
     from remind.store import SQLAlchemyMemoryStore
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
-    
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
+
     concepts = store.get_all_concepts()
     query_lower = query.lower()
-    
+
     matches = []
     for c in concepts:
         # Search in summary, tags, conditions
@@ -1316,16 +1698,45 @@ def search(ctx, query: str):
             score += 3
         if c.conditions and query_lower in c.conditions.lower():
             score += 1
-        
+
         if score > 0:
             matches.append((c, score))
-    
+
     matches.sort(key=lambda x: x[1], reverse=True)
-    
+
     if not matches:
-        console.print(f"[yellow]No concepts matching '{query}'[/yellow]")
+        if out_fmt == "json":
+            _emit_cli_json({"query": query, "matches": []})
+        elif out_fmt == "compact_json":
+            _emit_cli_json({"format": "compact-json", "query": query, "matches": []})
+        else:
+            console.print(f"[yellow]No concepts matching '{query}'[/yellow]")
         return
-    
+
+    if out_fmt == "json":
+        _emit_cli_json(
+            {
+                "query": query,
+                "matches": [
+                    {"score": sc, "concept": _concept_to_json_dict(c)}
+                    for c, sc in matches[:10]
+                ],
+            }
+        )
+        return
+    if out_fmt == "compact_json":
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "query": query,
+                "matches": [
+                    {"score": sc, "concept": _compact_concept(c)}
+                    for c, sc in matches[:10]
+                ],
+            }
+        )
+        return
+
     table = Table(title=f"Search Results for '{query}'")
     table.add_column("ID", style="cyan")
     table.add_column("Summary")
@@ -1345,24 +1756,56 @@ def search(ctx, query: str):
 @main.command()
 @click.argument("entity_id", required=False)
 @click.option("--type", "-t", "entity_type", help="Filter by entity type (file, function, person, etc.)")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def entities(ctx, entity_id: Optional[str], entity_type: Optional[str]):
+def entities(
+    ctx,
+    entity_id: Optional[str],
+    entity_type: Optional[str],
+    as_json: bool,
+    as_table: bool,
+    as_compact_json: bool,
+):
     """List entities or show details for a specific entity."""
     from remind.store import SQLAlchemyMemoryStore
     from remind.models import EntityType
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
-    
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
+
     if entity_id:
         # Show specific entity and its mentions
         entity = store.get_entity(entity_id)
-        
+
         if not entity:
-            console.print(f"[red]Entity {entity_id} not found[/red]")
+            if out_fmt == "json" or out_fmt == "compact_json":
+                _emit_cli_json(None)
+            else:
+                console.print(f"[red]Entity {entity_id} not found[/red]")
             return
-        
+
         # Get episodes mentioning this entity
         episodes = store.get_episodes_mentioning(entity_id, limit=20)
-        
+
+        if out_fmt == "json":
+            _emit_cli_json(
+                {
+                    "entity": entity.to_dict(),
+                    "episodes": [ep.to_dict() for ep in episodes],
+                }
+            )
+            return
+        if out_fmt == "compact_json":
+            _emit_cli_json(
+                {
+                    "format": "compact-json",
+                    "entity": _compact_entity(entity),
+                    "episodes": [_compact_episode(ep) for ep in episodes],
+                }
+            )
+            return
+
         tree = Tree(f"[bold cyan]{entity.id}[/bold cyan]")
         tree.add(f"[bold]Type:[/bold] {entity.type.value}")
         if entity.display_name:
@@ -1381,21 +1824,55 @@ def entities(ctx, entity_id: Optional[str], entity_type: Optional[str]):
     else:
         # List all entities with mention counts
         entity_counts = store.get_entity_mention_counts()
-        
+
         if not entity_counts:
-            console.print("[yellow]No entities in memory[/yellow]")
+            if out_fmt == "json":
+                _emit_cli_json({"entities": []})
+            elif out_fmt == "compact_json":
+                _emit_cli_json({"format": "compact-json", "entities": []})
+            else:
+                console.print("[yellow]No entities in memory[/yellow]")
             return
-        
+
         # Filter by type if specified
         if entity_type:
             try:
                 etype = EntityType(entity_type)
                 entity_counts = [(e, c) for e, c in entity_counts if e.type == etype]
             except ValueError:
-                console.print(f"[red]Unknown entity type: {entity_type}[/red]")
-                console.print(f"Valid types: {', '.join(t.value for t in EntityType)}")
+                if out_fmt == "json":
+                    _emit_cli_json({"error": f"Unknown entity type: {entity_type}"})
+                elif out_fmt == "compact_json":
+                    _emit_cli_json(
+                        {
+                            "format": "compact-json",
+                            "error": f"Unknown entity type: {entity_type}",
+                        }
+                    )
+                else:
+                    console.print(f"[red]Unknown entity type: {entity_type}[/red]")
+                    console.print(f"Valid types: {', '.join(t.value for t in EntityType)}")
                 return
-        
+
+        if out_fmt == "json":
+            _emit_cli_json(
+                {
+                    "entities": [
+                        {"entity": e.to_dict(), "mention_count": c}
+                        for e, c in entity_counts[:50]
+                    ]
+                }
+            )
+            return
+        if out_fmt == "compact_json":
+            rows = []
+            for e, c in entity_counts[:50]:
+                row = dict(_compact_entity(e))
+                row["mention_count"] = c
+                rows.append(row)
+            _emit_cli_json({"format": "compact-json", "entities": rows})
+            return
+
         table = Table(title=f"Entities ({len(entity_counts)})")
         table.add_column("ID", style="cyan")
         table.add_column("Type", style="yellow")
@@ -1415,18 +1892,39 @@ def entities(ctx, entity_id: Optional[str], entity_type: Optional[str]):
 
 @main.command()
 @click.argument("entity_id")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def mentions(ctx, entity_id: str):
+def mentions(ctx, entity_id: str, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show all episodes mentioning an entity."""
     from remind.store import SQLAlchemyMemoryStore
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
-    
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
+
     episodes = store.get_episodes_mentioning(entity_id, limit=50)
-    
+
     if not episodes:
-        console.print(f"[yellow]No episodes mention '{entity_id}'[/yellow]")
+        if out_fmt == "json":
+            _emit_cli_json({"episodes": []})
+        elif out_fmt == "compact_json":
+            _emit_cli_json({"format": "compact-json", "episodes": []})
+        else:
+            console.print(f"[yellow]No episodes mention '{entity_id}'[/yellow]")
         return
-    
+
+    if out_fmt == "json":
+        _emit_cli_json({"episodes": [ep.to_dict() for ep in episodes]})
+        return
+    if out_fmt == "compact_json":
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "episodes": [_compact_episode(ep) for ep in episodes],
+            }
+        )
+        return
+
     table = Table(title=f"Episodes mentioning '{entity_id}'")
     table.add_column("ID", style="cyan")
     table.add_column("Type", style="yellow")
@@ -1447,19 +1945,40 @@ def mentions(ctx, entity_id: str):
 
 @main.command("decisions")
 @click.option("--limit", "-n", default=20, help="Number of decisions to show")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def decisions(ctx, limit: int):
+def decisions(ctx, limit: int, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show decision-type episodes."""
     from remind.store import SQLAlchemyMemoryStore
     from remind.models import EpisodeType
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
-    
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
+
     episodes = store.get_episodes_by_type(EpisodeType.DECISION.value, limit=limit)
-    
+
     if not episodes:
-        console.print("[yellow]No decisions recorded yet[/yellow]")
+        if out_fmt == "json":
+            _emit_cli_json({"decisions": []})
+        elif out_fmt == "compact_json":
+            _emit_cli_json({"format": "compact-json", "decisions": []})
+        else:
+            console.print("[yellow]No decisions recorded yet[/yellow]")
         return
-    
+
+    if out_fmt == "json":
+        _emit_cli_json({"decisions": [ep.to_dict() for ep in episodes]})
+        return
+    if out_fmt == "compact_json":
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "decisions": [_compact_episode(ep) for ep in episodes],
+            }
+        )
+        return
+
     table = Table(title="Decisions")
     table.add_column("ID", style="cyan")
     table.add_column("Timestamp", style="dim")
@@ -1476,17 +1995,38 @@ def decisions(ctx, limit: int):
 
 @main.command("questions")
 @click.option("--limit", "-n", default=20, help="Number of questions to show")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def questions(ctx, limit: int):
+def questions(ctx, limit: int, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show question-type episodes (open questions, uncertainties)."""
     from remind.store import SQLAlchemyMemoryStore
     from remind.models import EpisodeType
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
     episodes = store.get_episodes_by_type(EpisodeType.QUESTION.value, limit=limit)
 
     if not episodes:
-        console.print("[yellow]No questions recorded yet[/yellow]")
+        if out_fmt == "json":
+            _emit_cli_json({"questions": []})
+        elif out_fmt == "compact_json":
+            _emit_cli_json({"format": "compact-json", "questions": []})
+        else:
+            console.print("[yellow]No questions recorded yet[/yellow]")
+        return
+
+    if out_fmt == "json":
+        _emit_cli_json({"questions": [ep.to_dict() for ep in episodes]})
+        return
+    if out_fmt == "compact_json":
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "questions": [_compact_episode(ep) for ep in episodes],
+            }
+        )
         return
 
     table = Table(title="Open Questions")
@@ -1512,12 +2052,24 @@ def questions(ctx, limit: int):
 @click.option("--limit", "-n", default=20, help="Number of specs to show")
 @click.option("--entity", "-e", help="Filter by entity ID")
 @click.option("--status", "-s", help="Filter by status (draft, approved, implemented, deprecated)")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def specs(ctx, limit: int, entity: Optional[str], status: Optional[str]):
+def specs(
+    ctx,
+    limit: int,
+    entity: Optional[str],
+    status: Optional[str],
+    as_json: bool,
+    as_table: bool,
+    as_compact_json: bool,
+):
     """Show spec-type episodes (requirements, acceptance criteria)."""
     from remind.store import SQLAlchemyMemoryStore
     from remind.models import EpisodeType
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
     episodes = store.get_episodes_by_type(EpisodeType.SPEC.value, limit=1000)
 
@@ -1529,7 +2081,24 @@ def specs(ctx, limit: int, entity: Optional[str], status: Optional[str]):
     episodes = episodes[:limit]
 
     if not episodes:
-        console.print("[yellow]No specs recorded yet[/yellow]")
+        if out_fmt == "json":
+            _emit_cli_json({"specs": []})
+        elif out_fmt == "compact_json":
+            _emit_cli_json({"format": "compact-json", "specs": []})
+        else:
+            console.print("[yellow]No specs recorded yet[/yellow]")
+        return
+
+    if out_fmt == "json":
+        _emit_cli_json({"specs": [ep.to_dict() for ep in episodes]})
+        return
+    if out_fmt == "compact_json":
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "specs": [_compact_episode(ep) for ep in episodes],
+            }
+        )
         return
 
     table = Table(title="Specs")
@@ -1555,12 +2124,24 @@ def specs(ctx, limit: int, entity: Optional[str], status: Optional[str]):
 @click.option("--limit", "-n", default=20, help="Number of plans to show")
 @click.option("--entity", "-e", help="Filter by entity ID")
 @click.option("--status", "-s", help="Filter by status (draft, active, completed, superseded)")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def plans(ctx, limit: int, entity: Optional[str], status: Optional[str]):
+def plans(
+    ctx,
+    limit: int,
+    entity: Optional[str],
+    status: Optional[str],
+    as_json: bool,
+    as_table: bool,
+    as_compact_json: bool,
+):
     """Show plan-type episodes (implementation plans, roadmaps)."""
     from remind.store import SQLAlchemyMemoryStore
     from remind.models import EpisodeType
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
     episodes = store.get_episodes_by_type(EpisodeType.PLAN.value, limit=1000)
 
@@ -1572,7 +2153,24 @@ def plans(ctx, limit: int, entity: Optional[str], status: Optional[str]):
     episodes = episodes[:limit]
 
     if not episodes:
-        console.print("[yellow]No plans recorded yet[/yellow]")
+        if out_fmt == "json":
+            _emit_cli_json({"plans": []})
+        elif out_fmt == "compact_json":
+            _emit_cli_json({"format": "compact-json", "plans": []})
+        else:
+            console.print("[yellow]No plans recorded yet[/yellow]")
+        return
+
+    if out_fmt == "json":
+        _emit_cli_json({"plans": [ep.to_dict() for ep in episodes]})
+        return
+    if out_fmt == "compact_json":
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "plans": [_compact_episode(ep) for ep in episodes],
+            }
+        )
         return
 
     table = Table(title="Plans")
@@ -1599,11 +2197,28 @@ def plans(ctx, limit: int, entity: Optional[str], status: Optional[str]):
 @click.option("--entity", "-e", help="Filter by entity ID")
 @click.option("--plan", "-p", help="Filter by plan episode ID")
 @click.option("--all", "show_all", is_flag=True, help="Include completed tasks")
+@click.option("--by-plan", "by_plan", is_flag=True, help="Group tasks by plan, then by status")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def tasks(ctx, status: Optional[str], entity: Optional[str], plan: Optional[str],
-          show_all: bool):
-    """Show task episodes grouped by status."""
+def tasks(
+    ctx,
+    status: Optional[str],
+    entity: Optional[str],
+    plan: Optional[str],
+    show_all: bool,
+    by_plan: bool,
+    as_json: bool,
+    as_table: bool,
+    as_compact_json: bool,
+):
+    """Show task episodes grouped by status (or by plan with --by-plan)."""
+    from remind.store import SQLAlchemyMemoryStore
+
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    store = SQLAlchemyMemoryStore(ctx.obj["db"])
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
     task_list = memory.get_tasks(
         status=status,
@@ -1614,14 +2229,97 @@ def tasks(ctx, status: Optional[str], entity: Optional[str], plan: Optional[str]
     if not show_all and not status:
         task_list = [t for t in task_list if (t.metadata or {}).get("status") != "done"]
 
+    plan_ids = list(
+        dict.fromkeys(
+            pid
+            for t in task_list
+            if (pid := (t.metadata or {}).get("plan_id"))
+        )
+    )
+    plan_eps = store.get_episodes_batch(plan_ids) if plan_ids else []
+    plan_by_id = {e.id: e for e in plan_eps}
+
     if not task_list:
-        console.print("[yellow]No tasks found[/yellow]")
+        if out_fmt == "json":
+            _emit_cli_json({"tasks": []})
+        elif out_fmt == "compact_json":
+            _emit_cli_json({"format": "compact-json", "tasks": []})
+        else:
+            console.print("[yellow]No tasks found[/yellow]")
         return
 
-    groups: dict[str, list] = {"todo": [], "in_progress": [], "blocked": [], "done": []}
-    for t in task_list:
-        s = (t.metadata or {}).get("status", "todo")
-        groups.setdefault(s, []).append(t)
+    if out_fmt == "json":
+        if by_plan:
+            groups_out: list[dict[str, Any]] = []
+            for pkey in _tasks_plan_key_order(task_list, plan_by_id):
+                slice_tasks = [
+                    t
+                    for t in task_list
+                    if ((t.metadata or {}).get("plan_id") or None) == pkey
+                ]
+                gbs = _tasks_group_by_status(slice_tasks)
+                by_status: dict[str, list] = {}
+                for st in _TASK_STATUS_ORDER:
+                    if st in gbs and gbs[st]:
+                        by_status[st] = [_task_enriched_dict(t, plan_by_id) for t in gbs[st]]
+                for st in list(gbs.keys()):
+                    if st not in _TASK_STATUS_ORDER and gbs[st]:
+                        by_status[st] = [_task_enriched_dict(t, plan_by_id) for t in gbs[st]]
+                pe = plan_by_id.get(pkey) if pkey else None
+                groups_out.append(
+                    {
+                        "plan_id": pkey,
+                        "plan": pe.to_dict() if pe else None,
+                        "by_status": by_status,
+                    }
+                )
+            _emit_cli_json({"grouping": "by_plan", "groups": groups_out})
+        else:
+            _emit_cli_json(
+                {"tasks": [_task_enriched_dict(t, plan_by_id) for t in task_list]}
+            )
+        return
+
+    if out_fmt == "compact_json":
+        if by_plan:
+            groups_compact: list[dict[str, Any]] = []
+            for pkey in _tasks_plan_key_order(task_list, plan_by_id):
+                slice_tasks = [
+                    t
+                    for t in task_list
+                    if ((t.metadata or {}).get("plan_id") or None) == pkey
+                ]
+                gbs = _tasks_group_by_status(slice_tasks)
+                by_status_c: dict[str, list] = {}
+                for st in _TASK_STATUS_ORDER:
+                    if st in gbs and gbs[st]:
+                        by_status_c[st] = [_task_compact_dict(t, plan_by_id) for t in gbs[st]]
+                for st in list(gbs.keys()):
+                    if st not in _TASK_STATUS_ORDER and gbs[st]:
+                        by_status_c[st] = [_task_compact_dict(t, plan_by_id) for t in gbs[st]]
+                pe = plan_by_id.get(pkey) if pkey else None
+                groups_compact.append(
+                    {
+                        "plan_id": pkey,
+                        "plan": _compact_episode(pe) if pe else None,
+                        "by_status": by_status_c,
+                    }
+                )
+            _emit_cli_json(
+                {
+                    "format": "compact-json",
+                    "grouping": "by_plan",
+                    "groups": groups_compact,
+                }
+            )
+        else:
+            _emit_cli_json(
+                {
+                    "format": "compact-json",
+                    "tasks": [_task_compact_dict(t, plan_by_id) for t in task_list],
+                }
+            )
+        return
 
     status_styles = {
         "todo": "white",
@@ -1630,7 +2328,75 @@ def tasks(ctx, status: Optional[str], entity: Optional[str], plan: Optional[str]
         "done": "green",
     }
 
-    for group_status in ["in_progress", "blocked", "todo", "done"]:
+    def _render_task_rows(group_tasks: list, group_status: str, table: Table) -> None:
+        for t in group_tasks:
+            meta = t.metadata or {}
+            content = t.content[:55] + "..." if len(t.content) > 55 else t.content
+            priority = meta.get("priority", "-")
+            entities_str = ", ".join(t.entity_ids[:2]) if t.entity_ids else ""
+            if len(t.entity_ids) > 2:
+                entities_str += f" +{len(t.entity_ids)-2}"
+            pid = meta.get("plan_id")
+            plan_cell = (
+                _plan_episode_label(plan_by_id.get(pid), pid)
+                if pid
+                else ""
+            )
+            if group_status == "blocked":
+                reason = meta.get("blocked_reason", "")
+                if reason:
+                    content += f" [red]({reason})[/red]"
+            table.add_row(t.id, content, priority, plan_cell, entities_str)
+
+    if by_plan:
+        for pkey in _tasks_plan_key_order(task_list, plan_by_id):
+            slice_tasks = [
+                t for t in task_list if ((t.metadata or {}).get("plan_id") or None) == pkey
+            ]
+            if not slice_tasks:
+                continue
+            header = (
+                _plan_episode_label(plan_by_id[pkey], pkey)
+                if pkey
+                else "(no plan)"
+            )
+            console.print(f"\n[bold blue]Plan:[/bold blue] {header}\n")
+            groups = _tasks_group_by_status(slice_tasks)
+            for group_status in _TASK_STATUS_ORDER:
+                group_tasks = groups.get(group_status, [])
+                if not group_tasks:
+                    continue
+                style = status_styles.get(group_status, "white")
+                table = Table(
+                    title=f"[{style}]{group_status.upper()}[/{style}] ({len(group_tasks)})"
+                )
+                table.add_column("ID", style="cyan")
+                table.add_column("Content")
+                table.add_column("Priority", style="yellow", justify="center")
+                table.add_column("Plan", style="dim")
+                table.add_column("Entities", style="dim")
+                _render_task_rows(group_tasks, group_status, table)
+                console.print(table)
+                console.print()
+            extra = [s for s in groups if s not in _TASK_STATUS_ORDER]
+            for group_status in extra:
+                group_tasks = groups[group_status]
+                style = status_styles.get(group_status, "white")
+                table = Table(
+                    title=f"[{style}]{group_status.upper()}[/{style}] ({len(group_tasks)})"
+                )
+                table.add_column("ID", style="cyan")
+                table.add_column("Content")
+                table.add_column("Priority", style="yellow", justify="center")
+                table.add_column("Plan", style="dim")
+                table.add_column("Entities", style="dim")
+                _render_task_rows(group_tasks, group_status, table)
+                console.print(table)
+                console.print()
+        return
+
+    groups = _tasks_group_by_status(task_list)
+    for group_status in _TASK_STATUS_ORDER:
         group_tasks = groups.get(group_status, [])
         if not group_tasks:
             continue
@@ -1640,23 +2406,24 @@ def tasks(ctx, status: Optional[str], entity: Optional[str], plan: Optional[str]
         table.add_column("ID", style="cyan")
         table.add_column("Content")
         table.add_column("Priority", style="yellow", justify="center")
+        table.add_column("Plan", style="dim")
         table.add_column("Entities", style="dim")
 
-        for t in group_tasks:
-            meta = t.metadata or {}
-            content = t.content[:55] + "..." if len(t.content) > 55 else t.content
-            priority = meta.get("priority", "-")
-            entities_str = ", ".join(t.entity_ids[:2]) if t.entity_ids else ""
-            if len(t.entity_ids) > 2:
-                entities_str += f" +{len(t.entity_ids)-2}"
+        _render_task_rows(group_tasks, group_status, table)
 
-            if group_status == "blocked":
-                reason = meta.get("blocked_reason", "")
-                if reason:
-                    content += f" [red]({reason})[/red]"
+        console.print(table)
+        console.print()
 
-            table.add_row(t.id, content, priority, entities_str)
-
+    for group_status in [s for s in groups if s not in _TASK_STATUS_ORDER]:
+        group_tasks = groups[group_status]
+        style = status_styles.get(group_status, "white")
+        table = Table(title=f"[{style}]{group_status.upper()}[/{style}] ({len(group_tasks)})")
+        table.add_column("ID", style="cyan")
+        table.add_column("Content")
+        table.add_column("Priority", style="yellow", justify="center")
+        table.add_column("Plan", style="dim")
+        table.add_column("Entities", style="dim")
+        _render_task_rows(group_tasks, group_status, table)
         console.print(table)
         console.print()
 
@@ -1893,26 +2660,71 @@ def extract_relations(ctx, batch_size: int, force: bool):
 
 @main.command("entity-relations")
 @click.argument("entity_id")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal relation edges JSON")
 @click.pass_context
-def entity_relations(ctx, entity_id: str):
+def entity_relations(ctx, entity_id: str, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show relationships for a specific entity."""
     from remind.store import SQLAlchemyMemoryStore
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
     entity = store.get_entity(entity_id)
     if not entity:
-        console.print(f"[red]Entity {entity_id} not found[/red]")
+        if out_fmt == "json" or out_fmt == "compact_json":
+            _emit_cli_json(None)
+        else:
+            console.print(f"[red]Entity {entity_id} not found[/red]")
         return
 
     relations = store.get_entity_relations(entity_id)
 
     if not relations:
-        console.print(f"[yellow]No relationships found for '{entity_id}'[/yellow]")
+        if out_fmt == "json":
+            _emit_cli_json(
+                {
+                    "entity_id": entity_id,
+                    "outgoing": [],
+                    "incoming": [],
+                }
+            )
+        elif out_fmt == "compact_json":
+            _emit_cli_json(
+                {
+                    "format": "compact-json",
+                    "entity_id": entity_id,
+                    "outgoing": [],
+                    "incoming": [],
+                }
+            )
+        else:
+            console.print(f"[yellow]No relationships found for '{entity_id}'[/yellow]")
         return
 
     # Separate outgoing and incoming relations
     outgoing = [r for r in relations if r.source_id == entity_id]
     incoming = [r for r in relations if r.target_id == entity_id]
+
+    if out_fmt == "json":
+        _emit_cli_json(
+            {
+                "entity_id": entity_id,
+                "outgoing": [r.to_dict() for r in outgoing],
+                "incoming": [r.to_dict() for r in incoming],
+            }
+        )
+        return
+    if out_fmt == "compact_json":
+        _emit_cli_json(
+            {
+                "format": "compact-json",
+                "entity_id": entity_id,
+                "outgoing": [_compact_relation_out(r, store) for r in outgoing],
+                "incoming": [_compact_relation_in(r, store) for r in incoming],
+            }
+        )
+        return
 
     tree = Tree(f"[bold cyan]{entity_id}[/bold cyan]")
 
@@ -2296,13 +3108,38 @@ def purge_concept(ctx, concept_id: str, yes: bool):
 @click.option("--type", "-t", "item_type", type=click.Choice(["episodes", "concepts"]),
               help="Filter by type")
 @click.option("--limit", "-n", default=20, help="Number of items to show")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
 @click.pass_context
-def deleted(ctx, item_type: Optional[str], limit: int):
+def deleted(ctx, item_type: Optional[str], limit: int, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show soft-deleted episodes and concepts."""
     memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
     show_episodes = item_type in (None, "episodes")
     show_concepts = item_type in (None, "concepts")
+
+    if out_fmt == "json":
+        out: dict[str, Any] = {}
+        if show_episodes:
+            eps = memory.get_deleted_episodes(limit=limit)
+            out["episodes"] = [ep.to_dict() for ep in eps]
+        if show_concepts:
+            dconcepts = memory.get_deleted_concepts()
+            out["concepts"] = [_concept_to_json_dict(c) for c in dconcepts[:limit]]
+        _emit_cli_json(out)
+        return
+    if out_fmt == "compact_json":
+        out_c: dict[str, Any] = {"format": "compact-json"}
+        if show_episodes:
+            eps = memory.get_deleted_episodes(limit=limit)
+            out_c["episodes"] = [_compact_episode(ep) for ep in eps]
+        if show_concepts:
+            dconcepts = memory.get_deleted_concepts()
+            out_c["concepts"] = [_compact_concept(c) for c in dconcepts[:limit]]
+        _emit_cli_json(out_c)
+        return
 
     if show_episodes:
         deleted_episodes = memory.get_deleted_episodes(limit=limit)

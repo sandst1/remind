@@ -14,6 +14,7 @@ from remind.config import (
     OllamaConfig,
     DecayConfig,
     load_config,
+    normalize_cli_output_mode,
     _apply_file_config,
     _apply_env_vars,
     _load_config_file,
@@ -65,6 +66,7 @@ _ALL_CONFIG_ENV_VARS = [
     "REMIND_LOGGING_ENABLED",
     "REMIND_CLI_RECALL_WORKER_ENABLED",
     "REMIND_CLI_RECALL_WORKER_IDLE_SECONDS",
+    "REMIND_CLI_OUTPUT_MODE",
     "REMIND_EPISODE_TYPES",
     "ENTITY_EXTRACTION_BATCH_SIZE",
     "LLM_CONCURRENCY",
@@ -159,6 +161,24 @@ class TestDefaults:
 
 
 # =========================================================================
+# CLI output mode
+# =========================================================================
+
+
+class TestNormalizeCliOutputMode:
+    def test_valid_values(self):
+        assert normalize_cli_output_mode("table") == "table"
+        assert normalize_cli_output_mode("JSON") == "json"
+        assert normalize_cli_output_mode("compact-json") == "compact-json"
+        assert normalize_cli_output_mode("COMPACT_JSON") == "compact-json"
+        assert normalize_cli_output_mode("compactjson") == "compact-json"
+
+    def test_invalid_falls_back_to_table(self):
+        assert normalize_cli_output_mode("wide") == "table"
+        assert normalize_cli_output_mode("") == "table"
+
+
+# =========================================================================
 # _apply_file_config
 # =========================================================================
 
@@ -186,6 +206,17 @@ class TestApplyFileConfig:
         assert config.cli_recall_worker_enabled is False
         assert config.cli_recall_worker_idle_seconds == 120
         assert config.logging_enabled is True
+
+    def test_applies_cli_output_mode_and_alias(self):
+        config = RemindConfig()
+        _apply_file_config(config, {"cli_output_mode": "json"})
+        assert config.cli_output_mode == "json"
+        config = RemindConfig()
+        _apply_file_config(config, {"cliOutputMode": "JSON"})
+        assert config.cli_output_mode == "json"
+        config = RemindConfig()
+        _apply_file_config(config, {"compactJson": "compact-json"})
+        assert config.cli_output_mode == "compact-json"
 
     def test_partial_config_preserves_unset_fields(self):
         config = RemindConfig()
@@ -908,6 +939,16 @@ class TestEnvFileParity:
         assert config.decay.enabled is False
         assert config.decay.decay_interval == 10
         assert config.decay.decay_rate == 0.01
+
+    def test_remind_cli_output_mode_env(self):
+        config = RemindConfig()
+        _apply_file_config(config, {"cli_output_mode": "table"})
+        os.environ["REMIND_CLI_OUTPUT_MODE"] = "json"
+        _apply_env_vars(config)
+        assert config.cli_output_mode == "json"
+        os.environ["REMIND_CLI_OUTPUT_MODE"] = "compact-json"
+        _apply_env_vars(config)
+        assert config.cli_output_mode == "compact-json"
 
 
 class TestInferProjectDirFromDbUrl:
