@@ -412,7 +412,7 @@ class Consolidator:
             if existing_clusters:
                 # Add facts to the first matching cluster
                 cluster = existing_clusters[0]
-                await self._add_facts_to_cluster(cluster, facts, result)
+                await self._add_facts_to_cluster(cluster, facts, entity_id, result)
             else:
                 # Check for other fact episodes mentioning this entity
                 existing_fact_episodes = [
@@ -442,9 +442,11 @@ class Consolidator:
         self,
         cluster: Concept,
         facts: list[Episode],
+        entity_id: str,
         result: ConsolidationResult,
     ) -> None:
         """Add new facts to an existing fact_cluster concept."""
+        facts_added = False
         for fact in facts:
             # Check for potential conflicts before adding
             new_conflict = self._detect_fact_conflict(fact.content, cluster.specifics)
@@ -464,6 +466,7 @@ class Consolidator:
             # Add fact content to specifics
             if fact.content not in cluster.specifics:
                 cluster.specifics.append(fact.content)
+                facts_added = True
 
             # Add evidence (verbatim)
             if fact.content not in cluster.evidence:
@@ -475,6 +478,12 @@ class Consolidator:
 
         cluster.instance_count = len(cluster.source_episodes)
         cluster.updated_at = datetime.now()
+
+        # Regenerate title and summary if new facts were added
+        if facts_added:
+            title, summary = await self._summarize_fact_cluster(entity_id, cluster.specifics)
+            cluster.title = title
+            cluster.summary = summary
 
         # Re-embed the cluster (combine title + specifics)
         embed_text = f"{cluster.title or ''}\n" + "\n".join(cluster.specifics)
@@ -539,6 +548,62 @@ class Consolidator:
 
         return None
 
+    async def _summarize_fact_cluster(
+        self,
+        entity_id: str,
+        facts: list[str],
+    ) -> tuple[str, str]:
+        """Generate a concise title and summary for a fact cluster using LLM.
+        
+        Returns (title, summary) tuple.
+        """
+        entity_type, entity_name = entity_id.split(":", 1) if ":" in entity_id else ("", entity_id)
+        
+        facts_text = "\n".join(f"- {fact}" for fact in facts)
+        
+        prompt = f"""Summarize these facts about "{entity_name}" into a title and one-sentence summary.
+
+FACTS:
+{facts_text}
+
+Requirements:
+- Title: 2-5 words, descriptive (not just "{entity_name} Facts")
+- Summary: One sentence that captures the essence of what these facts tell us
+- Preserve specificity - mention concrete details if they're central
+- Do NOT use phrases like "Facts about..." or "Information regarding..."
+
+Respond in exactly this format:
+TITLE: <title>
+SUMMARY: <summary>"""
+
+        try:
+            response = await self.llm.complete(
+                prompt,
+                system="You summarize factual information concisely.",
+                temperature=0.3,
+                max_tokens=150,
+            )
+            
+            lines = response.strip().split("\n")
+            title = entity_name.replace("_", " ").title()  # fallback
+            summary = f"Facts about {entity_name}"  # fallback
+            
+            for line in lines:
+                if line.startswith("TITLE:"):
+                    title = line[6:].strip()
+                elif line.startswith("SUMMARY:"):
+                    summary = line[8:].strip()
+            
+            return title, summary
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate fact cluster summary: {e}")
+            # Fallback to simple title/summary
+            return (
+                f"{entity_name.replace('_', ' ').title()} Facts",
+                f"Facts about {entity_name}",
+            )
+
     async def _create_fact_cluster(
         self,
         entity_id: str,
@@ -547,13 +612,14 @@ class Consolidator:
         result: ConsolidationResult,
     ) -> None:
         """Create a new fact_cluster concept from related facts."""
-        # Generate title from entity
         entity_type, entity_name = entity_id.split(":", 1) if ":" in entity_id else ("", entity_id)
-        title = f"{entity_name.replace('_', ' ').title()} Facts"
 
         specifics = [fact.content for fact in facts]
         evidence = list(specifics)  # Same as specifics for fact clusters
         source_episodes = [fact.id for fact in facts]
+
+        # Generate title and summary using LLM
+        title, summary = await self._summarize_fact_cluster(entity_id, specifics)
 
         # Generate embedding from title + specifics
         embed_text = f"{title}\n" + "\n".join(specifics)
@@ -561,7 +627,7 @@ class Consolidator:
 
         concept = Concept(
             title=title,
-            summary=f"Facts about {entity_name}",
+            summary=summary,
             concept_type=ConceptType.FACT_CLUSTER.value,
             specifics=specifics,
             evidence=evidence,
