@@ -8,13 +8,12 @@
   import EpisodeTimeline from './components/EpisodeTimeline.svelte';
   import MemoryHealth from './components/MemoryHealth.svelte';
   import EntityGraph from './components/EntityGraph.svelte';
-  import TaskBoard from './components/TaskBoard.svelte';
   import TopicList from './components/TopicList.svelte';
   import DatabaseSelector from './components/DatabaseSelector.svelte';
   import TopicSelector from './components/TopicSelector.svelte';
 
   // Icons
-  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Activity, Network, PanelLeftClose, PanelLeft, ListChecks, FolderOpen } from 'lucide-svelte';
+  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Activity, Network, PanelLeftClose, PanelLeft, FolderOpen } from 'lucide-svelte';
 
   let initialized = false;
 
@@ -72,7 +71,6 @@
     { view: 'entities', label: 'Entities', icon: Tag },
     { view: 'concepts', label: 'Concepts', icon: Lightbulb },
     { view: 'topics', label: 'Topics', icon: FolderOpen },
-    { view: 'tasks', label: 'Tasks', icon: ListChecks },
     { view: 'memory-health', label: 'Memory Status', icon: Activity },
     { view: 'entity-graph', label: 'Entity Graph', icon: Network },
   ];
@@ -177,8 +175,6 @@
         <TopicList />
       {:else if $currentView === 'memory-health'}
         <MemoryHealth />
-      {:else if $currentView === 'tasks'}
-        <TaskBoard />
       {:else if $currentView === 'entity-graph'}
         <EntityGraph />
       {/if}

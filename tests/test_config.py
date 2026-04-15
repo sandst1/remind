@@ -149,7 +149,7 @@ class TestDefaults:
         config = RemindConfig()
         assert config.episode_types == DEFAULT_EPISODE_TYPES
         assert "observation" in config.episode_types
-        assert "task" in config.episode_types
+        assert "outcome" in config.episode_types
         assert "fact" in config.episode_types
 
     def test_load_config_returns_defaults_when_no_files_or_env(self):

@@ -12,13 +12,12 @@ Store an episode.
 remind remember "content"
 remind remember "content" -t decision          # Typed
 remind remember "content" -e tool:redis        # With entity
-remind remember "content" -t spec -e module:auth -m '{"status":"approved"}'
 remind remember "content" --topic architecture --source-type agent
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome`, `fact` |
+| `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `outcome`, `fact` |
 | `-e, --entity` | Entity tag(s) in `type:name` format. Repeat for multiple. |
 | `-m, --metadata` | JSON metadata string |
 | `--topic` | Knowledge area (e.g., `architecture`, `product`). Scopes consolidation and retrieval. |
@@ -158,13 +157,7 @@ remind topics overview <name> -k 10   # More results
 ```bash
 remind decisions                  # Decision-type episodes
 remind questions                  # Question-type episodes
-remind specs                      # Spec episodes
-remind plans                      # Plan episodes
 ```
-
-::: tip Conditional commands
-`specs` and `plans` only appear when the `spec` and `plan` episode types are enabled in your [configuration](/guide/configuration#episode-types). All types are enabled by default.
-:::
 
 ## Entity management
 
@@ -175,26 +168,6 @@ remind mentions file:src/auth.ts          # Episodes mentioning entity
 remind entity-relations file:src/auth.ts  # Entity relationships
 remind extract-relations                  # Extract from unprocessed episodes
 remind extract-relations --force          # Re-extract all
-```
-
-## Task management
-
-::: tip Conditional commands
-Task commands only appear when the `task` episode type is enabled in your [configuration](/guide/configuration#episode-types). All types are enabled by default.
-:::
-
-```bash
-remind tasks                          # Active tasks
-remind tasks --status todo            # Filter by status
-remind tasks --entity module:auth     # Filter by entity
-remind tasks --all                    # Include completed
-
-remind task add "description" -e module:auth --priority p0
-remind task add "description" --depends-on <id> --plan <id> --spec <id>
-remind task start <id>                # → in_progress
-remind task done <id>                 # → done
-remind task block <id> "reason"       # → blocked
-remind task unblock <id>              # → todo
 ```
 
 ## Memory management

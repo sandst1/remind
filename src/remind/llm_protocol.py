@@ -50,7 +50,6 @@ TRIAGE_TAGS = {
     "TRIAGE_EPISODE": "TRIAGE_EPISODE",
     "TRIAGE_ENTITY": "TRIAGE_ENTITY",
     "TRIAGE_METADATA": "TRIAGE_METADATA",
-    "TRIAGE_TOPIC": "TRIAGE_TOPIC",
 }
 
 
@@ -427,10 +426,6 @@ def parse_triage_csv(text: str) -> dict:
             idx = int(row[1]) if row[1].isdigit() else -1
             if 0 <= idx < len(episodes) and row[2]:
                 episodes[idx]["metadata"][row[2]] = row[3]
-        elif kind == "TRIAGE_TOPIC" and len(row) >= 3:
-            idx = int(row[1]) if row[1].isdigit() else -1
-            if 0 <= idx < len(episodes) and row[2]:
-                episodes[idx]["topic_id"] = row[2]
 
     if not saw_dg:
         raise ProtocolParseError("Missing DENSITY row in triage response")

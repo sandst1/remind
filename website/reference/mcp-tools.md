@@ -15,7 +15,7 @@ remember(content="Chose microservices", topic="architecture", source_type="agent
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content` | string | Yes | The experience to store |
-| `episode_type` | string | No | `observation` (default), `decision`, `question`, `preference`, `meta`, `spec`, `plan`, `task`, `outcome`, `fact` |
+| `episode_type` | string | No | `observation` (default), `decision`, `question`, `preference`, `meta`, `outcome`, `fact` |
 | `entities` | string | No | Comma-separated entity tags (`type:name`) |
 | `topic` | string | No | Knowledge area (e.g., `"architecture"`, `"product"`). Scopes consolidation and retrieval. |
 | `source_type` | string | No | Origin of the memory (e.g., `"agent"`, `"slack"`, `"manual"`) |
@@ -231,52 +231,3 @@ topic_overview(topic="product", k=10)
 |-----------|------|----------|-------------|
 | `topic` | string | Yes | Topic name |
 | `k` | integer | No | Number of concepts to return (default: 5) |
-
-## task_add / task_update_status / list_tasks / list_specs / list_plans
-
-::: tip Conditional tools
-These tools are only registered when the corresponding episode type (`task`, `spec`, `plan`) is enabled in your [configuration](/guide/configuration#episode-types). All types are enabled by default.
-:::
-
-### task_add
-
-Create a new task.
-
-```
-task_add(content="Implement JWT auth", entities="module:auth", priority="p0")
-task_add(content="Write tests", depends_on="task-id-1", plan="plan-id")
-```
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `content` | string | Yes | Task description |
-| `entities` | string | No | Comma-separated entities |
-| `priority` | string | No | `p0`, `p1`, `p2` |
-| `plan` | string | No | Plan episode ID |
-| `spec` | string | No | Spec episode ID |
-| `depends_on` | string | No | Dependency task ID |
-
-### task_update_status
-
-Transition a task's status.
-
-```
-task_update_status(task_id="abc123", status="in_progress")
-task_update_status(task_id="abc123", status="blocked", reason="Waiting on API key")
-```
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `task_id` | string | Yes | Task ID |
-| `status` | string | Yes | `todo`, `in_progress`, `done`, `blocked` |
-| `reason` | string | No | Block reason (for `blocked` status) |
-
-### list_tasks / list_specs / list_plans
-
-List filtered episodes by type.
-
-```
-list_tasks(status="todo", entity="module:auth")
-list_specs()
-list_plans()
-```

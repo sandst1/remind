@@ -39,16 +39,12 @@ def _build_triage_prompt(valid_types: list[str]) -> str:
     return """## EXISTING RELEVANT KNOWLEDGE
 {{existing_concepts}}
 
-## EXISTING TOPICS
-{{existing_topics}}
-
 ## RAW CONVERSATION FRAGMENT
 {{chunk}}
 
 Task:
 1) Estimate information density in [0.0, 1.0] (for diagnostics only)
 2) Extract any memory-worthy episodes from the text
-3) Assign each episode to a topic
 
 Guidelines:
 - Ignore pure filler/chitchat, but capture anything that would be useful if encountered again in a future session
@@ -57,7 +53,6 @@ Guidelines:
 - Use type=outcome for action-result pairs
 - For outcome metadata include strategy, result(success|failure|partial), prediction_error(low|medium|high)
 - Use type=fact for concrete details (values, names, dates, versions, config)
-- Assign each episode to a topic: use an existing topic ID when content fits, or suggest a new short topic name
 
 Output ONLY rows inside these tags:
 BEGIN TRIAGE_RESULTS
@@ -65,16 +60,12 @@ DENSITY,<density>,<reasoning>
 TRIAGE_EPISODE,<episode_type>,<content>
 TRIAGE_ENTITY,<episode_idx>,<entity_id>
 TRIAGE_METADATA,<episode_idx>,<metadata_key>,<metadata_value>
-TRIAGE_TOPIC,<episode_idx>,<topic_id_or_name>
 END TRIAGE_RESULTS
 
 Rules:
 - Exactly one DENSITY row
 - TRIAGE_EPISODE row index is implicit 0-based order (first TRIAGE_EPISODE is episode_idx=0)
 - Use TRIAGE_ENTITY and TRIAGE_METADATA rows to attach entities/metadata to TRIAGE_EPISODE rows
-- Use TRIAGE_TOPIC to assign a topic to each episode (one per episode)
-- For existing topics, use the topic ID from the EXISTING TOPICS list
-- For new topics, use a short descriptive name (will be auto-created)
 - Use CSV quoting when needed
 - If nothing is worth remembering, output only the DENSITY row (no TRIAGE_EPISODE rows)
 - episode_type MUST be one of: {type_enum}
@@ -92,8 +83,6 @@ class TriageEpisode:
     episode_type: str = "observation"
     entities: list[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
-    topic_id: Optional[str] = None
-    topic_name: Optional[str] = None
 
 
 @dataclass
@@ -319,7 +308,6 @@ class IngestionTriager:
         self,
         chunk: str,
         existing_concepts: str = "",
-        existing_topics: str = "",
         instructions: Optional[str] = None,
     ) -> TriageResult:
         """Score density and extract episodes from a text chunk.
@@ -328,8 +316,6 @@ class IngestionTriager:
             chunk: Raw text to triage.
             existing_concepts: Formatted string of relevant existing concepts
                 from recall(), used to judge novelty.
-            existing_topics: Formatted string of existing topics (id: name)
-                for the LLM to assign episodes to.
             instructions: Optional caller-provided instructions that steer
                 what the triage LLM extracts (e.g. "focus on architectural
                 decisions"). Appended to the system prompt.
@@ -341,11 +327,9 @@ class IngestionTriager:
             return TriageResult(density=0.0, reasoning="Empty input", raw_chunk=chunk)
 
         concepts_text = existing_concepts or "(No existing knowledge yet)"
-        topics_text = existing_topics or "(No topics yet -- suggest new topic names as needed)"
 
         prompt = self._prompt_template.format(
             existing_concepts=concepts_text,
-            existing_topics=topics_text,
             chunk=chunk,
         )
 
@@ -424,16 +408,11 @@ class IngestionTriager:
                 if not isinstance(metadata, dict):
                     metadata = {}
 
-                topic_id = ep.get("topic_id") or ep.get("topic") or None
-                topic_name = ep.get("topic_name") or None
-
                 episodes.append(TriageEpisode(
                     content=content,
                     episode_type=ep_type,
                     entities=[str(e) for e in entities],
                     metadata=metadata,
-                    topic_id=str(topic_id) if topic_id else None,
-                    topic_name=str(topic_name) if topic_name else None,
                 ))
 
             return TriageResult(

@@ -17,8 +17,8 @@ import time
 
 from remind.models import (
     Episode, Concept, ConsolidationResult,
-    Entity, EntityType, EpisodeType, TaskStatus, Relation, RelationType,
-    Topic, DEFAULT_TOPIC_ID, slugify,
+    Entity, EntityType, EpisodeType, Relation, RelationType,
+    Topic, slugify,
     normalize_entity_name,
     canonicalize_entity_name,
     strip_entity_label_prefix,
@@ -917,8 +917,7 @@ class MemoryInterface:
         """Triage a single sub-chunk and store extracted episodes.
 
         Args:
-            topic: When set, all episodes are assigned this topic (no inference).
-                   When None, the triage LLM infers per-episode topics.
+            topic: When set, all episodes are assigned this topic.
             instructions: Optional caller-provided instructions for triage.
         """
         existing_concepts = ""
@@ -937,21 +936,8 @@ class MemoryInterface:
         except Exception as e:
             logger.debug(f"Recall for triage context failed (ok for empty memory): {e}")
 
-        existing_topics = ""
-        if topic is None:
-            try:
-                all_topics = self.store.get_all_topics()
-                if all_topics:
-                    topic_lines = []
-                    for t in all_topics:
-                        desc = f" - {t.description}" if t.description else ""
-                        topic_lines.append(f"- {t.id}: {t.name}{desc}")
-                    existing_topics = "\n".join(topic_lines)
-            except Exception as e:
-                logger.debug(f"Failed to load topics for triage: {e}")
-
         triage_result = await self._triager.triage(
-            chunk, existing_concepts, existing_topics=existing_topics,
+            chunk, existing_concepts,
             instructions=instructions,
         )
 
@@ -971,45 +957,16 @@ class MemoryInterface:
             metadata["source"] = source
             metadata["triage_density"] = triage_result.density
 
-            ep_topic = topic
-            if ep_topic is None and ep.topic_id:
-                ep_topic = self._resolve_or_create_inferred_topic(
-                    ep.topic_id, ep.topic_name,
-                )
-
             episode_id = await self.remember(
                 content=ep.content,
                 metadata=metadata,
                 episode_type=ep.episode_type or "observation",
                 entities=ep.entities if ep.entities else None,
-                topic=ep_topic,
+                topic=topic,
             )
             episode_ids.append(episode_id)
 
         return episode_ids
-
-    def _resolve_or_create_inferred_topic(
-        self, topic_id: str, topic_name: Optional[str] = None,
-    ) -> str:
-        """Resolve a triage-inferred topic, creating it if new.
-
-        Returns the resolved topic ID.
-        """
-        existing = self.store.get_topic(topic_id)
-        if existing:
-            return existing.id
-
-        for t in self.store.get_all_topics():
-            if t.name.lower() == (topic_name or topic_id).lower():
-                return t.id
-
-        name = topic_name or topic_id
-        try:
-            created = self.create_topic(name)
-            logger.info(f"Auto-created topic '{created.id}' from triage inference")
-            return created.id
-        except ValueError:
-            return self.store.get_or_create_default_topic().id
 
     @property
     def ingest_buffer_size(self) -> int:
@@ -1105,25 +1062,26 @@ class MemoryInterface:
     
     # Topic operations
 
-    def _resolve_topic_id(self, topic: Optional[str]) -> str:
+    def _resolve_topic_id(self, topic: Optional[str]) -> Optional[str]:
         """Resolve a topic argument to a valid topic ID.
 
         If *topic* matches an existing ID, return it.  Otherwise treat it as
         a name and try to find a topic with that name.  If still no match,
-        return the default topic ID (creating it if needed).
+        return None (no topic assignment).
         """
-        if topic:
-            topic = topic.strip()
-            existing = self.store.get_topic(topic)
-            if existing:
-                return existing.id
-            # Try matching by name (case-insensitive)
-            for t in self.store.get_all_topics():
-                if t.name.lower() == topic.lower():
-                    return t.id
-        # Fall back to default
-        default = self.store.get_or_create_default_topic()
-        return default.id
+        if not topic:
+            return None
+        topic = topic.strip()
+        if not topic:
+            return None
+        existing = self.store.get_topic(topic)
+        if existing:
+            return existing.id
+        # Try matching by name (case-insensitive)
+        for t in self.store.get_all_topics():
+            if t.name.lower() == topic.lower():
+                return t.id
+        return None
 
     def _get_topic_names(self) -> dict[str, str]:
         """Return {topic_id: topic_name} map."""
@@ -1451,91 +1409,6 @@ class MemoryInterface:
     def get_entity_mention_counts(self) -> list[tuple[Entity, int]]:
         """Get all entities with their mention counts, sorted by most mentioned."""
         return self.store.get_entity_mention_counts()
-    
-    # Task operations
-
-    def get_tasks(
-        self,
-        status: Optional[str] = None,
-        entity_id: Optional[str] = None,
-        plan_id: Optional[str] = None,
-        limit: int = 50,
-    ) -> list[Episode]:
-        """Get task episodes with optional filters.
-
-        Args:
-            status: Filter by task status (todo, in_progress, done, blocked)
-            entity_id: Filter by entity association
-            plan_id: Filter by originating plan episode ID
-            limit: Maximum number of tasks to return
-        """
-        all_tasks = self.store.get_episodes_by_type(EpisodeType.TASK.value, limit=1000)
-        normalized_entity = self._normalize_entity_id(entity_id) if entity_id else None
-
-        filtered = []
-        for task in all_tasks:
-            meta = task.metadata or {}
-            if status and meta.get("status") != status:
-                continue
-            if normalized_entity and normalized_entity not in task.entity_ids:
-                continue
-            if plan_id and meta.get("plan_id") != plan_id:
-                continue
-            filtered.append(task)
-            if len(filtered) >= limit:
-                break
-
-        return filtered
-
-    def update_task_status(
-        self,
-        task_id: str,
-        status: str,
-        reason: Optional[str] = None,
-    ) -> Optional[Episode]:
-        """Transition a task's status with timestamp tracking.
-
-        Valid transitions:
-            todo -> in_progress, blocked
-            in_progress -> done, blocked, todo
-            blocked -> todo, in_progress
-            done -> todo (reopen)
-
-        Args:
-            task_id: Episode ID of the task
-            status: New status value
-            reason: Optional reason (used for blocked status)
-
-        Returns:
-            Updated Episode, or None if not found or invalid
-        """
-        episode = self.store.get_episode(task_id)
-        if not episode or episode.episode_type != EpisodeType.TASK.value:
-            return None
-
-        try:
-            new_status = TaskStatus(status)
-        except ValueError:
-            return None
-
-        meta = episode.metadata or {}
-        old_status = meta.get("status", "todo")
-
-        meta["status"] = new_status.value
-
-        if new_status == TaskStatus.IN_PROGRESS and old_status != "in_progress":
-            meta["started_at"] = datetime.now().isoformat()
-        elif new_status == TaskStatus.DONE:
-            meta["completed_at"] = datetime.now().isoformat()
-        elif new_status == TaskStatus.BLOCKED and reason:
-            meta["blocked_reason"] = reason
-        elif new_status in (TaskStatus.TODO, TaskStatus.IN_PROGRESS):
-            meta.pop("blocked_reason", None)
-
-        episode.metadata = meta
-        episode.updated_at = datetime.now()
-        self.store.update_episode(episode)
-        return episode
 
     def get_stats(self) -> dict:
         """Get memory statistics including consolidation state."""

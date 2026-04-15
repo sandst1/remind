@@ -43,14 +43,11 @@ Episodes go in, consolidation runs, generalized concepts come out.
 Project-local memory via composable skills. The database lives in your repo at `.remind/remind.db`.
 
 ```bash
-remind skill-install                    # Install all skills
-remind skill-install remind remind-plan # Install specific skills
+remind skill-install                    # Install the remind skill
 remind remember "..."                   # Store experiences
 remind recall "..."                     # Retrieve memories
 remind end-session                      # Consolidate at end of session
 ```
-
-Available skills: `remind` (core memory), `remind-plan` (interactive planning), `remind-spec` (spec-driven development), `remind-implement` (task execution). Write your own skills for any workflow.
 
 Skills are Markdown files read by AI agents (Claude Code, Cursor, etc.) — they teach the agent how to use Remind as a memory layer for your project.
 
@@ -88,14 +85,12 @@ remind ui
 - **Native vector indexes** — sqlite-vec for SQLite, pgvector for PostgreSQL; automatic fallback to brute-force when unavailable
 - **Entity graph** — Files, functions, people, tools and other entities are extracted and linked to episodes and concepts
 - **Outcome tracking** — Record action-result pairs; consolidation extracts causal strategy patterns
-- **Task management** — Track work items (todo → in\_progress → done / blocked) with priorities and dependencies
-- **Specs and plans** — First-class episode types for requirements and implementation plans
 - **Soft delete / restore** — Episodes and concepts can be deleted and restored; permanent purge is a separate step
 - **Memory decay** — Rarely-recalled concepts fade; frequently-used ones stay sharp
 - **Composable via Skills** — Build any workflow on top of the `remind` CLI
 - **Debug logging** — Enable `logging_enabled` to get full LLM prompt/response logs in `remind.log` next to the database
 - **Multi-provider** — Anthropic, OpenAI, Azure OpenAI, Ollama (fully local)
-- **Web UI** — Dashboard, concept graph, entity explorer, task board
+- **Web UI** — Dashboard, concept graph, entity explorer
 
 ## Database backends
 

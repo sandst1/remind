@@ -68,7 +68,7 @@ Create `~/.remind/remind.config.json`:
   "cli_output_mode": "table",
 
   "episode_types": ["observation", "decision", "question", "meta", "preference",
-                     "spec", "plan", "task", "outcome", "fact"]
+                     "outcome", "fact"]
 }
 ```
 
@@ -114,7 +114,7 @@ If your project-local config contains API keys or other secrets, make sure `.rem
 
 ### CLI output mode
 
-`cli_output_mode` sets the default for browse/list commands (`inspect`, `tasks`, `plans`, `specs`, `topics`, `entities`, `status`, and others): `table` (human-readable, default), `json` (full structured stdout), or `compact-json` (minimal `id` / `title` / `summary` objects, command-specific extras such as `mention_count` on `entities` list). In JSON config you can also use the alias `cliOutputMode`, or set `compactJson` to a string such as `"compact-json"` (same normalization as `cli_output_mode`).
+`cli_output_mode` sets the default for browse/list commands (`inspect`, `topics`, `entities`, `status`, and others): `table` (human-readable, default), `json` (full structured stdout), or `compact-json` (minimal `id` / `title` / `summary` objects, command-specific extras such as `mention_count` on `entities` list). In JSON config you can also use the alias `cliOutputMode`, or set `compactJson` to a string such as `"compact-json"` (same normalization as `cli_output_mode`).
 
 - Per command: `--json`, `--compact-json`, or `--table` — at most one (they override the default mode).
 - Environment: `REMIND_CLI_OUTPUT_MODE=table`, `json`, or `compact-json`.
@@ -446,13 +446,13 @@ REMIND_LOGGING_ENABLED=true
 
 ## Episode types
 
-Control which episode types are available. This affects which CLI commands and MCP tools are registered.
+Control which episode types are valid for ingestion and storage.
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `episode_types` | all built-in types | List of enabled episode types |
 
-Built-in types: `observation`, `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`, `fact`.
+Built-in types: `observation`, `decision`, `question`, `meta`, `preference`, `outcome`, `fact`.
 
 By default all types are enabled. To restrict to a subset:
 
@@ -469,10 +469,3 @@ REMIND_EPISODE_TYPES=observation,decision,question,outcome,fact
 ```
 
 Custom type names are also accepted — they will be used in LLM prompts for triage and extraction with generic descriptions.
-
-### Feature gating
-
-When `spec`, `plan`, or `task` types are excluded from `episode_types`:
-
-- **CLI**: The corresponding commands (`specs`, `plans`, `tasks`, `task add/start/done/block/unblock`) are hidden from `remind --help` and unavailable
-- **MCP**: The corresponding tools (`list_specs`, `list_plans`, `task_add`, `task_update_status`, `list_tasks`) are not registered and won't appear in the tool list

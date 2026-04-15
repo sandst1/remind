@@ -20,7 +20,7 @@ src/remind/
 ├── extraction.py      # Entity/type extraction from episodes
 ├── retrieval.py       # Spreading activation retrieval
 ├── reranker.py        # Optional cross-encoder reranking (requires [rerank] extra)
-├── triage.py          # Auto-ingest: buffered intake + density scoring + topic inference
+├── triage.py          # Auto-ingest: buffered intake + density scoring
 ├── cli.py             # Command-line interface (project-aware)
 ├── mcp_server.py      # MCP (Model Context Protocol) server
 ├── background.py      # Background consolidation spawning
@@ -50,17 +50,14 @@ src/remind/
 | `Entity` | External referent (file, person, concept, tool). Format: `type:name` |
 | `Relation` | Typed edge between concepts (implies, contradicts, specializes, etc.) |
 | `Topic` | Named knowledge area grouping episodes/concepts. Has id (slug), name, description. |
-| `TaskStatus` | Enum for task status: `todo`, `in_progress`, `done`, `blocked` |
 
-**Episode types**: `observation`, `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`, `fact`
+**Episode types**: `observation`, `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
 
 **Episode lifecycle**: Created via `remember()` or `ingest()` → Entity extraction → Consolidation → Marked consolidated
 
 **Fact episodes**: Specific factual assertions (config values, names, dates, concrete technical details). Consolidation preserves fact details verbatim in concept summaries rather than generalizing them away.
 
 **Outcome episode metadata**: `strategy` (approach used), `result` (success/failure/partial), `prediction_error` (low/medium/high)
-
-**Task lifecycle**: `todo` → `in_progress` → `done` (or `blocked` → `todo`). Active tasks are excluded from consolidation; only completed tasks consolidate.
 
 **Entity ID format**: `type:name` (e.g., `file:src/auth.ts`, `person:alice`, `concept:caching`)
 
@@ -88,7 +85,7 @@ class EmbeddingProvider(ABC):
 The main entry point. Key design decisions:
 
 1. **`remember()` is synchronous and fast** - no LLM calls, just stores episode
-2. **`ingest()` is async with LLM triage** - buffers, extracts episodes with topic inference, immediately consolidates
+2. **`ingest()` is async with LLM triage** - buffers, extracts episodes, immediately consolidates
 3. **`consolidate()` does all LLM work** - extraction + generalization
 4. **Two consolidation modes**: Automatic (threshold-based) or manual (hook-based)
 
@@ -112,13 +109,13 @@ The "brain" of the system. Uses LLM to:
 
 The "input selection" subsystem. Two classes:
 - `IngestionBuffer` — character-threshold accumulator. Buffers raw text until threshold (~4000 chars).
-- `IngestionTriager` — LLM-based episode extraction with topic inference. The LLM decides directly what's worth remembering, extracts distilled episodes, detects action-result pairs as outcome episodes, and assigns each episode to a topic. A density score (0.0-1.0) is produced for diagnostics but doesn't gate extraction.
+- `IngestionTriager` — LLM-based episode extraction. The LLM decides directly what's worth remembering, extracts distilled episodes, and detects action-result pairs as outcome episodes. A density score (0.0-1.0) is produced for diagnostics but doesn't gate extraction.
 
-**Topic handling**: When `ingest()` is called with an explicit `topic`, all episodes are stamped with that topic (no LLM inference). When `topic` is omitted, the triage LLM receives existing topics as context and assigns each episode to an existing topic or suggests a new one (auto-created). Sub-chunks are triaged concurrently, bounded by `llm_concurrency`.
+**Topics**: Topics are explicit and optional. When `ingest()` is called with an explicit `topic`, all extracted episodes are stamped with that topic. When `topic` is omitted, episodes get `topic_id=None`. Sub-chunks are triaged concurrently, bounded by `llm_concurrency`.
 
 **Instructions**: The `instructions` parameter (optional) lets callers steer what the triage LLM extracts. When provided, instructions are appended to the triage system prompt as a prioritized directive. This enables focused ingestion (e.g. "extract only architectural decisions", "capture all config values"). Threaded through the full pipeline: `ingest()`/`flush_ingest()` → `_process_ingest_chunk()` → `_triage_sub_chunk()` → `IngestionTriager.triage()`. Also serialized in the background queue JSON payload for CLI background workers.
 
-Pipeline: `ingest()` → buffer → triage + extract + topic inference (LLM) → `remember()` → `consolidate(force=True)`
+Pipeline: `ingest()` → buffer → triage + extract (LLM) → `remember()` → `consolidate(force=True)`
 
 ### Retrieval (`retrieval.py`)
 
@@ -344,7 +341,7 @@ pytest -v                   # Verbose
 3. Update consolidation prompts in `consolidation.py`
 4. Add MCP tool if type-specific querying is useful
 
-**Note**: `episode_types` config controls which types are active. Custom types (strings not in `EpisodeType` enum) are also supported. When `spec`, `plan`, or `task` are not in `episode_types`, their CLI commands and MCP tools are hidden automatically (conditional registration in `cli.py` and `mcp_server.py`).
+**Note**: `episode_types` config controls which types are active. Custom types (strings not in `EpisodeType` enum) are also supported.
 
 ### Adding a New Entity Type
 

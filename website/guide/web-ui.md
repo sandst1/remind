@@ -29,7 +29,7 @@ Overview of memory statistics: episode count, concept count, entity count, conso
 
 ### Episodes
 
-Timeline view of raw experiences. Filter by episode type (observation, decision, question, spec, plan, task). Inline delete for cleanup.
+Timeline view of raw experiences. Filter by episode type (observation, decision, question, meta, preference, outcome, fact). Inline delete for cleanup.
 
 ![Episodes view](/ui-episodes.png)
 
@@ -42,10 +42,6 @@ Browse generalized concepts with confidence scores, instance counts, and relatio
 ### Entities
 
 Explore entities (files, people, tools, concepts) and their mention counts. Click through to see related episodes and concepts.
-
-### Tasks
-
-Kanban-style board with columns for todo, in_progress, blocked, and done. Drag-and-drop status transitions, priority levels (p0/p1/p2), entity tags, and dependency tracking.
 
 ### Graph
 

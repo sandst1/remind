@@ -44,7 +44,7 @@ Remind offers two integration paths with different database models:
 
 Your agent calls the `remind` CLI from skills — markdown files with instructions. The database lives in your project repo at `.remind/remind.db`. Each project has its own isolated memory.
 
-This is the most powerful and flexible path. Skills are composable: the built-in plan/spec/implement workflow is just one example. You can write your own skills for any workflow — code review, onboarding, research, journaling, whatever.
+This is the most powerful and flexible path. Skills are composable: you can author custom skills for code review, onboarding, research, journaling, and other uses.
 
 [Learn more about Skills →](/guide/skills)
 

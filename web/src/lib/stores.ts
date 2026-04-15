@@ -51,7 +51,7 @@ export const topicsError = writable<string | null>(null);
 export const selectedTopic = writable<string | null>(null);
 
 // Navigation
-export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'memory-health' | 'entity-graph' | 'tasks' | 'topics';
+export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'memory-health' | 'entity-graph' | 'topics';
 export const currentView = writable<View>('dashboard');
 
 // Entity Graph (network) visualization state

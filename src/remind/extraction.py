@@ -129,7 +129,7 @@ Rules:
 - Leave context empty when unknown
 - Keep entity names under 30 chars
 
-Episode type MUST be one of: observation|decision|question|meta|preference|spec|plan|task|outcome|fact
+Episode type MUST be one of: observation|decision|question|meta|preference|outcome|fact
 Do NOT invent or use any other type."""
 
 
@@ -152,10 +152,10 @@ Rules:
 - Leave context empty when unknown
 - Keep entity names under 30 chars
 
-Episode type MUST be one of: observation|decision|question|meta|preference|spec|plan|task|outcome|fact
+Episode type MUST be one of: observation|decision|question|meta|preference|outcome|fact
 Do NOT invent or use any other type."""
 
-_DEFAULT_EXTRACTION_TYPES = "observation|decision|question|meta|preference|spec|plan|task|outcome|fact"
+_DEFAULT_EXTRACTION_TYPES = "observation|decision|question|meta|preference|outcome|fact"
 
 
 def _build_extraction_prompt(valid_types: list[str]) -> str:

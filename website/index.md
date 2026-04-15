@@ -21,7 +21,7 @@ features:
   - icon:
       src: /icons/puzzle.svg
     title: Composable via Skills
-    details: Build any workflow on top of Remind. The plan/spec/implement cycle is just one example — write your own skills for any use case.
+    details: Build any workflow on top of Remind — write your own skills for any use case.
   - icon:
       src: /icons/folder-tree.svg
     title: Project-scoped or centralized
@@ -37,7 +37,7 @@ features:
   - icon:
       src: /icons/layout-dashboard.svg
     title: Web UI included
-    details: Dashboard, concept graph, entity explorer, task board, and memory health — all built in.
+    details: Dashboard, concept graph, entity explorer, and memory health — all built in.
 ---
 
 <style>

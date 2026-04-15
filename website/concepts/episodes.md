@@ -10,14 +10,11 @@ Episodes are raw experiences — specific interactions, observations, or decisio
 | `decision` | A choice that was made, with rationale | "Chose PostgreSQL: team experience, JSONB support" |
 | `question` | An open question or uncertainty | "Should we support offline mode?" |
 | `preference` | An opinion, value, or constraint | "User prefers tabs over spaces" |
-| `meta` | Reflection about process or thinking | "Auth spec was ambiguous about token refresh" |
-| `spec` | A prescriptive requirement | "POST /auth/login must return JWT with 1h expiry" |
-| `plan` | A sequenced intention | "Auth plan: 1) bcrypt 2) login route 3) JWT middleware" |
-| `task` | A discrete unit of work with status tracking | "Implement bcrypt password hashing utility" |
+| `meta` | Reflection about process or thinking | "Auth specification was ambiguous about token refresh" |
 | `outcome` | Result of an action or strategy | "Grep search for 'auth' missed verify_credentials due to naming" |
 | `fact` | Specific factual assertion to preserve verbatim | "Redis cache TTL is 300 seconds for auth tokens" |
 
-You can configure which types are available via the `episode_types` setting. Custom type names are also supported. When `spec`, `plan`, or `task` are excluded, their dedicated CLI commands and MCP tools are hidden. See [Configuration](/guide/configuration#episode-types).
+You can configure which types are available via the `episode_types` setting. Custom type names are also supported. See [Configuration](/guide/configuration#episode-types).
 
 ## Lifecycle
 
@@ -29,18 +26,6 @@ Episodes are **temporary by design**. The lifecycle:
 4. **Marked consolidated** — the episode is flagged so it isn't processed again
 
 The episode still exists in the database after consolidation, but it's been "digested" into generalized knowledge. You can always inspect the original episodes that contributed to a concept.
-
-### Task lifecycle
-
-Task episodes are special — they have a status lifecycle:
-
-```
-todo → in_progress → done
-  ↓         ↓
-  └──► blocked ──► todo (unblock)
-```
-
-Active tasks (todo, in_progress, blocked) are **excluded from consolidation**. They remain as live operational data. Only completed tasks contribute to the generalized knowledge graph.
 
 ## Topics and source types
 
@@ -55,14 +40,14 @@ Episodes can also carry a **source type** — the origin of the memory (e.g., `"
 ```bash [CLI]
 remind remember "User likes Python and Rust"
 remind remember "Chose PostgreSQL for the user store" -t decision
-remind remember "All API routes need authentication" -t spec -e module:auth
+remind remember "All API routes need authentication" -t fact -e module:auth
 remind remember "Use event sourcing for audit trail" --topic architecture --source-type agent
 ```
 
 ```python [Python]
 memory.remember("User likes Python and Rust")
 memory.remember("Chose PostgreSQL", episode_type=EpisodeType.DECISION)
-memory.remember("All API routes need auth", episode_type=EpisodeType.SPEC, entities=["module:auth"])
+memory.remember("All API routes need auth", episode_type=EpisodeType.FACT, entities=["module:auth"])
 memory.remember("Use event sourcing", topic="architecture", source_type="agent")
 ```
 

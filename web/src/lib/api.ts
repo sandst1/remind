@@ -10,7 +10,6 @@ import type {
   DatabaseInfo,
   EpisodeType,
   EntityType,
-  TaskStatus,
   ChatMessage,
   ChatStreamChunk,
 } from './types';
@@ -201,83 +200,6 @@ export async function executeQuery(query: string, options: QueryOptions = {}): P
 export async function fetchDatabases(): Promise<DatabaseInfo[]> {
   const response = await fetchJson<{ databases: DatabaseInfo[] }>(`${API_BASE}/databases`);
   return response.databases;
-}
-
-// Tasks
-
-export interface FetchTasksOptions {
-  status?: TaskStatus;
-  entity?: string;
-  plan_id?: string;
-  include_done?: boolean;
-  limit?: number;
-}
-
-export interface TasksResponse {
-  tasks: Episode[];
-  total: number;
-}
-
-export async function fetchTasks(options: FetchTasksOptions = {}): Promise<TasksResponse> {
-  const params: Record<string, string> = {};
-  if (options.status) params.status = options.status;
-  if (options.entity) params.entity = options.entity;
-  if (options.plan_id) params.plan_id = options.plan_id;
-  if (options.include_done) params.include_done = 'true';
-  if (options.limit !== undefined) params.limit = String(options.limit);
-  return fetchJson<TasksResponse>(apiUrl('/tasks', params));
-}
-
-export async function addTask(content: string, options: {
-  entities?: string[];
-  priority?: string;
-  plan_id?: string;
-  spec_ids?: string[];
-  depends_on?: string[];
-} = {}): Promise<{ success: boolean; task: Episode }> {
-  return fetchJson(apiUrl('/tasks'), {
-    method: 'POST',
-    body: JSON.stringify({ content, ...options }),
-  });
-}
-
-export async function updateTaskStatus(
-  taskId: string,
-  status: TaskStatus,
-  reason?: string,
-): Promise<{ success: boolean; task: Episode }> {
-  return fetchJson(apiUrl(`/tasks/${taskId}/status`), {
-    method: 'PUT',
-    body: JSON.stringify({ status, reason }),
-  });
-}
-
-// Specs & Plans
-
-export interface SpecsResponse {
-  specs: Episode[];
-  total: number;
-}
-
-export async function fetchSpecs(options: { entity?: string; status?: string; limit?: number } = {}): Promise<SpecsResponse> {
-  const params: Record<string, string> = {};
-  if (options.entity) params.entity = options.entity;
-  if (options.status) params.status = options.status;
-  if (options.limit !== undefined) params.limit = String(options.limit);
-  return fetchJson<SpecsResponse>(apiUrl('/specs', params));
-}
-
-export interface PlansResponse {
-  plans: Episode[];
-  total: number;
-}
-
-export async function fetchPlans(options: { entity?: string; status?: string; limit?: number } = {}): Promise<PlansResponse> {
-  const params: Record<string, string> = {};
-  if (options.entity) params.entity = options.entity;
-  if (options.status) params.status = options.status;
-  if (options.limit !== undefined) params.limit = String(options.limit);
-  return fetchJson<PlansResponse>(apiUrl('/plans', params));
 }
 
 // Episode CRUD

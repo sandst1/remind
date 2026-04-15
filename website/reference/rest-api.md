@@ -76,20 +76,6 @@ curl -X POST http://localhost:8765/api/v1/chat?db=my-project \
   -d '{"query": "What do we know about auth?"}'
 ```
 
-## Tasks
-
-**`GET /tasks`** — List tasks. Params: `status`, `entity`.
-
-**`POST /tasks`** — Add a new task.
-
-**`POST /tasks/{id}/status`** — Update task status.
-
-## Specs and Plans
-
-**`GET /specs`** — List spec episodes.
-
-**`GET /plans`** — List plan episodes.
-
 ## Databases
 
 **`GET /databases`** — List available databases in `~/.remind/`.

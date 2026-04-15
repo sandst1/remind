@@ -16,15 +16,10 @@ export type KnownEpisodeType =
   | 'question'
   | 'meta'
   | 'preference'
-  | 'spec'
-  | 'plan'
-  | 'task'
   | 'outcome'
   | 'fact';
 
 export type EpisodeType = KnownEpisodeType | (string & {});
-
-export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked';
 
 export type EntityType =
   | 'file'

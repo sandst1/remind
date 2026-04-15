@@ -60,7 +60,7 @@ See [Configuration](/guide/configuration) for all provider options including Azu
 # Store some experiences
 remind remember "This project uses React with TypeScript"
 remind remember "We chose PostgreSQL for the database" -t decision
-remind remember "All API routes need authentication" -t spec
+remind remember "All API routes need authentication" -t preference
 
 # Consolidate into concepts
 remind consolidate

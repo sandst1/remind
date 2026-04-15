@@ -16,43 +16,71 @@ cd ~/research/llm-memory
 remind skill-install
 ```
 
+Optionally create a topic so you can group this survey and scope recall later. Topics are **explicit**: Remind does not infer or auto-assign them. If you omit a topic, episodes stay untagged (`topic_id` unset). If you pass `--topic` to `remember` or `ingest`, that name must match an existing topic (create it first).
+
+```bash
+remind topics create "LLM memory survey" --description "Papers on agent memory architectures"
+```
+
+**Episode types** (the types Remind understands for classification and consolidation):
+
+- `observation` — default for factual summaries and findings from a paper
+- `decision` — when you record a methodological or interpretive choice
+- `question` — open research questions or gaps
+- `meta` — notes about the reading process, comparisons, or survey structure
+- `preference` — stance or weighting (e.g. favoring one design over another)
+- `outcome` — result of an experiment or evaluation described in the paper
+- `fact` — specific numbers, claims, or definitions that should stay verbatim in concepts
+
 ## Walkthrough
 
 ### Ingesting papers
 
-For each paper, have the agent read it and store key findings as episodes:
+For each paper, have the agent read it and store key findings as episodes. Add `--topic` with your topic id or name when you want episodes grouped (optional).
 
 ```bash
 # Paper 1: "Generative Agents" (Park et al.)
 remind remember "Generative Agents uses a retrieval-based memory with recency, \
   importance, and relevance scoring. Agents reflect on memories to form \
   higher-level abstractions." \
-  -t observation -e person:park -e concept:memory-architecture
+  -t observation -e person:park -e concept:memory-architecture \
+  --topic "llm-memory-survey"
 
 remind remember "Generative Agents reflection mechanism: periodically ask \
   'what are the most salient high-level questions?' and generate insights" \
-  -t observation -e concept:reflection -e concept:generative-agents
+  -t observation -e concept:reflection -e concept:generative-agents \
+  --topic "llm-memory-survey"
 
 # Paper 2: "MemGPT" (Packer et al.)
 remind remember "MemGPT treats context window as 'working memory' and uses \
   explicit read/write to a larger 'archival memory'. Inspired by OS virtual \
   memory paging." \
-  -t observation -e person:packer -e concept:memory-architecture
+  -t observation -e person:packer -e concept:memory-architecture \
+  --topic "llm-memory-survey"
 
 remind remember "MemGPT key insight: LLMs can manage their own memory if given \
   tools to page information in and out of context" \
-  -t observation -e concept:memgpt -e concept:self-managed-memory
+  -t observation -e concept:memgpt -e concept:self-managed-memory \
+  --topic "llm-memory-survey"
 
 # Paper 3: "Voyager" (Wang et al.)
 remind remember "Voyager stores learned skills as code in a 'skill library'. \
-  Retrieval is by task description similarity. Skills compose and build on \
+  Retrieval matches skills by description similarity. Skills compose and build on \
   each other." \
-  -t observation -e person:wang -e concept:skill-library -e concept:voyager
+  -t observation -e person:wang -e concept:skill-library -e concept:voyager \
+  --topic "llm-memory-survey"
 
 remind remember "Voyager demonstrates that executable code can serve as a \
   memory representation — more precise than natural language for procedural \
   knowledge" \
-  -t observation -e concept:memory-representation -e concept:voyager
+  -t observation -e concept:memory-representation -e concept:voyager \
+  --topic "llm-memory-survey"
+```
+
+To auto-ingest raw excerpts instead of hand-picking sentences, pass the same optional `--topic` so every extracted episode from that ingest gets the tag — still no implicit topic guessing:
+
+```bash
+cat paper-notes.txt | remind ingest --topic "llm-memory-survey"
 ```
 
 ### Consolidation surfaces themes
@@ -81,6 +109,7 @@ After ingesting several papers, consolidation might produce:
 remind recall "how do different systems handle memory retrieval?"
 remind recall "memory representation tradeoffs"
 remind recall "limitations" --entity concept:memory-architecture
+remind recall "retrieval tradeoffs" --topic "llm-memory-survey"
 remind entities  # See all papers, concepts, and their connections
 ```
 

@@ -68,11 +68,8 @@ _EPISODE_TYPE_WEIGHTS: dict[str, float] = {
     "decision": 0.95,
     "preference": 0.85,
     "outcome": 0.8,
-    "spec": 0.8,
     "observation": 0.6,
     "question": 0.5,
-    "plan": 0.5,
-    "task": 0.4,
     "meta": 0.3,
 }
 

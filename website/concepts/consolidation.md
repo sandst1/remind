@@ -13,7 +13,7 @@ Remind does the same thing. Raw episodes are replayed through an LLM, which iden
 ### Phase 1: Extraction
 
 Episodes are grouped into batches (default 5 per batch) and sent to the LLM in a single call per batch, rather than one call per episode. For each episode in a batch:
-- **Type classification** — Is this an observation, decision, question, spec, plan, task, outcome, or fact?
+- **Type classification** — Is this an observation, decision, question, meta, preference, outcome, or fact?
 - **Entity extraction** — What files, people, tools, and concepts are mentioned?
 - **Relationship extraction** — When multiple entities appear in the same episode, their relationships are inferred (e.g., "Alice manages Bob" → `person:alice → manages → person:bob`)
 

@@ -23,8 +23,8 @@ async def main():
     memory.remember("User values type safety")
 
     # Typed episodes
-    memory.remember("API must return JSON", episode_type=EpisodeType.SPEC)
-    memory.remember("Build auth first, then billing", episode_type=EpisodeType.PLAN)
+    memory.remember("Chose PostgreSQL over MySQL for persistence", episode_type=EpisodeType.DECISION)
+    memory.remember("User prefers dark mode in the IDE", episode_type=EpisodeType.PREFERENCE)
 
     # Topic-scoped episodes
     memory.remember("Use event sourcing for audit trail", topic="architecture")
@@ -62,7 +62,7 @@ await memory.ingest("Chose Redis for caching", topic="architecture")
 
 # With instructions — steer what gets extracted
 await memory.ingest(transcript, instructions="extract all config values and version numbers")
-await memory.ingest(meeting_notes, instructions="focus on decisions and action items")
+await memory.ingest(meeting_notes, instructions="focus on decisions and risks")
 
 # At session end, flush remaining buffer
 await memory.flush_ingest()
@@ -90,26 +90,6 @@ memory.remember(
 - **`ingest()` is async with LLM triage** — Buffers raw text, extracts episodes with topic inference, and consolidates automatically.
 - **`consolidate()` is async** — This is where all LLM work happens (extraction, generalization). Call it explicitly or let auto-consolidation handle it.
 - **`recall()` is async** — Uses embeddings and spreading activation.
-
-## Task management
-
-```python
-# Create a task
-task_id = memory.remember(
-    "Implement JWT auth",
-    episode_type=EpisodeType.TASK,
-    metadata={"status": "todo", "priority": "p0"},
-    entities=["module:auth"],
-)
-
-# Update status
-memory.update_task_status(task_id, "in_progress")
-memory.update_task_status(task_id, "done")
-
-# Query tasks
-active_tasks = memory.get_tasks(status="in_progress")
-specs = memory.get_episodes_by_type(EpisodeType.SPEC)
-```
 
 ## Database and project config
 

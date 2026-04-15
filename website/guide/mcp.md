@@ -45,7 +45,7 @@ The `db` parameter is a simple name that resolves to `~/.remind/{name}.db`. Each
 
 | Tool | Purpose |
 |------|---------|
-| `remember` | Store experiences (observation, decision, question, preference, meta, spec, plan, task, outcome, fact) |
+| `remember` | Store experiences (observation, decision, question, preference, meta, outcome, fact) |
 | `recall` | Retrieve relevant memories via spreading activation or entity lookup |
 | `ingest` | Stream raw text for automatic density scoring and episode extraction |
 | `flush_ingest` | Force-flush the ingestion buffer |
@@ -61,13 +61,6 @@ The `db` parameter is a simple name that resolves to `~/.remind/{name}.db`. Each
 | `delete_concept` | Soft delete a concept |
 | `restore_concept` | Restore a deleted concept |
 | `list_deleted` | List soft-deleted items |
-| `task_add` | Create a task with priority, plan, and dependency links * |
-| `task_update_status` | Transition task status * |
-| `list_tasks` | List tasks with filters * |
-| `list_specs` | List spec episodes * |
-| `list_plans` | List plan episodes * |
-
-\* Only available when the corresponding episode type (`task`, `spec`, `plan`) is enabled in [configuration](/guide/configuration#episode-types). All types are enabled by default.
 
 ## Agent instructions
 

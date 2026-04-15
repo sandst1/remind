@@ -19,7 +19,7 @@ import logging
 # Built-in episode types (always valid, used as defaults)
 DEFAULT_EPISODE_TYPES = [
     "observation", "decision", "question", "meta", "preference",
-    "spec", "plan", "task", "outcome", "fact",
+    "outcome", "fact",
 ]
 
 logger = logging.getLogger(__name__)

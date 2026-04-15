@@ -43,7 +43,6 @@ from remind.models import (
     EntityRelation,
     EpisodeType,
     ExtractionResult,
-    TaskStatus,
 )
 
 # Storage
@@ -93,7 +92,6 @@ __all__ = [
     "EntityRelation",
     "EpisodeType",
     "ExtractionResult",
-    "TaskStatus",
     "Topic",
     # Storage
     "MemoryStore",

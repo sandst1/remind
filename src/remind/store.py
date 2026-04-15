@@ -39,7 +39,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from remind.models import (
     Concept, Episode, Relation, RelationType,
     Entity, EntityType, EntityRelation, EpisodeType,
-    Topic, DEFAULT_TOPIC_ID, canonicalize_entity_name,
+    Topic, canonicalize_entity_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -2698,17 +2698,6 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 topics_table.delete().where(topics_table.c.id == topic_id)
             )
             return result.rowcount > 0
-
-    def get_or_create_default_topic(self) -> Topic:
-        existing = self.get_topic(DEFAULT_TOPIC_ID)
-        if existing:
-            return existing
-        topic = Topic(
-            id=DEFAULT_TOPIC_ID,
-            name="General",
-            description="Default topic for uncategorized memories",
-        )
-        return self.create_topic(topic)
 
     def get_topic_stats(self) -> list[dict]:
         """Get all topics with episode/concept counts and latest activity."""

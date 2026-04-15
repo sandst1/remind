@@ -56,7 +56,6 @@ export default defineConfig({
             { text: 'Retrieval', link: '/concepts/retrieval' },
             { text: 'Auto-Ingest', link: '/concepts/auto-ingest' },
             { text: 'Memory Decay', link: '/concepts/memory-decay' },
-            { text: 'Tasks', link: '/concepts/tasks' },
           ],
         },
       ],

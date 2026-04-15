@@ -29,13 +29,6 @@ External memory layer that persists across sessions and generalizes experiences 
 | `delete_concept(concept_id)` | Soft delete concept |
 | `restore_concept(concept_id)` | Restore deleted concept |
 | `list_deleted([item_type])` | List soft-deleted items |
-| `task_add(content, [entities], [priority], [plan_id], [spec_ids], [depends_on])` | Create a task * |
-| `task_update_status(task_id, status, [reason])` | Transition task status * |
-| `list_tasks([status], [entity], [plan_id], [include_done])` | List tasks * |
-| `list_specs([entity], [status], [limit])` | List spec episodes * |
-| `list_plans([entity], [status], [limit])` | List plan episodes * |
-
-\* Only available when the corresponding episode type (`task`, `spec`, `plan`) is enabled in `episode_types` config. All types are enabled by default.
 
 ## remember
 
@@ -45,7 +38,7 @@ remember(content="Use Redis for caching", episode_type="decision", entities="too
 remember(content="Chose SQLite for zero-dep deploys", topic="architecture", source_type="agent")
 ```
 
-**Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `spec`, `plan`, `task`, `outcome`, `fact`
+**Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
 
 **Topics**: Knowledge areas that group related memories (e.g., `"architecture"`, `"product"`, `"infra"`). Scopes consolidation and retrieval. Use `list_topics()` to see what exists.
 
@@ -66,8 +59,8 @@ ingest(content="<meeting transcript>", instructions="extract decisions and actio
 Streams raw text into Remind's auto-ingest pipeline. Text buffers internally (~4000 chars) then gets scored for information density and distilled into episodes automatically. Use `flush_ingest()` at session end to process remaining buffer.
 
 **Topic behavior**:
-- **With `topic`**: All extracted episodes are assigned to the given topic. No inference needed.
-- **Without `topic`**: The triage LLM infers per-episode topics automatically — mapping to existing topics or creating new ones. Different episodes from the same chunk can end up in different topics.
+- **With `topic`**: All extracted episodes are assigned to the given topic.
+- **Without `topic`**: Episodes get no topic assignment (`topic_id=None`).
 
 **Instructions**: Pass `instructions` to steer what the triage LLM extracts. For example, `"focus on architectural decisions"` or `"extract all config values and version numbers"`. Instructions are appended to the triage system prompt and take priority over default extraction behavior.
 
@@ -81,7 +74,7 @@ flush_ingest(topic="architecture")
 flush_ingest(instructions="extract only action items")
 ```
 
-Forces processing of whatever text is in the ingestion buffer, regardless of threshold. Pass `topic` to assign all flushed episodes to a specific topic; omit to let the LLM infer topics. Pass `instructions` to steer extraction (same as `ingest()`).
+Forces processing of whatever text is in the ingestion buffer, regardless of threshold. Pass `topic` to assign all flushed episodes to a specific topic; omit for no topic assignment. Pass `instructions` to steer extraction (same as `ingest()`).
 
 ## recall
 
@@ -113,9 +106,9 @@ topic_overview(topic="architecture")    # Top concepts for a topic
 topic_overview(topic="product", k=10)   # More results
 ```
 
-When calling `remember()` with a topic, the topic is resolved by ID or name; if no match, falls back to the "general" default.
+When calling `remember()` with a topic, the topic is resolved by ID or name; if no match, the topic is not assigned.
 
-When calling `ingest()` with a topic, all extracted episodes go to that topic. When calling `ingest()` without a topic, the triage LLM infers topics per-episode — mapping to existing topics or auto-creating new ones.
+When calling `ingest()` with a topic, all extracted episodes go to that topic. When calling `ingest()` without a topic, episodes get no topic assignment.
 
 When calling `recall()` without a topic, results are grouped by topic showing top N per topic. With a topic, results are filtered to that topic only.
 
@@ -218,7 +211,7 @@ ingest(content="<meeting notes>", instructions="extract decisions and who owns e
 flush_ingest()
 ```
 
-Remind handles density scoring, topic assignment, distillation, and consolidation automatically. High-density content produces episodes; low-density content (greetings, boilerplate) is dropped. Topics are inferred automatically when not specified — the triage LLM maps episodes to existing topics or creates new ones. Use `instructions` to focus extraction on specific types of information.
+Remind handles density scoring, distillation, and consolidation automatically. High-density content produces episodes; low-density content (greetings, boilerplate) is dropped. Use `instructions` to focus extraction on specific types of information.
 
 ## Fact Episodes
 

@@ -10,11 +10,11 @@ The pipeline has three stages:
 
 Raw text accumulates in an in-memory buffer via `ingest()`. When the buffer exceeds a character threshold (default ~4000 chars), it flushes and triggers triage.
 
-### 2. Triage, extraction, and topic assignment
+### 2. Triage and extraction
 
 The flushed chunk is sent to an LLM that decides what's worth remembering. The LLM extracts any memory-worthy information as tight, standalone episode statements -- and returns nothing if the chunk is pure filler. A density score (0.0-1.0) is also produced for diagnostics/logging, but it doesn't gate extraction. The LLM is the sole decision-maker.
 
-The triage LLM also assigns each episode to a topic. It receives existing topics as context and maps episodes to them, or suggests new topic names (which are auto-created). When `ingest()` is called with an explicit `topic` parameter, topic inference is skipped entirely -- all episodes are stamped with the given topic.
+Topics are explicit and optional. When `ingest()` is called with a `topic` argument, all extracted episodes from that operation are stamped with that topic. When no topic is specified, episodes get `topic_id=None` (there is no default or inferred topic).
 
 Large chunks are split into sub-chunks and triaged concurrently (bounded by `llm_concurrency`).
 
@@ -41,7 +41,7 @@ Auto-ingest is available via MCP tools, CLI, and the Python API. The agent strea
 A good place to call `ingest()` is from deterministic hooks -- after each tool call returns, at the end of each turn, or on a timer. This way the agent doesn't have to "decide" when to ingest; it just always does, and the LLM handles the filtering. The buffer threshold is configurable (default 4000 chars), so no LLM calls happen until enough text has accumulated:
 
 ```text
-# During the conversation, the agent periodically sends chunks
+# During the conversation, the agent periodically sends chunks (no topic → topic_id=None)
 ingest(content="User: Can you fix the auth bug?\nAssistant: Looking at verify_credentials...")
 ingest(content="...I see the issue. The token expiry check uses <= instead of <, so tokens are accepted one second past expiry. Fixing now...")
 ingest(content="Assistant: Fixed. Changed the comparison operator in verify_credentials from <= to <. All auth tests pass now.")
@@ -70,7 +70,7 @@ Pipe conversation logs or transcripts directly:
 # Pipe a file
 cat conversation-log.txt | remind ingest --source transcript
 
-# Pass as argument
+# Pass as argument (episodes get topic_id=None unless --topic is set)
 remind ingest "User prefers dark mode and Vim keybindings in all editors"
 
 # With an explicit topic
@@ -90,7 +90,7 @@ from remind.interface import create_memory
 
 memory = create_memory(db_path="my-project")
 
-# Stream text in -- topics are inferred automatically
+# Stream text in -- omit topic so episodes get topic_id=None
 await memory.ingest("User: How should we handle rate limiting?")
 await memory.ingest("Assistant: I'd suggest a token bucket at the gateway...")
 

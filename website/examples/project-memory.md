@@ -20,6 +20,8 @@ This creates `.claude/skills/remind/SKILL.md` and sets up the project-local data
 
 ## Walkthrough
 
+Episode types for `-t` / `--type`: `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`, `fact`.
+
 ### Session 1: Initial context
 
 ```bash
@@ -30,7 +32,7 @@ remind remember "API is FastAPI with SQLAlchemy ORM" -t observation \
 remind remember "Chose PostgreSQL over MySQL: better JSON support, team familiarity" \
   -t decision -e tool:postgres
 remind remember "All API endpoints must validate input with Pydantic" \
-  -t spec -e tool:pydantic -e module:api
+  -t fact -e tool:pydantic -e module:api
 remind remember "User prefers explicit error handling over exceptions" \
   -t preference
 
@@ -84,4 +86,4 @@ After a few weeks of use:
 - **No more re-onboarding** — The agent knows the project cold
 - **Decision audit trail** — Every architectural choice is remembered with rationale
 - **Growing understanding** — Not just facts, but patterns and preferences
-- **Entity graph** — Navigate from a file to its specs, from a tool to the decisions that chose it
+- **Entity graph** — Navigate from a file or module to related concepts, from a tool to the decisions that chose it
