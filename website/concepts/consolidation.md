@@ -21,7 +21,23 @@ Episodes are grouped into batches (default 5 per batch) and sent to the LLM in a
 
 Episodes are grouped by **topic** and each group is consolidated independently. This prevents cross-domain noise (e.g., product discussions polluting architecture concepts).
 
-Within each topic group:
+### Dual-Track Processing
+
+Consolidation now runs two parallel tracks:
+
+1. **Pattern track** — Observations, decisions, outcomes → generalized pattern concepts
+2. **Fact track** — Fact episodes → fact_cluster concepts (no generalization)
+
+Facts are clustered by shared entity. When consolidating fact episodes:
+- Look up existing fact_clusters for the same entities
+- Look up other fact episodes mentioning the same entities  
+- Group related facts into clusters, preserving each verbatim
+- Detect conflicts when facts disagree (flag, don't resolve)
+- Standalone facts (no related facts) skip concept creation
+
+This ensures concrete details like config values, port numbers, and API limits are never abstracted away.
+
+Within each topic group (for pattern track):
 - **Pattern identification** — What recurs across episodes?
 - **Concept creation** — New generalized concepts with confidence scores, inheriting the topic from their source episodes
 - **Concept update** — Existing concepts are strengthened, refined, or given exceptions

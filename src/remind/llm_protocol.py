@@ -38,6 +38,7 @@ CONSOLIDATION_TAGS = {
     "UPDATE_TAG": "UPDATE_TAG",
     "UPDATE_RELATION": "UPDATE_RELATION",
     "NEW_CONCEPT": "NEW_CONCEPT",
+    "NEW_EVIDENCE": "NEW_EVIDENCE",
     "NEW_SOURCE": "NEW_SOURCE",
     "NEW_EXCEPTION": "NEW_EXCEPTION",
     "NEW_TAG": "NEW_TAG",
@@ -331,6 +332,7 @@ def parse_consolidation_csv(text: str) -> dict:
                     "tags": [],
                     "source_episodes": [],
                     "relations": [],
+                    "evidence": [],
                 }
                 new_by_temp_id[temp_id] = nc
             nc["title"] = _to_opt_str(row[2]) if len(row) > 2 else nc.get("title")
@@ -342,6 +344,11 @@ def parse_consolidation_csv(text: str) -> dict:
                 nc["conditions"] = row[5]
             if len(row) > 6 and row[6]:
                 nc["topic_id"] = row[6]
+        elif kind == "NEW_EVIDENCE" and len(row) >= 3:
+            recognized_rows += 1
+            nc = new_by_temp_id.get(row[1])
+            if nc and row[2]:
+                nc["evidence"].append(row[2])
         elif kind == "NEW_SOURCE" and len(row) >= 3:
             recognized_rows += 1
             nc = new_by_temp_id.get(row[1])

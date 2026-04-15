@@ -335,7 +335,29 @@ async def tool_inspect(
         lines = [f"Concept: {concept.id}"]
         if concept.title:
             lines.append(f"  Title: {concept.title}")
-        lines.append(f"  Summary: {concept.summary}")
+
+        # Show concept type badge
+        if concept.concept_type != "legacy":
+            lines.append(f"  Type: {concept.concept_type}")
+
+        # Format differently based on concept type
+        if concept.concept_type == "fact_cluster" and concept.specifics:
+            lines.append(f"  Facts ({len(concept.specifics)}):")
+            for specific in concept.specifics:
+                lines.append(f"    • {specific}")
+            if concept.conflicts:
+                lines.append(f"  ⚠ Conflicts ({len(concept.conflicts)}):")
+                for conflict in concept.conflicts:
+                    fact_a = conflict.get("fact_a", "")
+                    fact_b = conflict.get("fact_b", "")
+                    lines.append(f"    • {fact_a} vs {fact_b}")
+        else:
+            lines.append(f"  Summary: {concept.summary}")
+            if concept.evidence:
+                lines.append(f"  Evidence:")
+                for evidence in concept.evidence[:3]:
+                    lines.append(f"    • \"{evidence}\"")
+
         lines.append(f"  Confidence: {concept.confidence:.2f}")
         lines.append(f"  Instances: {concept.instance_count}")
         lines.append(f"  Created: {concept.created_at.strftime('%Y-%m-%d %H:%M')}")
@@ -366,7 +388,13 @@ async def tool_inspect(
     for c in concepts[:limit]:
         tags = f" [{', '.join(c.tags)}]" if c.tags else ""
         title_display = c.title or c.summary[:50] + ("..." if len(c.summary) > 50 else "")
-        lines.append(f"  [{c.id}] {title_display} (conf: {c.confidence:.2f}, n={c.instance_count}){tags}")
+        # Show concept type badge for non-legacy concepts
+        type_badge = ""
+        if c.concept_type == "pattern":
+            type_badge = " [pattern]"
+        elif c.concept_type == "fact_cluster":
+            type_badge = " [facts]"
+        lines.append(f"  [{c.id}]{type_badge} {title_display} (conf: {c.confidence:.2f}, n={c.instance_count}){tags}")
     
     if len(concepts) > limit:
         lines.append(f"  ... and {len(concepts) - limit} more")
@@ -396,6 +424,12 @@ async def tool_stats() -> str:
     lines.append(f"  Auto-consolidate: {s.get('auto_consolidate', True)}")
     lines.append(f"  Should consolidate: {s.get('should_consolidate', False)}")
     
+    if s.get('concept_types'):
+        lines.append("")
+        lines.append("Concept Types:")
+        for concept_type, count in s['concept_types'].items():
+            lines.append(f"  {concept_type}: {count}")
+
     if s.get('episode_types'):
         lines.append("")
         lines.append("Episode Types:")

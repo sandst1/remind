@@ -37,6 +37,18 @@ Timeline view of raw experiences. Filter by episode type (observation, decision,
 
 Browse generalized concepts with confidence scores, instance counts, and relations. Search by keyword. Click a concept to see its full summary, conditions, exceptions, relations, and source episodes.
 
+#### Concept Types
+
+Concepts display a type badge indicating their category:
+
+- **Pattern** (purple badge) — Generalized knowledge abstracted from multiple episodes
+- **Facts** (gray badge) — Clusters of related facts, preserved verbatim
+- No badge — Legacy concepts created before dual-track
+
+For fact clusters, the detail view shows:
+- Bulleted list of specific facts (instead of summary)
+- Conflict warnings if contradictory facts are detected
+
 ![Concepts view](/ui-concepts.png)
 
 ### Entities

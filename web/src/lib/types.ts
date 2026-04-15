@@ -21,6 +21,15 @@ export type KnownEpisodeType =
 
 export type EpisodeType = KnownEpisodeType | (string & {});
 
+export type ConceptType = 'legacy' | 'pattern' | 'fact_cluster';
+
+export interface ConflictInfo {
+  fact_a: string;
+  fact_b: string;
+  detected_at: string;
+  entity_id?: string;
+}
+
 export type EntityType =
   | 'file'
   | 'function'
@@ -78,6 +87,12 @@ export interface Concept {
   decay_factor: number;
   access_count: number;
   last_accessed: string | null;
+  // Dual-track concept fields
+  concept_type: ConceptType;
+  specifics: string[];
+  evidence: string[];
+  actionable: boolean;
+  conflicts: ConflictInfo[];
 }
 
 export interface Episode {
@@ -136,6 +151,7 @@ export interface Stats {
   relation_types: Record<RelationType, number>;
   entity_relation_types: Record<string, number>;
   entity_types: Record<EntityType, number>;
+  concept_types: Record<ConceptType, number>;
   // Decay stats
   concepts_with_decay?: number;
   avg_decay_factor?: number;

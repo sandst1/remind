@@ -49,6 +49,14 @@ class EntityType(Enum):
     OTHER = "other"               # Catch-all for other entity types
 
 
+class ConceptType(Enum):
+    """Types of concepts in the dual-track system."""
+
+    LEGACY = "legacy"             # Existing concepts (backward compat)
+    PATTERN = "pattern"           # Generalizations from observations/decisions/outcomes
+    FACT_CLUSTER = "fact_cluster" # Grouped related facts, preserving verbatim content
+
+
 def slugify(name: str) -> str:
     """Turn a display name into a slug-style ID."""
     import re
@@ -334,6 +342,22 @@ class Concept:
     # Soft delete support
     deleted_at: Optional[datetime] = None
 
+    # Dual-track concept type: pattern | fact_cluster | legacy
+    concept_type: str = "legacy"
+
+    # For fact_clusters: list of verbatim facts
+    specifics: list[str] = field(default_factory=list)
+
+    # Key quotes from source episodes (evidence for patterns, sources for facts)
+    evidence: list[str] = field(default_factory=list)
+
+    # Is this actionable knowledge or just context?
+    actionable: bool = True
+
+    # For fact_clusters: detected conflicting facts
+    # Each conflict: {fact_a: str, fact_b: str, detected_at: str, entity_id: str}
+    conflicts: list[dict] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         """Serialize to dictionary for storage."""
         return {
@@ -355,6 +379,11 @@ class Concept:
             "access_count": self.access_count,
             "decay_factor": self.decay_factor,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
+            "concept_type": self.concept_type,
+            "specifics": self.specifics,
+            "evidence": self.evidence,
+            "actionable": self.actionable,
+            "conflicts": self.conflicts,
         }
     
     @classmethod
@@ -363,7 +392,7 @@ class Concept:
         return cls(
             id=data["id"],
             title=data.get("title"),
-            summary=data["summary"],
+            summary=data.get("summary", ""),
             confidence=data.get("confidence", 0.5),
             instance_count=data.get("instance_count", 1),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
@@ -379,6 +408,11 @@ class Concept:
             access_count=data.get("access_count", 0),
             decay_factor=data.get("decay_factor", 1.0),
             deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None,
+            concept_type=data.get("concept_type", "legacy"),
+            specifics=data.get("specifics", []),
+            evidence=data.get("evidence", []),
+            actionable=data.get("actionable", True),
+            conflicts=data.get("conflicts", []),
         )
     
     def add_relation(self, relation: Relation) -> None:

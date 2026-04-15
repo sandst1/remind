@@ -155,6 +155,22 @@ consolidate(force=True)
 - **Relations**: `implies`, `contradicts`, `supersedes`, `specializes`, `generalizes`, `causes`, `part_of`
 - **Confidence**: 0.0-1.0 based on supporting episodes
 
+### Concept Types
+
+Concepts come in three types:
+
+- **Pattern concepts**: Generalizations from observations/decisions/outcomes. These abstract patterns across multiple experiences.
+- **Fact clusters**: Groups of related facts, preserved verbatim. Facts are never abstracted away — config values, port numbers, API limits stay exact.
+- **Legacy concepts**: Pre-existing concepts (no type badge in UI).
+
+When using `recall()`:
+- Pattern concepts show a generalized summary with optional evidence quotes
+- Fact clusters show a bulleted list of specific facts
+
+### Fact Conflicts
+
+Fact conflicts (e.g., two different values for the same config) are flagged but not auto-resolved. The recall output shows conflicts prominently with timestamps so you can decide which is current.
+
 ## Managing Memory
 
 ### Correcting Episodes

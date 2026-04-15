@@ -169,6 +169,16 @@ class MemoryStore(ABC):
         """Get a lightweight summary of all concepts (for consolidation prompts)."""
         ...
 
+    @abstractmethod
+    def get_fact_clusters_for_entity(self, entity_id: str) -> list[Concept]:
+        """Get all fact_cluster concepts that reference episodes mentioning this entity."""
+        ...
+
+    @abstractmethod
+    def get_concepts_by_type(self, concept_type: str) -> list[Concept]:
+        """Get all concepts of a specific type (pattern, fact_cluster, legacy)."""
+        ...
+
     # Embedding-based retrieval
     @abstractmethod
     def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
@@ -2216,6 +2226,33 @@ class SQLAlchemyMemoryStore(MemoryStore):
         matching.sort(key=lambda x: x[1], reverse=True)
         return [c for c, _ in matching[:limit]]
 
+    def get_fact_clusters_for_entity(self, entity_id: str) -> list[Concept]:
+        """Get all fact_cluster concepts that reference episodes mentioning this entity."""
+        with self._connect() as conn:
+            episode_rows = conn.execute(
+                select(mentions_table.c.episode_id)
+                .where(mentions_table.c.entity_id == entity_id)
+            ).fetchall()
+            episode_ids = {row.episode_id for row in episode_rows}
+
+            if not episode_ids:
+                return []
+
+        all_concepts = self.get_all_concepts()
+        matching = []
+        for concept in all_concepts:
+            if concept.concept_type != "fact_cluster":
+                continue
+            overlap = set(concept.source_episodes) & episode_ids
+            if overlap:
+                matching.append(concept)
+        return matching
+
+    def get_concepts_by_type(self, concept_type: str) -> list[Concept]:
+        """Get all concepts of a specific type (pattern, fact_cluster, legacy)."""
+        all_concepts = self.get_all_concepts()
+        return [c for c in all_concepts if c.concept_type == concept_type]
+
     # ------------------------------------------------------------------
     # Entity relation operations
     # ------------------------------------------------------------------
@@ -2597,6 +2634,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
         concepts_with_decay = 0
         total_decay = 0.0
         min_decay = 1.0
+        concept_type_counts: dict[str, int] = {}
         for data in all_concept_data:
             df = data.get("decay_factor", 1.0)
             if df is None:
@@ -2605,6 +2643,9 @@ class SQLAlchemyMemoryStore(MemoryStore):
             if df < 1.0:
                 concepts_with_decay += 1
             min_decay = min(min_decay, df)
+            # Count concept types
+            concept_type = data.get("concept_type", "legacy")
+            concept_type_counts[concept_type] = concept_type_counts.get(concept_type, 0) + 1
 
         avg_decay = round(total_decay / max(len(all_concept_data), 1), 3)
 
@@ -2621,6 +2662,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             "entity_relation_types": {row.relation_type: row.count for row in entity_relation_types},
             "entity_types": {row.type: row.count for row in entity_types},
             "episode_types": ep_type_counts,
+            "concept_types": concept_type_counts,
             "concepts_with_decay": concepts_with_decay,
             "avg_decay_factor": avg_decay,
             "min_decay_factor": round(min_decay, 3),

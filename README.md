@@ -79,6 +79,7 @@ remind ui
 
 ## Key features
 
+- **Dual-track concepts** — Pattern concepts for generalizations, fact clusters for verbatim details. Facts are never abstracted away.
 - **Generalization** — Episodes are consolidated into concepts with confidence, conditions, and exceptions
 - **Auto-ingest** — Stream raw conversation text; Remind scores information density and distills memory-worthy episodes automatically
 - **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph, with hybrid embedding+keyword scoring and optional cross-encoder reranking

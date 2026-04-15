@@ -294,9 +294,16 @@
               class:selected={$conceptPath.length > 0 && $conceptPath[0].id === concept.id}
               onclick={() => selectConcept(concept)}
             >
-              {#if concept.title}
-                <div class="concept-title">{concept.title}</div>
-              {/if}
+              <div class="concept-header-row">
+                {#if concept.concept_type === 'pattern'}
+                  <span class="type-badge type-pattern">Pattern</span>
+                {:else if concept.concept_type === 'fact_cluster'}
+                  <span class="type-badge type-fact-cluster">Facts</span>
+                {/if}
+                {#if concept.title}
+                  <div class="concept-title">{concept.title}</div>
+                {/if}
+              </div>
               <div class="concept-summary">{concept.summary}</div>
               <div class="concept-footer">
                 {#if concept.topic_id}
@@ -351,10 +358,46 @@
                 </div>
               </div>
 
-              <div class="detail-section">
-                <h4>Summary</h4>
-                <p>{concept.summary}</p>
-              </div>
+              {#if concept.concept_type === 'fact_cluster' && concept.specifics && concept.specifics.length > 0}
+                <div class="detail-section">
+                  <h4>Facts ({concept.specifics.length})</h4>
+                  <ul class="fact-list">
+                    {#each concept.specifics as fact}
+                      <li>{fact}</li>
+                    {/each}
+                  </ul>
+                  {#if concept.conflicts && concept.conflicts.length > 0}
+                    <div class="conflicts-warning">
+                      <span class="warning-icon">⚠</span>
+                      {concept.conflicts.length} conflicting fact{concept.conflicts.length !== 1 ? 's' : ''} detected
+                    </div>
+                    <div class="conflicts-list">
+                      {#each concept.conflicts as conflict}
+                        <div class="conflict-item">
+                          <div class="conflict-fact">{conflict.fact_a}</div>
+                          <div class="conflict-vs">vs</div>
+                          <div class="conflict-fact">{conflict.fact_b}</div>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {:else}
+                <div class="detail-section">
+                  <h4>Summary</h4>
+                  <p>{concept.summary}</p>
+                  {#if concept.evidence && concept.evidence.length > 0}
+                    <div class="evidence-section">
+                      <h5>Evidence</h5>
+                      <ul class="evidence-list">
+                        {#each concept.evidence.slice(0, 3) as evidence}
+                          <li>"{evidence}"</li>
+                        {/each}
+                      </ul>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
 
               <div class="detail-meta">
                 <div class="meta-item">
@@ -657,10 +700,37 @@
     flex-shrink: 0;
   }
 
+  .concept-header-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-xs);
+  }
+
+  .type-badge {
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+
+  .type-badge.type-pattern {
+    background: var(--color-purple-bg, #f3e8ff);
+    color: var(--color-purple, #9333ea);
+    border: 1px solid var(--color-purple, #9333ea);
+  }
+
+  .type-badge.type-fact-cluster {
+    background: var(--color-slate-bg, #e2e8f0);
+    color: var(--color-slate, #475569);
+    border: 1px solid var(--color-slate, #475569);
+  }
+
   .concept-title {
     font-weight: 600;
     color: var(--color-text);
-    margin-bottom: var(--space-xs);
   }
 
   .concept-summary {
@@ -847,6 +917,87 @@
     font-size: var(--font-size-lg);
     font-weight: 600;
     color: var(--color-text);
+  }
+
+  .fact-list {
+    margin: 0;
+    padding-left: var(--space-lg);
+    list-style-type: disc;
+  }
+
+  .fact-list li {
+    margin-bottom: var(--space-sm);
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+
+  .conflicts-warning {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-warning-bg, #fef3c7);
+    color: var(--color-warning, #d97706);
+    border-radius: var(--radius-md);
+    font-weight: 500;
+    font-size: var(--font-size-sm);
+  }
+
+  .warning-icon {
+    font-size: var(--font-size-lg);
+  }
+
+  .conflicts-list {
+    margin-top: var(--space-sm);
+  }
+
+  .conflict-item {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-error-bg, #fee2e2);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-sm);
+    font-size: var(--font-size-sm);
+  }
+
+  .conflict-fact {
+    color: var(--color-text);
+  }
+
+  .conflict-vs {
+    color: var(--color-error, #dc2626);
+    font-weight: 600;
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    padding: var(--space-xs) 0;
+  }
+
+  .evidence-section {
+    margin-top: var(--space-md);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--color-border);
+  }
+
+  .evidence-section h5 {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: var(--space-sm);
+  }
+
+  .evidence-list {
+    margin: 0;
+    padding-left: var(--space-lg);
+    list-style-type: none;
+  }
+
+  .evidence-list li {
+    margin-bottom: var(--space-sm);
+    color: var(--color-text-secondary);
+    font-style: italic;
+    line-height: 1.5;
+    font-size: var(--font-size-sm);
   }
 
   .conditions {

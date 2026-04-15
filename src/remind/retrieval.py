@@ -1104,10 +1104,18 @@ class MemoryRetriever:
         c = ac.concept
 
         updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
+
+        # Include concept type badge for non-legacy concepts
+        type_badge = ""
+        if c.concept_type == "pattern":
+            type_badge = "[pattern] "
+        elif c.concept_type == "fact_cluster":
+            type_badge = "[facts] "
+
         if c.title:
-            header = f"[{c.id}] {c.title} (confidence: {c.confidence:.2f}, last updated: {updated}"
+            header = f"[{c.id}] {type_badge}{c.title} (confidence: {c.confidence:.2f}, last updated: {updated}"
         else:
-            header = f"[{c.id}] (confidence: {c.confidence:.2f}, last updated: {updated}"
+            header = f"[{c.id}] {type_badge}(confidence: {c.confidence:.2f}, last updated: {updated}"
         if ac.source == "spread":
             header += ", via association"
         elif ac.source == "entity_name":
@@ -1115,7 +1123,33 @@ class MemoryRetriever:
         header += ")"
         lines.append(header)
 
-        lines.append(f"  {c.summary}")
+        # Format differently based on concept type
+        if c.concept_type == "fact_cluster" and c.specifics:
+            # Show bulleted facts for fact_clusters
+            lines.append("  Facts:")
+            for specific in c.specifics:
+                lines.append(f"    • {specific}")
+
+            # Show conflicts prominently if any
+            if c.conflicts:
+                lines.append(f"  ⚠ CONFLICTS ({len(c.conflicts)} detected):")
+                for conflict in c.conflicts:
+                    fact_a = conflict.get("fact_a", "")
+                    fact_b = conflict.get("fact_b", "")
+                    detected_at = conflict.get("detected_at", "")
+                    lines.append(f"    • {fact_a}")
+                    lines.append(f"      vs: {fact_b}")
+                    if detected_at:
+                        lines.append(f"      (detected: {detected_at})")
+        else:
+            # Standard summary for patterns and legacy concepts
+            lines.append(f"  {c.summary}")
+
+            # Show evidence quotes if available
+            if c.evidence:
+                lines.append("  Evidence:")
+                for evidence in c.evidence[:3]:  # Limit to 3 quotes
+                    lines.append(f"    • \"{evidence}\"")
 
         if c.conditions:
             lines.append(f"  → Applies when: {c.conditions}")

@@ -21,7 +21,7 @@ from remind.llm_protocol import (
     ProtocolParseError,
     parse_consolidation_csv,
 )
-from remind.models import Concept, Episode, Relation, RelationType, ConsolidationResult, ExtractionResult
+from remind.models import Concept, ConceptType, Episode, Relation, RelationType, ConsolidationResult, ExtractionResult
 from remind.store import MemoryStore
 from remind.providers.base import LLMProvider, EmbeddingProvider
 from remind.extraction import EntityExtractor
@@ -79,6 +79,7 @@ Analyze these new episodes in the context of existing memory. Perform consolidat
 3. **New Concepts**: What new generalized understandings emerge that aren't covered by existing concepts?
 4. **Relations**: What relationships exist between concepts (implies, contradicts, specializes, causes, etc.)?
 5. **Contradictions**: Does any new information contradict existing concepts?
+6. **Evidence**: For each new concept, include 1-2 key quotes from source episodes as evidence.
 
 Return ONLY rows inside these tags:
 BEGIN CONSOLIDATION_OPS
@@ -89,6 +90,7 @@ UPDATE_EXCEPTION,<c-id>,<exception>
 UPDATE_TAG,<c-id>,<tag>
 UPDATE_RELATION,<c-id>,<relation_type>,<target_c-id>,<strength>,<context>
 NEW_CONCEPT,<temp_id>,<title>,<summary>,<confidence>,<conditions>,<topic_id>
+NEW_EVIDENCE,<temp_id>,<evidence_quote>
 NEW_SOURCE,<temp_id>,<ep-id>
 NEW_EXCEPTION,<temp_id>,<exception>
 NEW_TAG,<temp_id>,<tag>
@@ -103,7 +105,8 @@ implies, contradicts, specializes, generalizes, causes, correlates, part_of, con
 Use temp IDs NEW_0, NEW_1, ... for new concepts.
 For relations to existing concepts, use c-prefixed IDs from EXISTING CONCEPTUAL MEMORY.
 Use CSV quoting when fields contain commas.
-Be conservative: only include entries with clear evidence."""
+Be conservative: only include entries with clear evidence.
+Include NEW_EVIDENCE rows with key quotes from source episodes for each new concept."""
 
 
 class Consolidator:
@@ -335,9 +338,253 @@ class Consolidator:
         batch_num: int,
         batch_label: str,
     ) -> Optional[ConsolidationResult]:
-        """Consolidate a group of episodes belonging to the same topic."""
+        """Consolidate a group of episodes belonging to the same topic.
+        
+        Uses dual-track processing:
+        1. Fact episodes → fact_cluster concepts (no generalization)
+        2. Other episodes → pattern concepts (LLM generalization)
+        """
         result = ConsolidationResult()
         topic_label = f" [topic={topic_id}]" if topic_id else ""
+
+        # Partition episodes into fact vs pattern tracks
+        fact_episodes = [ep for ep in episodes if ep.episode_type == "fact"]
+        pattern_episodes = [ep for ep in episodes if ep.episode_type != "fact"]
+
+        # Process fact episodes (fact track - no LLM abstraction)
+        if fact_episodes:
+            fact_result = await self._process_fact_episodes(fact_episodes, topic_id, topic_label)
+            result.concepts_created += fact_result.concepts_created
+            result.concepts_updated += fact_result.concepts_updated
+            result.created_concept_ids.extend(fact_result.created_concept_ids)
+            result.updated_concept_ids.extend(fact_result.updated_concept_ids)
+            logger.info(
+                f"Fact track{topic_label}: {len(fact_episodes)} facts → "
+                f"{fact_result.concepts_created} clusters created, "
+                f"{fact_result.concepts_updated} clusters updated"
+            )
+
+        # Process pattern episodes (pattern track - LLM generalization)
+        if pattern_episodes:
+            pattern_result = await self._process_pattern_episodes(
+                pattern_episodes, topic_id, topic_label
+            )
+            result.concepts_created += pattern_result.concepts_created
+            result.concepts_updated += pattern_result.concepts_updated
+            result.contradictions_found += pattern_result.contradictions_found
+            result.created_concept_ids.extend(pattern_result.created_concept_ids)
+            result.updated_concept_ids.extend(pattern_result.updated_concept_ids)
+            result.contradiction_details.extend(pattern_result.contradiction_details)
+
+        return result
+
+    async def _process_fact_episodes(
+        self,
+        episodes: list[Episode],
+        topic_id: Optional[str],
+        topic_label: str,
+    ) -> ConsolidationResult:
+        """Process fact episodes into fact_cluster concepts.
+        
+        Facts are clustered by shared entity. Uses entity recall to find
+        existing clusters and related facts from prior sessions.
+        """
+        result = ConsolidationResult()
+
+        # Group facts by their primary entity (first entity, or topic if no entities)
+        entity_to_facts: dict[str, list[Episode]] = {}
+        standalone_facts: list[Episode] = []
+
+        for ep in episodes:
+            if ep.entity_ids:
+                # Use first entity as primary clustering key
+                primary_entity = ep.entity_ids[0]
+                entity_to_facts.setdefault(primary_entity, []).append(ep)
+            else:
+                # Facts without entities are standalone
+                standalone_facts.append(ep)
+
+        # Process each entity group
+        for entity_id, facts in entity_to_facts.items():
+            # Look for existing fact_cluster for this entity
+            existing_clusters = self.store.get_fact_clusters_for_entity(entity_id)
+
+            if existing_clusters:
+                # Add facts to the first matching cluster
+                cluster = existing_clusters[0]
+                await self._add_facts_to_cluster(cluster, facts, result)
+            else:
+                # Check for other fact episodes mentioning this entity
+                existing_fact_episodes = [
+                    ep for ep in self.store.get_episodes_mentioning(entity_id)
+                    if ep.episode_type == "fact" and ep.id not in [f.id for f in facts]
+                ]
+
+                total_facts = len(facts) + len(existing_fact_episodes)
+                if total_facts >= 2:
+                    # Create new fact_cluster
+                    all_facts = existing_fact_episodes + facts
+                    await self._create_fact_cluster(entity_id, all_facts, topic_id, result)
+                else:
+                    # Single fact - mark as standalone (no cluster created)
+                    standalone_facts.extend(facts)
+
+        # Log standalone facts (they remain retrievable via episode search)
+        if standalone_facts:
+            logger.debug(
+                f"Fact track{topic_label}: {len(standalone_facts)} standalone facts "
+                f"(no cluster created, retrievable via episode search)"
+            )
+
+        return result
+
+    async def _add_facts_to_cluster(
+        self,
+        cluster: Concept,
+        facts: list[Episode],
+        result: ConsolidationResult,
+    ) -> None:
+        """Add new facts to an existing fact_cluster concept."""
+        for fact in facts:
+            # Check for potential conflicts before adding
+            new_conflict = self._detect_fact_conflict(fact.content, cluster.specifics)
+            if new_conflict:
+                # Add conflict to the cluster
+                cluster.conflicts.append({
+                    "fact_a": new_conflict[0],
+                    "fact_b": new_conflict[1],
+                    "detected_at": datetime.now().isoformat(),
+                    "entity_id": fact.entity_ids[0] if fact.entity_ids else None,
+                })
+                logger.info(
+                    f"Conflict detected in fact cluster {cluster.id}: "
+                    f"'{new_conflict[0][:50]}...' vs '{new_conflict[1][:50]}...'"
+                )
+
+            # Add fact content to specifics
+            if fact.content not in cluster.specifics:
+                cluster.specifics.append(fact.content)
+
+            # Add evidence (verbatim)
+            if fact.content not in cluster.evidence:
+                cluster.evidence.append(fact.content)
+
+            # Add source episode
+            if fact.id not in cluster.source_episodes:
+                cluster.source_episodes.append(fact.id)
+
+        cluster.instance_count = len(cluster.source_episodes)
+        cluster.updated_at = datetime.now()
+
+        # Re-embed the cluster (combine title + specifics)
+        embed_text = f"{cluster.title or ''}\n" + "\n".join(cluster.specifics)
+        cluster.embedding = await self.embedding.embed(embed_text)
+
+        self.store.update_concept(cluster)
+        result.concepts_updated += 1
+        result.updated_concept_ids.append(cluster.id)
+
+    def _detect_fact_conflict(
+        self,
+        new_fact: str,
+        existing_facts: list[str],
+    ) -> tuple[str, str] | None:
+        """Detect if a new fact conflicts with existing facts.
+        
+        Uses simple heuristics:
+        - Same entity/subject with different values (numbers, versions, etc.)
+        - Same keyword pattern with contradictory values
+        
+        Returns: (existing_fact, new_fact) tuple if conflict found, None otherwise
+        """
+        import re
+
+        new_lower = new_fact.lower()
+
+        # Extract potential values (numbers, versions, etc.)
+        new_values = set(re.findall(r'\b\d+(?:\.\d+)?(?:\s*(?:ms|s|seconds?|minutes?|hours?|days?|kb|mb|gb|tb|%))?', new_lower))
+        new_values.update(re.findall(r'\b(?:true|false|enabled|disabled|on|off|yes|no)\b', new_lower))
+
+        if not new_values:
+            return None
+
+        # Check against existing facts for conflicting values with similar context
+        for existing in existing_facts:
+            existing_lower = existing.lower()
+
+            # Extract values from existing fact
+            existing_values = set(re.findall(r'\b\d+(?:\.\d+)?(?:\s*(?:ms|s|seconds?|minutes?|hours?|days?|kb|mb|gb|tb|%))?', existing_lower))
+            existing_values.update(re.findall(r'\b(?:true|false|enabled|disabled|on|off|yes|no)\b', existing_lower))
+
+            if not existing_values:
+                continue
+
+            # Find common keywords (excluding common words)
+            common_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                           'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+                           'should', 'may', 'might', 'must', 'shall', 'can', 'to', 'of', 'in',
+                           'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through',
+                           'during', 'before', 'after', 'above', 'below', 'between', 'and', 'or'}
+
+            new_words = set(re.findall(r'\b[a-z]{3,}\b', new_lower)) - common_words
+            existing_words = set(re.findall(r'\b[a-z]{3,}\b', existing_lower)) - common_words
+
+            # If significant overlap in keywords but different values, likely a conflict
+            overlap = new_words & existing_words
+            if len(overlap) >= 2 and new_values != existing_values:
+                # Check if they're about the same thing but have different values
+                value_diff = (new_values - existing_values) | (existing_values - new_values)
+                if value_diff:
+                    return (existing, new_fact)
+
+        return None
+
+    async def _create_fact_cluster(
+        self,
+        entity_id: str,
+        facts: list[Episode],
+        topic_id: Optional[str],
+        result: ConsolidationResult,
+    ) -> None:
+        """Create a new fact_cluster concept from related facts."""
+        # Generate title from entity
+        entity_type, entity_name = entity_id.split(":", 1) if ":" in entity_id else ("", entity_id)
+        title = f"{entity_name.replace('_', ' ').title()} Facts"
+
+        specifics = [fact.content for fact in facts]
+        evidence = list(specifics)  # Same as specifics for fact clusters
+        source_episodes = [fact.id for fact in facts]
+
+        # Generate embedding from title + specifics
+        embed_text = f"{title}\n" + "\n".join(specifics)
+        embedding = await self.embedding.embed(embed_text)
+
+        concept = Concept(
+            title=title,
+            summary=f"Facts about {entity_name}",
+            concept_type=ConceptType.FACT_CLUSTER.value,
+            specifics=specifics,
+            evidence=evidence,
+            source_episodes=source_episodes,
+            instance_count=len(facts),
+            confidence=1.0,  # Facts are certain
+            topic_id=topic_id,
+            embedding=embedding,
+            actionable=False,  # Facts are context, not actionable
+        )
+
+        concept_id = self.store.add_concept(concept)
+        result.concepts_created += 1
+        result.created_concept_ids.append(concept_id)
+
+    async def _process_pattern_episodes(
+        self,
+        episodes: list[Episode],
+        topic_id: Optional[str],
+        topic_label: str,
+    ) -> ConsolidationResult:
+        """Process non-fact episodes into pattern concepts using LLM generalization."""
+        result = ConsolidationResult()
 
         all_concepts = self.store.get_concepts_summary()
         if topic_id:
@@ -368,7 +615,7 @@ class Consolidator:
 
             sub_pass_label = f" (sub-pass {chunk_idx + 1}/{num_chunks})" if num_chunks > 1 else ""
             logger.debug(
-                f"Consolidation LLM request{topic_label}{sub_pass_label}:\n"
+                f"Pattern consolidation LLM request{topic_label}{sub_pass_label}:\n"
                 f"  provider: {self.llm.name}\n"
                 f"  episodes: {len(episodes)}\n"
                 f"  chunk_concepts: {len(chunk)}\n"
@@ -386,15 +633,15 @@ class Consolidator:
                         max_tokens=16384,
                     )
                     logger.debug(
-                        f"Consolidation structured response length{topic_label}{sub_pass_label}: {len(raw_response)}"
+                        f"Pattern consolidation structured response length{topic_label}{sub_pass_label}: {len(raw_response)}"
                     )
                     logger.debug(
-                        f"Consolidation structured response{topic_label}{sub_pass_label}:\n{raw_response}"
+                        f"Pattern consolidation structured response{topic_label}{sub_pass_label}:\n{raw_response}"
                     )
                     operations = parse_consolidation_csv(raw_response)
                 except (ProtocolParseError, ValueError, KeyError, IndexError) as parse_err:
                     logger.debug(
-                        f"Consolidation CSV parse failed{topic_label}{sub_pass_label}, trying JSON fallback: {parse_err}"
+                        f"Pattern consolidation CSV parse failed{topic_label}{sub_pass_label}, trying JSON fallback: {parse_err}"
                     )
                     operations = await self.llm.complete_json(
                         prompt=prompt,
@@ -403,14 +650,14 @@ class Consolidator:
                         max_tokens=16384,
                     )
                     logger.debug(
-                        f"Consolidation JSON fallback response{topic_label}{sub_pass_label}: "
+                        f"Pattern consolidation JSON fallback response{topic_label}{sub_pass_label}: "
                         f"{json.dumps(operations, indent=2)}"
                     )
                 except Exception as e:
-                    logger.error(f"LLM consolidation failed{topic_label}{sub_pass_label}: {e}")
+                    logger.error(f"Pattern consolidation LLM failed{topic_label}{sub_pass_label}: {e}")
                     raise
 
-            logger.debug(f"Consolidation LLM response{topic_label}{sub_pass_label}: {json.dumps(operations, indent=2)}")
+            logger.debug(f"Pattern consolidation LLM response{topic_label}{sub_pass_label}: {json.dumps(operations, indent=2)}")
             return (chunk_idx, operations)
 
         chunk_results = await asyncio.gather(
@@ -429,12 +676,16 @@ class Consolidator:
             )
 
         if merged_operations.get("analysis"):
-            logger.info(f"Consolidation analysis{topic_label}: {merged_operations['analysis']}")
+            logger.info(f"Pattern consolidation analysis{topic_label}: {merged_operations['analysis']}")
 
         if topic_id:
             for nc in merged_operations.get("new_concepts", []):
                 if not nc.get("topic_id") and not nc.get("topic"):
                     nc["topic_id"] = topic_id
+
+        # Set concept_type to pattern for new concepts
+        for nc in merged_operations.get("new_concepts", []):
+            nc["concept_type"] = ConceptType.PATTERN.value
 
         await self._apply_operations(merged_operations, result)
         return result
@@ -836,6 +1087,9 @@ class Consolidator:
         # Generate embedding for the summary
         embedding = await self.embedding.embed(data["summary"])
 
+        # Determine concept type (default to pattern for new concepts from LLM)
+        concept_type = data.get("concept_type", ConceptType.PATTERN.value)
+
         concept = Concept(
             title=data.get("title"),
             summary=data["summary"],
@@ -848,6 +1102,10 @@ class Consolidator:
             topic_id=data.get("topic_id") or data.get("topic"),
             relations=[],
             embedding=embedding,
+            concept_type=concept_type,
+            specifics=data.get("specifics", []),
+            evidence=data.get("evidence", []),
+            actionable=data.get("actionable", True),
         )
 
         return self.store.add_concept(concept)

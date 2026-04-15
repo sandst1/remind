@@ -46,7 +46,8 @@ src/remind/
 | Model | Purpose |
 |-------|---------|
 | `Episode` | Raw experience/interaction. Temporary, gets consolidated. |
-| `Concept` | Generalized knowledge with confidence, relations, conditions. |
+| `Concept` | Generalized knowledge with confidence, relations, conditions. Has `concept_type`: `pattern`, `fact_cluster`, or `legacy`. |
+| `ConceptType` | Enum: `LEGACY`, `PATTERN`, `FACT_CLUSTER`. Determines how concepts are created and displayed. |
 | `Entity` | External referent (file, person, concept, tool). Format: `type:name` |
 | `Relation` | Typed edge between concepts (implies, contradicts, specializes, etc.) |
 | `Topic` | Named knowledge area grouping episodes/concepts. Has id (slug), name, description. |
@@ -97,7 +98,15 @@ The main entry point. Key design decisions:
 
 ### Consolidation (`consolidation.py`)
 
-The "brain" of the system. Uses LLM to:
+The "brain" of the system. Uses dual-track processing:
+
+**Fact track** (no LLM generalization):
+- Fact episodes are clustered by shared entity
+- Existing fact_clusters are looked up via entity recall
+- Facts are preserved verbatim in `specifics` field
+- Conflicts are detected and flagged (not auto-resolved)
+
+**Pattern track** (LLM generalization):
 - Classify episode types (observation, decision, question, meta, preference, outcome)
 - Extract entity mentions from natural language
 - Identify patterns across episodes

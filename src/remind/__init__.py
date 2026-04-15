@@ -32,6 +32,7 @@ __version__ = "0.10.2"
 # Core models
 from remind.models import (
     Concept,
+    ConceptType,
     Episode,
     Relation,
     RelationType,
@@ -82,6 +83,7 @@ __all__ = [
     "__version__",
     # Models
     "Concept",
+    "ConceptType",
     "Episode",
     "Relation",
     "RelationType",
