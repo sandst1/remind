@@ -38,7 +38,7 @@ remind remember "User wants retry-after headers on 429s" -t preference --topic p
 remind remember "Slack message: deploy failed on prod" --source-type slack --topic infra
 ```
 
-**Episode types** (`-t`): Configurable via config. Run `remind types` to see active types. Defaults: `observation`, `decision`, `question`, `meta`, `preference`, `outcome`, `fact`, `spec`, `plan`, `task`
+**Episode types** (`-t`): Configurable via config. Run `remind types` to see active types. Defaults: `observation`, `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
 **Entities** (`-e`): Format `type:name` (file, function, class, person, concept, tool, project)
 **Topics** (`--topic`): Topic ID or name. Resolved to an existing topic; falls back to "general" default.
 **Source types** (`--source-type`): Origin of the memory (e.g., `agent`, `slack`, `github`, `manual`)
