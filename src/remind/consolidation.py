@@ -478,7 +478,9 @@ class Consolidator:
                 # Check for other fact episodes mentioning any of these entities
                 existing_fact_episodes: list[Episode] = []
                 seen_ep_ids = {ep.id for ep in cluster_episodes}
-                for entity_id in all_entity_ids:
+                # Copy set to avoid modifying during iteration
+                entities_to_check = list(all_entity_ids)
+                for entity_id in entities_to_check:
                     for ep in self.store.get_episodes_mentioning(entity_id):
                         if ep.episode_type == "fact" and ep.id not in seen_ep_ids:
                             existing_fact_episodes.append(ep)
