@@ -39,6 +39,8 @@ Entities come from two sources:
 
 2. **Automatic extraction** — During consolidation, the LLM extracts entity mentions from episode text. "We discussed Alice's auth module using Redis" would extract `person:alice`, `module:auth`, `tool:redis`.
 
+When entities are created, they are embedded using their type and display name (e.g., "tool: redis"). These embeddings enable entity-based retrieval — queries can match entities directly, boosting concepts linked to those entities.
+
 ## Entity relationships
 
 When multiple entities appear in the same episode, their relationships are automatically inferred. For example:

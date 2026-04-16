@@ -28,17 +28,25 @@ Consolidation now runs two parallel tracks:
 1. **Pattern track** — Observations, decisions, outcomes → generalized pattern concepts
 2. **Fact track** — Fact episodes → fact_cluster concepts (no generalization)
 
-Facts are clustered by shared entity. When consolidating fact episodes:
+Facts are clustered by shared entities using a **union-find algorithm** — episodes that share ANY entity (transitively) belong to the same cluster. When consolidating fact episodes:
 - Look up existing fact_clusters for the same entities
 - Look up other fact episodes mentioning the same entities  
 - Group related facts into clusters, preserving each verbatim
-- Detect conflicts when facts disagree (flag, don't resolve)
+- Store all linked entities on the cluster (enabling direct entity → concept lookup)
+- Detect conflicts via LLM when facts disagree (flag, don't resolve)
 - Standalone facts (no related facts) skip concept creation
 
 This ensures concrete details like config values, port numbers, and API limits are never abstracted away.
 
 Within each topic group (for pattern track):
 - **Pattern identification** — What recurs across episodes?
+- **Concept archetype recognition** — The LLM is guided to recognize distinct knowledge types:
+  - *Heuristics*: Decision rules ("When deploying to prod, always run migrations first")
+  - *Definitions*: What things mean ("Our 'active user' means logged in within 7 days")
+  - *Constraints*: Hard invariants ("API responses must be under 200ms")
+  - *Preferences*: Stylistic choices ("Team prefers composition over inheritance")
+  - *Procedures*: Step-by-step how-to ("To reset staging: 1) backup db, 2) run seed script...")
+  - *Causal*: Strategy-outcome patterns ("Caching reduced latency by 40%")
 - **Concept creation** — New generalized concepts with confidence scores, inheriting the topic from their source episodes
 - **Concept update** — Existing concepts are strengthened, refined, or given exceptions
 - **Relation establishment** — Typed edges between concepts (implies, contradicts, specializes, supersedes, etc.)

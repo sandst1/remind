@@ -21,6 +21,7 @@ Each concept has:
 | `specifics` | For fact_clusters: list of verbatim facts |
 | `evidence` | Key quotes from source episodes |
 | `conflicts` | For fact_clusters: detected conflicting facts |
+| `entity_ids` | Entities linked to this concept (union of source episodes' entities) |
 | `embedding` | Dense vector for similarity retrieval |
 | `tags` | Searchable tags |
 | `topic` | Knowledge area this concept belongs to (e.g., `"architecture"`, `"product"`) |

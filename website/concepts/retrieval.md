@@ -146,9 +146,19 @@ python -c "import sqlite3; c=sqlite3.connect(':memory:'); print(hasattr(c, 'enab
 
 Full step-by-step notes are in [Configuration — Vector search](/guide/configuration#vector-search).
 
-## Entity name matching
+## Entity-based retrieval
 
-In addition to embedding similarity, retrieval performs **entity name matching** on the query. Words in your query are matched against entity names and IDs — if the query mentions "redis", concepts linked to the `tool:redis` entity are activated directly. This provides a fast, embedding-free signal that complements the semantic search.
+Retrieval has two entity-based signals:
+
+### Entity embedding search
+
+Entities are embedded on creation (using their type and display name). During retrieval, the query embedding is compared against entity embeddings in parallel with concept and episode searches. Concepts linked to high-similarity entities receive a boost — this catches concepts that may have low direct embedding similarity to the query but are linked to entities that match well.
+
+For example, querying "session storage" might not match a concept about "Redis configuration" directly, but if `tool:redis` has high embedding similarity to the query, concepts linked to that entity get boosted.
+
+### Entity name matching
+
+Words in your query are matched against entity names and IDs — if the query mentions "redis", concepts linked to the `tool:redis` entity are activated directly. This provides a fast, embedding-free signal that complements the semantic search.
 
 ## Direct episode search
 
