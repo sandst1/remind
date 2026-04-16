@@ -68,6 +68,12 @@ export interface Topic {
   latest_activity?: string | null;
 }
 
+export interface ConditionRef {
+  id: string;
+  title?: string;
+  summary: string;
+}
+
 export interface Concept {
   id: string;
   title?: string;
@@ -80,6 +86,7 @@ export interface Concept {
   source_episodes: string[];
   source_episodes_data?: SourceEpisodeData[];
   conditions: string | null;
+  conditions_refs?: ConditionRef[];
   exceptions: string[];
   tags: string[];
   topic_id?: string | null;
@@ -165,6 +172,7 @@ export interface GraphNode {
   confidence: number;
   instance_count: number;
   conditions: string[];
+  conditions_refs?: ConditionRef[];
   exceptions: string[];
   tags: string[];
   source_episodes: Array<{

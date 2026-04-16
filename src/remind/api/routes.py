@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -156,6 +157,24 @@ async def get_concept_detail(request: Request) -> JSONResponse:
                 valid_relations.append(rel)
             # Skip relations to non-existent concepts (data integrity issue)
         result["relations"] = valid_relations
+
+        # Enrich conditions that reference concept IDs
+        # Conditions may contain "c-XXXXXXXX" format but concept IDs are just "XXXXXXXX"
+        if concept.conditions:
+            concept_id_pattern = re.compile(r'\b(?:c-)?([a-f0-9]{8})\b')
+            condition_refs = []
+            for match in concept_id_pattern.finditer(concept.conditions):
+                # Extract just the hex ID (without c- prefix if present)
+                ref_id = match.group(1)
+                ref_concept = concept_map.get(ref_id)
+                if ref_concept:
+                    condition_refs.append({
+                        "id": ref_id,
+                        "title": ref_concept.title,
+                        "summary": ref_concept.summary[:100],
+                    })
+            if condition_refs:
+                result["conditions_refs"] = condition_refs
 
         return JSONResponse(result)
     except Exception as e:
@@ -654,14 +673,27 @@ async def get_graph(request: Request) -> JSONResponse:
                     "context": rel.context,
                 })
 
-            # Parse conditions as list
+            # Parse conditions as list and enrich concept ID references
+            # Conditions may contain "c-XXXXXXXX" format but concept IDs are just "XXXXXXXX"
             conditions = []
+            conditions_refs = []
             if concept.conditions:
+                concept_id_pattern = re.compile(r'\b(?:c-)?([a-f0-9]{8})\b')
                 # Split by common delimiters
                 if "\n" in concept.conditions:
                     conditions = [c.strip() for c in concept.conditions.split("\n") if c.strip()]
                 else:
                     conditions = [concept.conditions]
+                # Find and enrich concept ID references
+                for match in concept_id_pattern.finditer(concept.conditions):
+                    ref_id = match.group(1)
+                    ref_concept = concept_map.get(ref_id)
+                    if ref_concept:
+                        conditions_refs.append({
+                            "id": ref_id,
+                            "title": ref_concept.title,
+                            "summary": ref_concept.summary[:100],
+                        })
 
             nodes.append({
                 "id": concept.id,
@@ -670,6 +702,7 @@ async def get_graph(request: Request) -> JSONResponse:
                 "confidence": concept.confidence,
                 "instance_count": concept.instance_count,
                 "conditions": conditions,
+                "conditions_refs": conditions_refs,
                 "exceptions": concept.exceptions,
                 "tags": concept.tags,
                 "source_episodes": source_episodes_data,

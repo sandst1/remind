@@ -460,7 +460,25 @@
             {#if selectedConcept.conditions}
               <div class="concept-section">
                 <h4>Conditions</h4>
-                <p>{selectedConcept.conditions}</p>
+                {#if selectedConcept.conditions_refs && selectedConcept.conditions_refs.length > 0}
+                  <div class="conditions-refs">
+                    {#each selectedConcept.conditions_refs as ref}
+                      <button
+                        class="condition-ref-btn"
+                        onclick={() => openRelatedConcept(ref.id)}
+                      >
+                        <span class="ref-id">{ref.id.substring(0, 8)}</span>
+                        {#if ref.title}
+                          <span class="ref-title">{ref.title}</span>
+                        {/if}
+                        <span class="ref-summary">{ref.summary}</span>
+                        <ArrowRight size={14} />
+                      </button>
+                    {/each}
+                  </div>
+                {:else}
+                  <p>{selectedConcept.conditions}</p>
+                {/if}
               </div>
             {/if}
 
@@ -1133,6 +1151,55 @@
     padding-left: var(--space-md);
     font-size: var(--font-size-sm);
     color: var(--color-text);
+  }
+
+  .conditions-refs {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .condition-ref-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-left: 3px solid var(--color-primary);
+    border-radius: var(--radius-sm);
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .condition-ref-btn:hover {
+    background: var(--color-surface-hover);
+    border-color: var(--color-text-muted);
+  }
+
+  .condition-ref-btn .ref-id {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
+
+  .condition-ref-btn .ref-title {
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+    flex-shrink: 0;
+  }
+
+  .condition-ref-btn .ref-summary {
+    flex: 1;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .tags {

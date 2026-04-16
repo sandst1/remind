@@ -1,5 +1,4 @@
 
 
-- consolidation 
--> reranking instead of finding conflicts for everything..?
 
+are the concept clusters a bit too broad?

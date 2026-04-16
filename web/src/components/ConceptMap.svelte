@@ -364,11 +364,25 @@
           {#if selectedConcept.conditions && selectedConcept.conditions.length > 0}
             <div class="section">
               <h4>Conditions</h4>
-              <ul>
-                {#each selectedConcept.conditions as condition}
-                  <li>{condition}</li>
-                {/each}
-              </ul>
+              {#if selectedConcept.conditions_refs && selectedConcept.conditions_refs.length > 0}
+                <ul class="conditions-refs-list">
+                  {#each selectedConcept.conditions_refs as ref}
+                    <li class="condition-ref">
+                      <span class="ref-id">{ref.id.substring(0, 8)}</span>
+                      {#if ref.title}
+                        <strong>{ref.title}</strong>
+                      {/if}
+                      <span class="ref-summary">{ref.summary}</span>
+                    </li>
+                  {/each}
+                </ul>
+              {:else}
+                <ul>
+                  {#each selectedConcept.conditions as condition}
+                    <li>{condition}</li>
+                  {/each}
+                </ul>
+              {/if}
             </div>
           {/if}
           {#if selectedConcept.exceptions && selectedConcept.exceptions.length > 0}
@@ -623,6 +637,33 @@
     padding-left: var(--space-md);
     color: var(--color-text);
     font-size: var(--font-size-sm);
+  }
+
+  .conditions-refs-list {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  .condition-ref {
+    padding: var(--space-xs) var(--space-sm);
+    margin-bottom: var(--space-xs);
+    background: var(--color-bg);
+    border-left: 2px solid var(--color-primary);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+  }
+
+  .condition-ref .ref-id {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    margin-right: var(--space-xs);
+  }
+
+  .condition-ref .ref-summary {
+    color: var(--color-text-secondary);
+    display: block;
+    margin-top: 2px;
   }
 
   .tags {

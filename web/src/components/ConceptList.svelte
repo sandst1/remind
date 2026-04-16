@@ -415,7 +415,27 @@
               {#if concept.conditions}
                 <div class="detail-section">
                   <h4>Conditions</h4>
-                  <p class="conditions">{concept.conditions}</p>
+                  {#if concept.conditions_refs && concept.conditions_refs.length > 0}
+                    <div class="conditions-refs">
+                      {#each concept.conditions_refs as ref}
+                        <button
+                          class="condition-ref-item"
+                          onclick={() => openRelatedConcept(ref.id, index)}
+                        >
+                          <span class="condition-ref-id">{ref.id.substring(0, 8)}</span>
+                          {#if ref.title}
+                            <span class="condition-ref-title">{ref.title}</span>
+                          {/if}
+                          <span class="condition-ref-summary">{ref.summary}</span>
+                          <span class="condition-ref-arrow">
+                            <ArrowRight size={14} />
+                          </span>
+                        </button>
+                      {/each}
+                    </div>
+                  {:else}
+                    <p class="conditions">{concept.conditions}</p>
+                  {/if}
                 </div>
               {/if}
 
@@ -1007,6 +1027,63 @@
     font-style: italic;
     color: var(--color-text-secondary);
     border: 1px solid var(--color-border);
+  }
+
+  .conditions-refs {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .condition-ref-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-bg);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    border-left: 3px solid var(--color-context-of, #6366f1);
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    transition: all 0.15s ease;
+  }
+
+  .condition-ref-item:hover {
+    background: var(--color-surface-hover);
+    border-color: var(--color-text-muted);
+  }
+
+  .condition-ref-id {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
+  }
+
+  .condition-ref-title {
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+    flex-shrink: 0;
+  }
+
+  .condition-ref-summary {
+    flex: 1;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .condition-ref-arrow {
+    margin-left: auto;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
   }
 
   .exceptions {
