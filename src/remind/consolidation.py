@@ -141,6 +141,7 @@ class Consolidator:
         concepts_per_pass: int = 64,
         llm_concurrency: int = 3,
         valid_types: Optional[list[str]] = None,
+        fact_cluster_jaccard_threshold: float = 0.5,
         # Legacy aliases (kept for backward compatibility)
         batch_size: Optional[int] = None,
         concepts_per_consolidation_pass: Optional[int] = None,
@@ -166,6 +167,7 @@ class Consolidator:
         self.min_confidence = min_confidence
         self.concepts_per_pass = concepts_per_pass
         self.llm_concurrency = llm_concurrency
+        self.fact_cluster_jaccard_threshold = fact_cluster_jaccard_threshold
         self.topic_parallelism = llm_concurrency
         self._llm_semaphore = asyncio.Semaphore(llm_concurrency)
         self._topic_semaphore = asyncio.Semaphore(self.topic_parallelism)
@@ -388,6 +390,63 @@ class Consolidator:
 
         return result
 
+    def _cluster_facts_by_jaccard(
+        self,
+        episodes: list[Episode],
+        threshold: float,
+    ) -> list[list[Episode]]:
+        """Cluster facts using agglomerative clustering on entity set Jaccard similarity.
+        
+        Uses single-linkage: clusters merge if ANY pair across them exceeds threshold.
+        This avoids transitive explosion from union-find while still grouping
+        facts that share significant entity overlap.
+        
+        Args:
+            episodes: Fact episodes to cluster (must have entity_ids populated)
+            threshold: Minimum Jaccard similarity to merge clusters (0.0-1.0)
+        
+        Returns:
+            List of episode clusters, each cluster is a list of episodes
+        """
+        if not episodes:
+            return []
+        
+        n = len(episodes)
+        entity_sets = [set(ep.entity_ids) for ep in episodes]
+        
+        # Start with each fact in its own cluster
+        clusters: list[set[int]] = [{i} for i in range(n)]
+        
+        # Agglomerative merge
+        changed = True
+        while changed:
+            changed = False
+            i = 0
+            while i < len(clusters):
+                j = i + 1
+                while j < len(clusters):
+                    # Check if any pair across clusters exceeds threshold
+                    should_merge = False
+                    for a in clusters[i]:
+                        for b in clusters[j]:
+                            intersection = len(entity_sets[a] & entity_sets[b])
+                            union = len(entity_sets[a] | entity_sets[b])
+                            if union > 0 and intersection / union >= threshold:
+                                should_merge = True
+                                break
+                        if should_merge:
+                            break
+                    
+                    if should_merge:
+                        clusters[i] = clusters[i] | clusters[j]
+                        clusters.pop(j)
+                        changed = True
+                    else:
+                        j += 1
+                i += 1
+        
+        return [[episodes[idx] for idx in cluster] for cluster in clusters]
+
     async def _process_fact_episodes(
         self,
         episodes: list[Episode],
@@ -396,9 +455,10 @@ class Consolidator:
     ) -> ConsolidationResult:
         """Process fact episodes into fact_cluster concepts.
         
-        Uses union-find to cluster episodes by shared entities. Episodes that
-        share ANY entity belong to the same cluster (transitively). Each cluster
-        tracks all entities from its constituent episodes.
+        Uses Jaccard similarity clustering on entity sets. Episodes cluster together
+        when they share a sufficient proportion of entities (controlled by
+        fact_cluster_jaccard_threshold config). This avoids transitive explosion
+        while grouping facts that are truly about the same things.
         """
         result = ConsolidationResult()
 
@@ -414,43 +474,19 @@ class Consolidator:
                 )
             return result
 
-        # Union-find data structures
-        parent: dict[str, str] = {}  # episode_id -> cluster representative
+        # Cluster by Jaccard similarity instead of union-find
+        clusters = self._cluster_facts_by_jaccard(
+            episodes_with_entities,
+            threshold=self.fact_cluster_jaccard_threshold,
+        )
 
-        def find(ep_id: str) -> str:
-            if parent[ep_id] != ep_id:
-                parent[ep_id] = find(parent[ep_id])  # path compression
-            return parent[ep_id]
-
-        def union(ep_id1: str, ep_id2: str) -> None:
-            root1, root2 = find(ep_id1), find(ep_id2)
-            if root1 != root2:
-                parent[root1] = root2
-
-        # Initialize each episode as its own cluster
-        for ep in episodes_with_entities:
-            parent[ep.id] = ep.id
-
-        # Build entity -> episodes index and union episodes sharing entities
-        entity_to_episodes: dict[str, list[str]] = {}
-        for ep in episodes_with_entities:
-            for entity_id in ep.entity_ids:
-                entity_to_episodes.setdefault(entity_id, []).append(ep.id)
-
-        # Union all episodes that share each entity
-        for entity_id, ep_ids in entity_to_episodes.items():
-            for i in range(1, len(ep_ids)):
-                union(ep_ids[0], ep_ids[i])
-
-        # Group episodes by their cluster representative
-        clusters: dict[str, list[Episode]] = {}
-        ep_by_id = {ep.id: ep for ep in episodes_with_entities}
-        for ep in episodes_with_entities:
-            root = find(ep.id)
-            clusters.setdefault(root, []).append(ep)
+        logger.debug(
+            f"Fact track{topic_label}: Jaccard clustering produced {len(clusters)} clusters "
+            f"from {len(episodes_with_entities)} episodes (threshold={self.fact_cluster_jaccard_threshold})"
+        )
 
         # Process each cluster
-        for cluster_rep, cluster_episodes in clusters.items():
+        for cluster_episodes in clusters:
             # Collect all entities from all episodes in this cluster
             all_entity_ids: set[str] = set()
             for ep in cluster_episodes:

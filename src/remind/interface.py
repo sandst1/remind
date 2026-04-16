@@ -93,6 +93,7 @@ class MemoryInterface:
         extraction_llm_batch_size: int = 10,
         consolidation_batch_size: int = 25,
         llm_concurrency: int = 3,
+        fact_cluster_jaccard_threshold: float = 0.5,
         # Legacy aliases (kept for backward compatibility)
         consolidation_concepts_per_pass: Optional[int] = None,
         entity_extraction_batch_size: Optional[int] = None,
@@ -144,6 +145,7 @@ class MemoryInterface:
             extraction_llm_batch_size=extraction_llm_batch_size,
             llm_concurrency=llm_concurrency,
             valid_types=episode_types,
+            fact_cluster_jaccard_threshold=fact_cluster_jaccard_threshold,
         )
         
         reranker = None
@@ -1584,6 +1586,8 @@ def create_memory(
         kwargs["reranking_enabled"] = config.reranking_enabled
     if "reranking_model" not in kwargs:
         kwargs["reranking_model"] = config.reranking_model
+    if "fact_cluster_jaccard_threshold" not in kwargs:
+        kwargs["fact_cluster_jaccard_threshold"] = config.fact_cluster_jaccard_threshold
 
     # Import providers
     from remind.providers import (

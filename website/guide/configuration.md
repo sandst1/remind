@@ -337,6 +337,11 @@ View decay stats with `remind stats`.
 | `extraction_llm_batch_size` | `10` | Episodes grouped into each extraction LLM call |
 | `consolidation_batch_size` | `25` | Episodes fetched and generalized per consolidation loop pass |
 | `llm_concurrency` | `3` | Max concurrent LLM calls across extraction + consolidation; also bounds topic-group parallelism |
+| `fact_cluster_jaccard_threshold` | `0.5` | Min Jaccard similarity between entity sets to cluster facts together. Lower values create larger clusters; higher values create more focused clusters. |
+
+| Env variable | Config field | Type | Default |
+|---|---|---|---|
+| `REMIND_FACT_CLUSTER_JACCARD_THRESHOLD` | `fact_cluster_jaccard_threshold` | float | `0.5` |
 
 Legacy aliases remain supported: `consolidation_concepts_per_pass`, `entity_extraction_batch_size`, and `consolidation_llm_concurrency`.
 

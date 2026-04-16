@@ -101,7 +101,9 @@ The main entry point. Key design decisions:
 The "brain" of the system. Uses dual-track processing:
 
 **Fact track** (no LLM generalization):
-- Fact episodes are clustered by shared entity
+- Fact episodes are clustered using Jaccard similarity on entity sets
+- Episodes cluster together when `|shared entities| / |total entities|` ≥ threshold (default 0.5)
+- This avoids transitive explosion (old union-find approach clustered all facts sharing ANY entity transitively)
 - Existing fact_clusters are looked up via entity recall
 - Facts are preserved verbatim in `specifics` field
 - Conflicts are detected and flagged (not auto-resolved)
@@ -221,6 +223,8 @@ class RemindConfig:
  # Reranking (requires `pip install "remind-mcp[rerank]"`)
  reranking_enabled: bool = False
  reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+ # Fact clustering
+ fact_cluster_jaccard_threshold: float = 0.5  # Min Jaccard similarity for clustering facts
  # Logging
  logging_enabled: bool = False
  # Episode types (controls which types are valid + gates CLI/MCP features)

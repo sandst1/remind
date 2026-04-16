@@ -133,6 +133,9 @@ class RemindConfig:
     cli_recall_worker_enabled: bool = True
     cli_recall_worker_idle_seconds: int = 600
 
+    # Fact clustering
+    fact_cluster_jaccard_threshold: float = 0.5
+
     # Logging
     logging_enabled: bool = False
 
@@ -269,6 +272,10 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         config.cli_recall_worker_enabled = bool(file_config["cli_recall_worker_enabled"])
     if "cli_recall_worker_idle_seconds" in file_config:
         config.cli_recall_worker_idle_seconds = int(file_config["cli_recall_worker_idle_seconds"])
+
+    # Fact clustering
+    if "fact_cluster_jaccard_threshold" in file_config:
+        config.fact_cluster_jaccard_threshold = float(file_config["fact_cluster_jaccard_threshold"])
 
     # Logging
     if "logging_enabled" in file_config:
@@ -495,6 +502,15 @@ def _apply_env_vars(config: RemindConfig) -> None:
         except ValueError:
             logger.warning(
                 f"Invalid REMIND_CLI_RECALL_WORKER_IDLE_SECONDS: {cli_worker_idle}"
+            )
+
+    # Fact clustering
+    if jaccard_threshold := os.environ.get("REMIND_FACT_CLUSTER_JACCARD_THRESHOLD"):
+        try:
+            config.fact_cluster_jaccard_threshold = float(jaccard_threshold)
+        except ValueError:
+            logger.warning(
+                f"Invalid REMIND_FACT_CLUSTER_JACCARD_THRESHOLD: {jaccard_threshold}"
             )
 
     # Logging

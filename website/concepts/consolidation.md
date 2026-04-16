@@ -28,13 +28,16 @@ Consolidation now runs two parallel tracks:
 1. **Pattern track** — Observations, decisions, outcomes → generalized pattern concepts
 2. **Fact track** — Fact episodes → fact_cluster concepts (no generalization)
 
-Facts are clustered by shared entities using a **union-find algorithm** — episodes that share ANY entity (transitively) belong to the same cluster. When consolidating fact episodes:
+Facts are clustered using **Jaccard similarity** on entity sets — episodes cluster together when their entity overlap exceeds a threshold (default 0.5). This avoids transitive explosion where unrelated facts get merged just because they share a common entity like "government" or "user". When consolidating fact episodes:
+- Cluster facts by Jaccard similarity: `|shared entities| / |total entities|` ≥ threshold
 - Look up existing fact_clusters for the same entities
 - Look up other fact episodes mentioning the same entities  
 - Group related facts into clusters, preserving each verbatim
 - Store all linked entities on the cluster (enabling direct entity → concept lookup)
 - Detect conflicts via LLM when facts disagree (flag, don't resolve)
 - Standalone facts (no related facts) skip concept creation
+
+The threshold is configurable via `fact_cluster_jaccard_threshold` (default 0.5). Lower values create larger clusters; higher values create more focused clusters.
 
 This ensures concrete details like config values, port numbers, and API limits are never abstracted away.
 
