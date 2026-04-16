@@ -45,6 +45,14 @@ CRITICAL — SPECIFICITY OVER ABSTRACTION:
 - Every concept summary must be falsifiable — it must be possible to say "this is wrong"
   based on future evidence. Generic truisms ("teams make tradeoffs") are NOT valid concepts.
 
+CONCEPT ARCHETYPES to recognize and surface:
+- Heuristic: Decision rules ("When deploying to prod, always run migrations first")
+- Definition: What things mean ("Our 'active user' means logged in within 7 days")
+- Constraint: Hard invariants ("API responses must be under 200ms")
+- Preference: Stylistic choices ("Team prefers composition over inheritance")
+- Procedure: Step-by-step how-to ("To reset staging: 1) backup db, 2) run seed script...")
+- Causal: Strategy-outcome patterns ("Caching reduced latency by 40%")
+
 For FACT episodes (type=fact), preserve specific details VERBATIM in concept summaries.
 Do NOT generalize away concrete values, names, configurations, dates, or version numbers.
 A fact episode like "Redis cache TTL is 300s" should appear in the concept summary as-is,
@@ -161,7 +169,9 @@ class Consolidator:
         self.topic_parallelism = llm_concurrency
         self._llm_semaphore = asyncio.Semaphore(llm_concurrency)
         self._topic_semaphore = asyncio.Semaphore(self.topic_parallelism)
-        self.extractor = EntityExtractor(llm, store, valid_types=valid_types)
+        self.extractor = EntityExtractor(
+            llm, store, valid_types=valid_types, embedding_provider=embedding
+        )
     
     async def consolidate(
         self,
@@ -386,50 +396,108 @@ class Consolidator:
     ) -> ConsolidationResult:
         """Process fact episodes into fact_cluster concepts.
         
-        Facts are clustered by shared entity. Uses entity recall to find
-        existing clusters and related facts from prior sessions.
+        Uses union-find to cluster episodes by shared entities. Episodes that
+        share ANY entity belong to the same cluster (transitively). Each cluster
+        tracks all entities from its constituent episodes.
         """
         result = ConsolidationResult()
 
-        # Group facts by their primary entity (first entity, or topic if no entities)
-        entity_to_facts: dict[str, list[Episode]] = {}
-        standalone_facts: list[Episode] = []
+        # Separate episodes with and without entities
+        episodes_with_entities = [ep for ep in episodes if ep.entity_ids]
+        standalone_facts = [ep for ep in episodes if not ep.entity_ids]
 
-        for ep in episodes:
-            if ep.entity_ids:
-                # Use first entity as primary clustering key
-                primary_entity = ep.entity_ids[0]
-                entity_to_facts.setdefault(primary_entity, []).append(ep)
+        if not episodes_with_entities:
+            if standalone_facts:
+                logger.debug(
+                    f"Fact track{topic_label}: {len(standalone_facts)} standalone facts "
+                    f"(no entities, no cluster created)"
+                )
+            return result
+
+        # Union-find data structures
+        parent: dict[str, str] = {}  # episode_id -> cluster representative
+
+        def find(ep_id: str) -> str:
+            if parent[ep_id] != ep_id:
+                parent[ep_id] = find(parent[ep_id])  # path compression
+            return parent[ep_id]
+
+        def union(ep_id1: str, ep_id2: str) -> None:
+            root1, root2 = find(ep_id1), find(ep_id2)
+            if root1 != root2:
+                parent[root1] = root2
+
+        # Initialize each episode as its own cluster
+        for ep in episodes_with_entities:
+            parent[ep.id] = ep.id
+
+        # Build entity -> episodes index and union episodes sharing entities
+        entity_to_episodes: dict[str, list[str]] = {}
+        for ep in episodes_with_entities:
+            for entity_id in ep.entity_ids:
+                entity_to_episodes.setdefault(entity_id, []).append(ep.id)
+
+        # Union all episodes that share each entity
+        for entity_id, ep_ids in entity_to_episodes.items():
+            for i in range(1, len(ep_ids)):
+                union(ep_ids[0], ep_ids[i])
+
+        # Group episodes by their cluster representative
+        clusters: dict[str, list[Episode]] = {}
+        ep_by_id = {ep.id: ep for ep in episodes_with_entities}
+        for ep in episodes_with_entities:
+            root = find(ep.id)
+            clusters.setdefault(root, []).append(ep)
+
+        # Process each cluster
+        for cluster_rep, cluster_episodes in clusters.items():
+            # Collect all entities from all episodes in this cluster
+            all_entity_ids: set[str] = set()
+            for ep in cluster_episodes:
+                all_entity_ids.update(ep.entity_ids)
+
+            # Check if any entity in this cluster has an existing fact_cluster
+            existing_cluster: Concept | None = None
+            for entity_id in all_entity_ids:
+                existing_clusters = self.store.get_fact_clusters_for_entity(entity_id)
+                if existing_clusters:
+                    existing_cluster = existing_clusters[0]
+                    break
+
+            if existing_cluster:
+                # Add to existing cluster and update its entity_ids
+                await self._add_facts_to_cluster(
+                    existing_cluster, cluster_episodes, list(all_entity_ids)[0], result
+                )
+                # Merge entity_ids into existing cluster
+                for eid in all_entity_ids:
+                    if eid not in existing_cluster.entity_ids:
+                        existing_cluster.entity_ids.append(eid)
+                self.store.update_concept(existing_cluster)
             else:
-                # Facts without entities are standalone
-                standalone_facts.append(ep)
+                # Check for other fact episodes mentioning any of these entities
+                existing_fact_episodes: list[Episode] = []
+                seen_ep_ids = {ep.id for ep in cluster_episodes}
+                for entity_id in all_entity_ids:
+                    for ep in self.store.get_episodes_mentioning(entity_id):
+                        if ep.episode_type == "fact" and ep.id not in seen_ep_ids:
+                            existing_fact_episodes.append(ep)
+                            seen_ep_ids.add(ep.id)
+                            # Also include this episode's entities
+                            all_entity_ids.update(ep.entity_ids)
 
-        # Process each entity group
-        for entity_id, facts in entity_to_facts.items():
-            # Look for existing fact_cluster for this entity
-            existing_clusters = self.store.get_fact_clusters_for_entity(entity_id)
-
-            if existing_clusters:
-                # Add facts to the first matching cluster
-                cluster = existing_clusters[0]
-                await self._add_facts_to_cluster(cluster, facts, entity_id, result)
-            else:
-                # Check for other fact episodes mentioning this entity
-                existing_fact_episodes = [
-                    ep for ep in self.store.get_episodes_mentioning(entity_id)
-                    if ep.episode_type == "fact" and ep.id not in [f.id for f in facts]
-                ]
-
-                total_facts = len(facts) + len(existing_fact_episodes)
+                total_facts = len(cluster_episodes) + len(existing_fact_episodes)
                 if total_facts >= 2:
-                    # Create new fact_cluster
-                    all_facts = existing_fact_episodes + facts
-                    await self._create_fact_cluster(entity_id, all_facts, topic_id, result)
+                    # Create new fact_cluster with all entities
+                    all_facts = existing_fact_episodes + cluster_episodes
+                    await self._create_fact_cluster_with_entities(
+                        list(all_entity_ids), all_facts, topic_id, result
+                    )
                 else:
-                    # Single fact - mark as standalone (no cluster created)
-                    standalone_facts.extend(facts)
+                    # Single fact - mark as standalone
+                    standalone_facts.extend(cluster_episodes)
 
-        # Log standalone facts (they remain retrievable via episode search)
+        # Log standalone facts
         if standalone_facts:
             logger.debug(
                 f"Fact track{topic_label}: {len(standalone_facts)} standalone facts "
@@ -448,21 +516,6 @@ class Consolidator:
         """Add new facts to an existing fact_cluster concept."""
         facts_added = False
         for fact in facts:
-            # Check for potential conflicts before adding
-            new_conflict = self._detect_fact_conflict(fact.content, cluster.specifics)
-            if new_conflict:
-                # Add conflict to the cluster
-                cluster.conflicts.append({
-                    "fact_a": new_conflict[0],
-                    "fact_b": new_conflict[1],
-                    "detected_at": datetime.now().isoformat(),
-                    "entity_id": fact.entity_ids[0] if fact.entity_ids else None,
-                })
-                logger.info(
-                    f"Conflict detected in fact cluster {cluster.id}: "
-                    f"'{new_conflict[0][:50]}...' vs '{new_conflict[1][:50]}...'"
-                )
-
             # Add fact content to specifics
             if fact.content not in cluster.specifics:
                 cluster.specifics.append(fact.content)
@@ -476,14 +529,28 @@ class Consolidator:
             if fact.id not in cluster.source_episodes:
                 cluster.source_episodes.append(fact.id)
 
+            # Add entity_ids from this episode
+            for eid in fact.entity_ids:
+                if eid not in cluster.entity_ids:
+                    cluster.entity_ids.append(eid)
+
         cluster.instance_count = len(cluster.source_episodes)
         cluster.updated_at = datetime.now()
 
-        # Regenerate title and summary if new facts were added
+        # Regenerate title, summary, and detect conflicts if new facts were added
+        primary_entity = cluster.entity_ids[0] if cluster.entity_ids else entity_id
         if facts_added:
-            title, summary = await self._summarize_fact_cluster(entity_id, cluster.specifics)
+            title, summary, conflicts = await self._summarize_fact_cluster(primary_entity, cluster.specifics)
             cluster.title = title
             cluster.summary = summary
+            # Add any newly detected conflicts
+            for conflict in conflicts:
+                if conflict not in cluster.conflicts:
+                    cluster.conflicts.append(conflict)
+                    logger.info(
+                        f"Conflict detected in fact cluster {cluster.id}: "
+                        f"'{conflict.get('fact_a', '')[:50]}' vs '{conflict.get('fact_b', '')[:50]}'"
+                    )
 
         # Re-embed the cluster (combine title + specifics)
         embed_text = f"{cluster.title or ''}\n" + "\n".join(cluster.specifics)
@@ -493,116 +560,108 @@ class Consolidator:
         result.concepts_updated += 1
         result.updated_concept_ids.append(cluster.id)
 
-    def _detect_fact_conflict(
-        self,
-        new_fact: str,
-        existing_facts: list[str],
-    ) -> tuple[str, str] | None:
-        """Detect if a new fact conflicts with existing facts.
-        
-        Uses simple heuristics:
-        - Same entity/subject with different values (numbers, versions, etc.)
-        - Same keyword pattern with contradictory values
-        
-        Returns: (existing_fact, new_fact) tuple if conflict found, None otherwise
-        """
-        import re
-
-        new_lower = new_fact.lower()
-
-        # Extract potential values (numbers, versions, etc.)
-        new_values = set(re.findall(r'\b\d+(?:\.\d+)?(?:\s*(?:ms|s|seconds?|minutes?|hours?|days?|kb|mb|gb|tb|%))?', new_lower))
-        new_values.update(re.findall(r'\b(?:true|false|enabled|disabled|on|off|yes|no)\b', new_lower))
-
-        if not new_values:
-            return None
-
-        # Check against existing facts for conflicting values with similar context
-        for existing in existing_facts:
-            existing_lower = existing.lower()
-
-            # Extract values from existing fact
-            existing_values = set(re.findall(r'\b\d+(?:\.\d+)?(?:\s*(?:ms|s|seconds?|minutes?|hours?|days?|kb|mb|gb|tb|%))?', existing_lower))
-            existing_values.update(re.findall(r'\b(?:true|false|enabled|disabled|on|off|yes|no)\b', existing_lower))
-
-            if not existing_values:
-                continue
-
-            # Find common keywords (excluding common words)
-            common_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-                           'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-                           'should', 'may', 'might', 'must', 'shall', 'can', 'to', 'of', 'in',
-                           'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through',
-                           'during', 'before', 'after', 'above', 'below', 'between', 'and', 'or'}
-
-            new_words = set(re.findall(r'\b[a-z]{3,}\b', new_lower)) - common_words
-            existing_words = set(re.findall(r'\b[a-z]{3,}\b', existing_lower)) - common_words
-
-            # If significant overlap in keywords but different values, likely a conflict
-            overlap = new_words & existing_words
-            if len(overlap) >= 2 and new_values != existing_values:
-                # Check if they're about the same thing but have different values
-                value_diff = (new_values - existing_values) | (existing_values - new_values)
-                if value_diff:
-                    return (existing, new_fact)
-
-        return None
-
     async def _summarize_fact_cluster(
         self,
         entity_id: str,
         facts: list[str],
-    ) -> tuple[str, str]:
-        """Generate a concise title and summary for a fact cluster using LLM.
+    ) -> tuple[str, str, list[dict]]:
+        """Generate a concise title, summary, and detect conflicts for a fact cluster.
         
-        Returns (title, summary) tuple.
+        Returns (title, summary, conflicts) tuple.
+        Each conflict is a dict with keys: fact_a, fact_b, reason
         """
         entity_type, entity_name = entity_id.split(":", 1) if ":" in entity_id else ("", entity_id)
         
         facts_text = "\n".join(f"- {fact}" for fact in facts)
         
-        prompt = f"""Summarize these facts about "{entity_name}" into a title and one-sentence summary.
+        prompt = f"""Analyze these facts about "{entity_name}".
 
 FACTS:
 {facts_text}
 
-Requirements:
-- Title: 2-5 words, descriptive (not just "{entity_name} Facts")
-- Summary: One sentence that captures the essence of what these facts tell us
-- Preserve specificity - mention concrete details if they're central
-- Do NOT use phrases like "Facts about..." or "Information regarding..."
+Tasks:
+1. Create a title (2-5 words, descriptive, not just "{entity_name} Facts")
+2. Write a one-sentence summary capturing the essence of these facts
+3. Identify any CONFLICTS between facts (contradictory values, incompatible claims)
 
 Respond in exactly this format:
 TITLE: <title>
-SUMMARY: <summary>"""
+SUMMARY: <summary>
+CONFLICTS: <none OR list conflicts, one per line as "fact A" vs "fact B": reason>
+
+Examples of conflicts:
+- "TTL is 300s" vs "TTL is 600s": contradictory values for the same setting
+- "Feature X is enabled" vs "Feature X is disabled": incompatible states
+- "Uses Redis" vs "Uses Memcached": conflicting technology choices
+
+If no conflicts exist, write: CONFLICTS: none"""
 
         try:
             response = await self.llm.complete(
                 prompt,
-                system="You summarize factual information concisely.",
+                system="You summarize factual information and detect contradictions.",
                 temperature=0.3,
-                max_tokens=150,
+                max_tokens=500,
             )
             
             lines = response.strip().split("\n")
             title = entity_name.replace("_", " ").title()  # fallback
             summary = f"Facts about {entity_name}"  # fallback
+            conflicts: list[dict] = []
             
+            in_conflicts = False
             for line in lines:
                 if line.startswith("TITLE:"):
                     title = line[6:].strip()
+                    in_conflicts = False
                 elif line.startswith("SUMMARY:"):
                     summary = line[8:].strip()
+                    in_conflicts = False
+                elif line.startswith("CONFLICTS:"):
+                    conflict_text = line[10:].strip()
+                    in_conflicts = True
+                    if conflict_text.lower() != "none" and conflict_text:
+                        conflict = self._parse_conflict_line(conflict_text, entity_id)
+                        if conflict:
+                            conflicts.append(conflict)
+                elif in_conflicts and line.strip().startswith("-"):
+                    conflict = self._parse_conflict_line(line.strip()[1:].strip(), entity_id)
+                    if conflict:
+                        conflicts.append(conflict)
             
-            return title, summary
+            return title, summary, conflicts
             
         except Exception as e:
             logger.warning(f"Failed to generate fact cluster summary: {e}")
-            # Fallback to simple title/summary
             return (
                 f"{entity_name.replace('_', ' ').title()} Facts",
                 f"Facts about {entity_name}",
+                [],
             )
+
+    def _parse_conflict_line(self, line: str, entity_id: str) -> dict | None:
+        """Parse a conflict line like '"fact A" vs "fact B": reason' into a dict."""
+        if " vs " not in line.lower():
+            return None
+        
+        try:
+            # Try to split on " vs " (case insensitive)
+            import re
+            match = re.match(r'["\']?(.+?)["\']?\s+vs\s+["\']?(.+?)["\']?(?::\s*(.+))?$', line, re.IGNORECASE)
+            if match:
+                fact_a = match.group(1).strip().strip('"\'')
+                fact_b = match.group(2).strip().strip('"\'')
+                reason = match.group(3).strip() if match.group(3) else "conflicting values"
+                return {
+                    "fact_a": fact_a,
+                    "fact_b": fact_b,
+                    "reason": reason,
+                    "detected_at": datetime.now().isoformat(),
+                    "entity_id": entity_id,
+                }
+        except Exception:
+            pass
+        return None
 
     async def _create_fact_cluster(
         self,
@@ -611,15 +670,35 @@ SUMMARY: <summary>"""
         topic_id: Optional[str],
         result: ConsolidationResult,
     ) -> None:
-        """Create a new fact_cluster concept from related facts."""
-        entity_type, entity_name = entity_id.split(":", 1) if ":" in entity_id else ("", entity_id)
+        """Create a new fact_cluster concept from related facts (single entity)."""
+        # Delegate to the multi-entity version
+        await self._create_fact_cluster_with_entities([entity_id], facts, topic_id, result)
+
+    async def _create_fact_cluster_with_entities(
+        self,
+        entity_ids: list[str],
+        facts: list[Episode],
+        topic_id: Optional[str],
+        result: ConsolidationResult,
+    ) -> None:
+        """Create a new fact_cluster concept from related facts with multiple entities."""
+        # Use first entity for naming, but store all entities
+        primary_entity_id = entity_ids[0] if entity_ids else "unknown"
+        entity_type, entity_name = primary_entity_id.split(":", 1) if ":" in primary_entity_id else ("", primary_entity_id)
 
         specifics = [fact.content for fact in facts]
         evidence = list(specifics)  # Same as specifics for fact clusters
         source_episodes = [fact.id for fact in facts]
 
-        # Generate title and summary using LLM
-        title, summary = await self._summarize_fact_cluster(entity_id, specifics)
+        # Generate title, summary, and detect conflicts using LLM
+        title, summary, conflicts = await self._summarize_fact_cluster(primary_entity_id, specifics)
+
+        # Log any detected conflicts
+        for conflict in conflicts:
+            logger.info(
+                f"Conflict detected in new fact cluster for {primary_entity_id}: "
+                f"'{conflict.get('fact_a', '')[:50]}' vs '{conflict.get('fact_b', '')[:50]}'"
+            )
 
         # Generate embedding from title + specifics
         embed_text = f"{title}\n" + "\n".join(specifics)
@@ -637,6 +716,8 @@ SUMMARY: <summary>"""
             topic_id=topic_id,
             embedding=embedding,
             actionable=False,  # Facts are context, not actionable
+            conflicts=conflicts,
+            entity_ids=list(entity_ids),  # Store all linked entities
         )
 
         concept_id = self.store.add_concept(concept)
@@ -980,12 +1061,12 @@ SUMMARY: <summary>"""
                     except Exception as e:
                         logger.warning(f"Individual extraction also failed for {ep.id}: {e}")
 
-            # Sequential store writes
+            # Sequential store writes (now async for entity embedding)
             episode_by_id = {ep.id: ep for ep in unextracted}
             for ep_id, result in all_results.items():
                 ep = episode_by_id.get(ep_id)
                 if ep:
-                    self.extractor.store_extraction_result(ep, result)
+                    await self.extractor.store_extraction_result(ep, result)
                     episodes_processed += 1
                     entities_created += len(result.entities)
                     relations_extracted += len(result.entity_relations)

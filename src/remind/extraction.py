@@ -12,7 +12,7 @@ import logging
 import re
 from dataclasses import replace
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from remind.llm_protocol import (
     ProtocolParseError,
@@ -30,6 +30,9 @@ from remind.models import (
 )
 from remind.providers.base import LLMProvider
 from remind.store import MemoryStore
+
+if TYPE_CHECKING:
+    from remind.providers.base import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -197,9 +200,11 @@ class EntityExtractor:
         llm: LLMProvider,
         store: MemoryStore,
         valid_types: Optional[list[str]] = None,
+        embedding_provider: Optional["EmbeddingProvider"] = None,
     ):
         self.llm = llm
         self.store = store
+        self.embedding_provider = embedding_provider
         self._valid_types: Optional[set[str]] = set(valid_types) if valid_types else None
         self._default_type = valid_types[0] if valid_types else "observation"
         if valid_types:
@@ -395,7 +400,7 @@ class EntityExtractor:
                 output[ep.id] = er
         return output
 
-    def store_extraction_result(self, episode: Episode, result: ExtractionResult) -> None:
+    async def store_extraction_result(self, episode: Episode, result: ExtractionResult) -> None:
         episode.episode_type = result.episode_type
         episode.title = result.title
         episode.entities_extracted = True
@@ -405,6 +410,7 @@ class EntityExtractor:
         seen: set[str] = set(prior_ids)
         final_entity_ids = list(prior_ids)
         id_remap: dict[str, str] = {}
+        entities_to_embed: list[Entity] = []
 
         for entity in result.entities:
             existing = self.store.find_entity_by_name(entity.display_name)
@@ -413,9 +419,13 @@ class EntityExtractor:
                 if entity.type != existing.type:
                     existing.type = entity.type
                     self.store.add_entity(existing)
+                # Track for embedding if missing
+                if not existing.embedding:
+                    entities_to_embed.append(existing)
             else:
                 self.store.add_entity(entity)
                 entity_id = entity.id
+                entities_to_embed.append(entity)
 
             id_remap[entity.id] = entity_id
             if entity_id not in seen:
@@ -423,10 +433,33 @@ class EntityExtractor:
                 final_entity_ids.append(entity_id)
             self.store.add_mention(episode.id, entity_id)
 
+        # Embed new entities if we have an embedding provider
+        if self.embedding_provider and entities_to_embed:
+            await self._embed_entities(entities_to_embed)
+
         episode.entity_ids = final_entity_ids
         episode.updated_at = datetime.now()
         self.store.update_episode(episode)
         self._persist_entity_relations(result.entity_relations, id_remap)
+
+    async def _embed_entities(self, entities: list[Entity]) -> None:
+        """Generate and store embeddings for entities."""
+        if not self.embedding_provider:
+            return
+        
+        texts = []
+        for entity in entities:
+            # Create embedding text from type and display name
+            embed_text = f"{entity.type.value}: {entity.display_name or entity.id}"
+            texts.append(embed_text)
+        
+        try:
+            embeddings = await self.embedding_provider.embed_batch(texts)
+            for entity, embedding in zip(entities, embeddings):
+                entity.embedding = embedding
+                self.store.update_entity(entity)
+        except Exception as e:
+            logger.warning(f"Failed to embed entities: {e}")
 
     def store_relations_result(self, episode: Episode, relations: list[EntityRelation]) -> None:
         self._persist_entity_relations(relations, {})
@@ -436,7 +469,7 @@ class EntityExtractor:
 
     async def extract_and_store(self, episode: Episode) -> ExtractionResult:
         result = await self.extract(episode.content, episode_id=episode.id)
-        self.store_extraction_result(episode, result)
+        await self.store_extraction_result(episode, result)
         logger.debug(
             f"Stored extraction for {episode.id}: type={result.episode_type}, "
             f"entities={[e.id for e in result.entities]}, relations={len(result.entity_relations)}"

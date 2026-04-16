@@ -9,6 +9,8 @@ relationship structure, mimicking associative memory in the brain.
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional, TYPE_CHECKING
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
 import logging
 import math
 import re
@@ -584,12 +586,25 @@ class MemoryRetriever:
         query_embedding = await self.embedding.embed(embed_text)
         t_embed_ms = (time.perf_counter() - t_embed_start) * 1000.0
 
-        # --- concept vector search + spreading activation ---------------
+        # --- parallel vector search for concepts, episodes, entities ------
         t_initial_search_start = time.perf_counter()
-        initial_matches = self.store.find_by_embedding(
-            query_embedding,
-            k=self.initial_k * 2,
-        )
+        
+        # Run all three searches in parallel using thread pool
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            concept_future = loop.run_in_executor(
+                pool, self.store.find_by_embedding, query_embedding, self.initial_k * 2
+            )
+            episode_future = loop.run_in_executor(
+                pool, self.store.find_episodes_by_embedding, query_embedding, episode_k if episode_k > 0 else 1
+            )
+            entity_future = loop.run_in_executor(
+                pool, self.store.find_entities_by_embedding, query_embedding, self.initial_k
+            )
+            initial_matches, ep_matches_parallel, entity_matches = await asyncio.gather(
+                concept_future, episode_future, entity_future
+            )
+        
         t_initial_search_ms = (time.perf_counter() - t_initial_search_start) * 1000.0
 
         t_topic_filter_start = time.perf_counter()
@@ -603,6 +618,19 @@ class MemoryRetriever:
         t_initial_activation_start = time.perf_counter()
         activation_map: dict[str, tuple[float, str, int]] = {}
         concept_cache: dict[str, Concept] = {}
+        
+        # Boost concepts linked to matched entities (entity-first recall)
+        for entity, similarity in entity_matches:
+            if similarity < 0.3:  # Skip low-similarity entity matches
+                continue
+            # Get all concepts linked to this entity (fact_clusters and patterns)
+            linked_concepts = self.store.get_concepts_for_entity(entity.id)
+            for concept in linked_concepts:
+                entity_derived_activation = similarity * 0.8 * concept.confidence
+                current = activation_map.get(concept.id, (0, "", 0))[0]
+                if entity_derived_activation > current:
+                    activation_map[concept.id] = (entity_derived_activation, "entity_embedding", 0)
+                    concept_cache[concept.id] = concept
 
         kw = self.hybrid_keyword_weight
         for concept, similarity in initial_matches:
@@ -695,13 +723,12 @@ class MemoryRetriever:
             logger.debug(f"Entity name matching: {entity_sourced} concepts from entities")
         t_entity_ms = (time.perf_counter() - t_entity_start) * 1000.0
 
-        # --- episode vector search (reuses the same embedding) ----------
+        # --- process episode results from parallel search ----------------
         t_episode_search_start = time.perf_counter()
         episode_results: Optional[list[ScoredEpisode]] = None
-        if episode_k > 0:
-            ep_matches = self.store.find_episodes_by_embedding(query_embedding, k=episode_k)
+        if episode_k > 0 and ep_matches_parallel:
             episode_results = []
-            for episode, similarity in ep_matches:
+            for episode, similarity in ep_matches_parallel:
                 if kw > 0.0:
                     kw_score = _keyword_score(query, episode.content or "")
                     fused = (1.0 - kw) * similarity + kw * kw_score

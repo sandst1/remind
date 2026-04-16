@@ -159,7 +159,7 @@ class TestMemoryInterface:
         )
 
         extractor = EntityExtractor(memory.llm, memory.store)
-        extractor.store_extraction_result(episode, llm_result)
+        await extractor.store_extraction_result(episode, llm_result)
 
         episode = memory.store.get_episode(episode_id)
         assert episode.entities_extracted

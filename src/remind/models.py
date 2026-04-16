@@ -177,6 +177,9 @@ class Entity:
     
     # Optional metadata
     metadata: dict = field(default_factory=dict)
+
+    # For retrieval via embedding similarity
+    embedding: Optional[list[float]] = None
     
     def to_dict(self) -> dict:
         """Serialize to dictionary."""
@@ -186,6 +189,7 @@ class Entity:
             "display_name": self.display_name,
             "created_at": self.created_at.isoformat(),
             "metadata": self.metadata,
+            "embedding": self.embedding,
         }
     
     @classmethod
@@ -197,6 +201,7 @@ class Entity:
             display_name=data.get("display_name"),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
             metadata=data.get("metadata", {}),
+            embedding=data.get("embedding"),
         )
     
     @classmethod
@@ -358,6 +363,9 @@ class Concept:
     # Each conflict: {fact_a: str, fact_b: str, detected_at: str, entity_id: str}
     conflicts: list[dict] = field(default_factory=list)
 
+    # Entity IDs linked to this concept (union of all source episodes' entities)
+    entity_ids: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         """Serialize to dictionary for storage."""
         return {
@@ -384,6 +392,7 @@ class Concept:
             "evidence": self.evidence,
             "actionable": self.actionable,
             "conflicts": self.conflicts,
+            "entity_ids": self.entity_ids,
         }
     
     @classmethod
@@ -413,6 +422,7 @@ class Concept:
             evidence=data.get("evidence", []),
             actionable=data.get("actionable", True),
             conflicts=data.get("conflicts", []),
+            entity_ids=data.get("entity_ids", []),
         )
     
     def add_relation(self, relation: Relation) -> None:

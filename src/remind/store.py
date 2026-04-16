@@ -175,6 +175,11 @@ class MemoryStore(ABC):
         ...
 
     @abstractmethod
+    def get_concepts_for_entity(self, entity_id: str) -> list[Concept]:
+        """Get all concepts (any type) that have this entity in their entity_ids."""
+        ...
+
+    @abstractmethod
     def get_concepts_by_type(self, concept_type: str) -> list[Concept]:
         """Get all concepts of a specific type (pattern, fact_cluster, legacy)."""
         ...
@@ -188,6 +193,11 @@ class MemoryStore(ABC):
     @abstractmethod
     def find_episodes_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple["Episode", float]]:
         """Find episodes by embedding similarity. Returns (episode, similarity) pairs."""
+        ...
+
+    @abstractmethod
+    def find_entities_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Entity, float]]:
+        """Find entities by embedding similarity. Returns (entity, similarity) pairs."""
         ...
 
     # Graph traversal
@@ -320,6 +330,11 @@ class MemoryStore(ABC):
     @abstractmethod
     def add_entity(self, entity: Entity) -> str:
         """Add an entity and return its ID. Updates if exists."""
+        ...
+
+    @abstractmethod
+    def update_entity(self, entity: Entity) -> None:
+        """Update an existing entity (including embedding)."""
         ...
 
     @abstractmethod
@@ -609,6 +624,7 @@ entities_table = Table(
     Column("display_name", Text, nullable=True),
     Column("data", JSON, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
+    Column("embedding", LargeBinary, nullable=True),
 )
 
 mentions_table = Table(
@@ -1403,6 +1419,82 @@ class SQLAlchemyMemoryStore(MemoryStore):
         return ep
 
     # ------------------------------------------------------------------
+    # Entity embedding-based retrieval
+    # ------------------------------------------------------------------
+
+    def find_entities_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Entity, float]]:
+        if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
+            return self._find_entities_sqlite_vec(embedding, k)
+        elif self._vec_backend == "pgvector" and self._vec_dimensions:
+            return self._find_entities_pgvector(embedding, k)
+        return self._find_entities_brute_force(embedding, k)
+
+    def _find_entities_sqlite_vec(self, embedding: list[float], k: int) -> list[tuple[Entity, float]]:
+        query_vec = np.array(embedding, dtype=np.float32)
+        with self._connect() as conn:
+            # Check if vec_entities table exists
+            try:
+                rows = conn.execute(text(
+                    "SELECT entity_id, distance FROM vec_entities "
+                    "WHERE embedding MATCH :vec ORDER BY distance LIMIT :k"
+                ), {"vec": query_vec.tobytes(), "k": k * 2}).fetchall()
+            except Exception:
+                # Fall back to brute force if vec table doesn't exist
+                return self._find_entities_brute_force(embedding, k)
+
+            results = []
+            for row in rows:
+                entity = self.get_entity(row.entity_id)
+                if entity:
+                    similarity = 1.0 - row.distance
+                    results.append((entity, similarity))
+
+            return results[:k]
+
+    def _find_entities_pgvector(self, embedding: list[float], k: int) -> list[tuple[Entity, float]]:
+        vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+        with self._connect() as conn:
+            try:
+                rows = conn.execute(text(
+                    "SELECT id, data, embedding_vec <=> :vec AS distance "
+                    "FROM entities WHERE embedding_vec IS NOT NULL "
+                    "ORDER BY embedding_vec <=> :vec LIMIT :k"
+                ), {"vec": vec_str, "k": k * 2}).fetchall()
+            except Exception:
+                # Fall back to brute force if vector column doesn't exist
+                return self._find_entities_brute_force(embedding, k)
+
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                entity = Entity.from_dict(data)
+                similarity = 1.0 - row.distance
+                results.append((entity, similarity))
+
+            return results[:k]
+
+    def _find_entities_brute_force(self, embedding: list[float], k: int) -> list[tuple[Entity, float]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(entities_table.c.data, entities_table.c.embedding)
+                .where(entities_table.c.embedding.isnot(None))
+            ).fetchall()
+
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if not row.embedding:
+                    continue
+                stored = _bytes_to_embedding(row.embedding)
+                sim = cosine_similarity(embedding, stored)
+                data["embedding"] = stored
+                entity = Entity.from_dict(data)
+                results.append((entity, sim))
+
+            results.sort(key=lambda x: x[1], reverse=True)
+            return results[:k]
+
+    # ------------------------------------------------------------------
     # Graph traversal
     # ------------------------------------------------------------------
 
@@ -1813,6 +1905,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
     # ------------------------------------------------------------------
 
     def add_entity(self, entity: Entity) -> str:
+        embedding_bytes = _embedding_to_bytes(entity.embedding) if entity.embedding else None
         with self._connect() as conn:
             try:
                 conn.execute(
@@ -1822,6 +1915,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                         display_name=entity.display_name,
                         data=_dump_json(entity.to_dict()),
                         created_at=entity.created_at,
+                        embedding=embedding_bytes,
                     )
                 )
             except IntegrityError:
@@ -1833,18 +1927,37 @@ class SQLAlchemyMemoryStore(MemoryStore):
                         type=entity.type.value,
                         display_name=entity.display_name,
                         data=_dump_json(entity.to_dict()),
+                        embedding=embedding_bytes,
                     )
                 )
         return entity.id
 
+    def update_entity(self, entity: Entity) -> None:
+        embedding_bytes = _embedding_to_bytes(entity.embedding) if entity.embedding else None
+        with self._connect() as conn:
+            conn.execute(
+                entities_table.update()
+                .where(entities_table.c.id == entity.id)
+                .values(
+                    type=entity.type.value,
+                    display_name=entity.display_name,
+                    data=_dump_json(entity.to_dict()),
+                    embedding=embedding_bytes,
+                )
+            )
+
     def get_entity(self, id: str) -> Optional[Entity]:
         with self._connect() as conn:
             row = conn.execute(
-                select(entities_table.c.data).where(entities_table.c.id == id)
+                select(entities_table.c.data, entities_table.c.embedding)
+                .where(entities_table.c.id == id)
             ).fetchone()
             if not row:
                 return None
-            return Entity.from_dict(_parse_json(row.data))
+            data = _parse_json(row.data)
+            if row.embedding:
+                data["embedding"] = _bytes_to_embedding(row.embedding)
+            return Entity.from_dict(data)
 
     def get_entities_by_type(self, entity_type: EntityType) -> list[Entity]:
         with self._connect() as conn:
@@ -2207,45 +2320,71 @@ class SQLAlchemyMemoryStore(MemoryStore):
             ]
 
     def get_concepts_for_entity(self, entity_id: str, limit: int = 50) -> list[Concept]:
-        with self._connect() as conn:
-            episode_rows = conn.execute(
-                select(mentions_table.c.episode_id)
-                .where(mentions_table.c.entity_id == entity_id)
-            ).fetchall()
-            episode_ids = {row.episode_id for row in episode_rows}
-
-            if not episode_ids:
-                return []
-
+        """Get all concepts that have this entity in their entity_ids.
+        
+        Falls back to episode-based lookup for legacy concepts without entity_ids.
+        """
         all_concepts = self.get_all_concepts()
         matching = []
+        legacy_check_needed = []
+        
         for concept in all_concepts:
-            overlap = set(concept.source_episodes) & episode_ids
-            if overlap:
-                matching.append((concept, len(overlap)))
-        matching.sort(key=lambda x: x[1], reverse=True)
-        return [c for c, _ in matching[:limit]]
+            # Direct lookup via entity_ids field
+            if entity_id in concept.entity_ids:
+                matching.append(concept)
+            elif not concept.entity_ids:
+                # Legacy concept without entity_ids - check via episodes
+                legacy_check_needed.append(concept)
+        
+        # Fallback for legacy concepts
+        if legacy_check_needed:
+            with self._connect() as conn:
+                episode_rows = conn.execute(
+                    select(mentions_table.c.episode_id)
+                    .where(mentions_table.c.entity_id == entity_id)
+                ).fetchall()
+                episode_ids = {row.episode_id for row in episode_rows}
+                
+                for concept in legacy_check_needed:
+                    overlap = set(concept.source_episodes) & episode_ids
+                    if overlap:
+                        matching.append(concept)
+        
+        return matching[:limit]
 
     def get_fact_clusters_for_entity(self, entity_id: str) -> list[Concept]:
-        """Get all fact_cluster concepts that reference episodes mentioning this entity."""
-        with self._connect() as conn:
-            episode_rows = conn.execute(
-                select(mentions_table.c.episode_id)
-                .where(mentions_table.c.entity_id == entity_id)
-            ).fetchall()
-            episode_ids = {row.episode_id for row in episode_rows}
-
-            if not episode_ids:
-                return []
-
+        """Get all fact_cluster concepts that have this entity in their entity_ids.
+        
+        Falls back to episode-based lookup for legacy clusters without entity_ids.
+        """
         all_concepts = self.get_all_concepts()
         matching = []
+        legacy_check_needed = []
+        
         for concept in all_concepts:
             if concept.concept_type != "fact_cluster":
                 continue
-            overlap = set(concept.source_episodes) & episode_ids
-            if overlap:
+            # Direct lookup via entity_ids field
+            if entity_id in concept.entity_ids:
                 matching.append(concept)
+            elif not concept.entity_ids:
+                # Legacy cluster without entity_ids - check via episodes
+                legacy_check_needed.append(concept)
+        
+        # Fallback for legacy clusters
+        if legacy_check_needed:
+            with self._connect() as conn:
+                episode_rows = conn.execute(
+                    select(mentions_table.c.episode_id)
+                    .where(mentions_table.c.entity_id == entity_id)
+                ).fetchall()
+                episode_ids = {row.episode_id for row in episode_rows}
+                
+                for concept in legacy_check_needed:
+                    overlap = set(concept.source_episodes) & episode_ids
+                    if overlap:
+                        matching.append(concept)
+        
         return matching
 
     def get_concepts_by_type(self, concept_type: str) -> list[Concept]:

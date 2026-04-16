@@ -399,7 +399,8 @@ class TestExtractBatch:
 class TestStoreExtractionResult:
     """Tests for store_extraction_result."""
 
-    def test_stores_entities_and_updates_episode(self, mock_llm, memory_store):
+    @pytest.mark.asyncio
+    async def test_stores_entities_and_updates_episode(self, mock_llm, memory_store):
         ep = Episode(content="Working on auth.py")
         memory_store.add_episode(ep)
 
@@ -410,7 +411,7 @@ class TestStoreExtractionResult:
         )
 
         extractor = EntityExtractor(mock_llm, memory_store)
-        extractor.store_extraction_result(ep, result)
+        await extractor.store_extraction_result(ep, result)
 
         updated = memory_store.get_episode(ep.id)
         assert updated.episode_type == "observation"
@@ -420,7 +421,8 @@ class TestStoreExtractionResult:
         entity = memory_store.get_entity("file:auth.py")
         assert entity is not None
 
-    def test_deduplicates_entities(self, mock_llm, memory_store):
+    @pytest.mark.asyncio
+    async def test_deduplicates_entities(self, mock_llm, memory_store):
         """When an entity already exists, reuse its ID."""
         existing_entity = Entity(id="file:auth.py", type=EntityType.FILE, display_name="auth.py")
         memory_store.add_entity(existing_entity)
@@ -434,12 +436,13 @@ class TestStoreExtractionResult:
         )
 
         extractor = EntityExtractor(mock_llm, memory_store)
-        extractor.store_extraction_result(ep, result)
+        await extractor.store_extraction_result(ep, result)
 
         updated = memory_store.get_episode(ep.id)
         assert "file:auth.py" in updated.entity_ids
 
-    def test_entity_relation_creates_missing_endpoints(self, mock_llm, memory_store):
+    @pytest.mark.asyncio
+    async def test_entity_relation_creates_missing_endpoints(self, mock_llm, memory_store):
         """Relations may name entities the LLM omitted from the entities list; FK stores need rows."""
         from remind.models import EntityRelation
 
@@ -461,13 +464,14 @@ class TestStoreExtractionResult:
         )
 
         extractor = EntityExtractor(mock_llm, memory_store)
-        extractor.store_extraction_result(ep, result)
+        await extractor.store_extraction_result(ep, result)
 
         assert memory_store.get_entity("subject:presidentofrepublic") is not None
         rels = memory_store.get_entity_relations("subject:government")
         assert any(r.source_id == "subject:presidentofrepublic" for r in rels)
 
-    def test_entity_relation_remapped_after_name_dedup(self, mock_llm, memory_store):
+    @pytest.mark.asyncio
+    async def test_entity_relation_remapped_after_name_dedup(self, mock_llm, memory_store):
         """Relation endpoints use extracted IDs; mentions may dedupe to an existing entity ID."""
         from remind.models import EntityRelation
 
@@ -494,12 +498,13 @@ class TestStoreExtractionResult:
         )
 
         extractor = EntityExtractor(mock_llm, memory_store)
-        extractor.store_extraction_result(ep, result)
+        await extractor.store_extraction_result(ep, result)
 
         rels = memory_store.get_entity_relations("subject:government")
         assert any(r.target_id == "person:alice" for r in rels)
 
-    def test_entity_relation_stub_reuses_existing_entity_by_name(self, mock_llm, memory_store):
+    @pytest.mark.asyncio
+    async def test_entity_relation_stub_reuses_existing_entity_by_name(self, mock_llm, memory_store):
         """Relation-only endpoints should not create zero-mention duplicate stubs."""
         from remind.models import EntityRelation
 
@@ -524,13 +529,14 @@ class TestStoreExtractionResult:
         )
 
         extractor = EntityExtractor(mock_llm, memory_store)
-        extractor.store_extraction_result(ep, result)
+        await extractor.store_extraction_result(ep, result)
 
         assert memory_store.get_entity("legal_act:act") is None
         rels = memory_store.get_entity_relations("other:act")
         assert any(r.target_id == "subject:procedure" for r in rels)
 
-    def test_entity_label_prefixes_reuse_existing_entity(self, mock_llm, memory_store):
+    @pytest.mark.asyncio
+    async def test_entity_label_prefixes_reuse_existing_entity(self, mock_llm, memory_store):
         """Label variants like 'Role: X' should resolve to existing canonical entity."""
         memory_store.add_entity(
             Entity(id="other:chancellor of justice", type=EntityType.OTHER, display_name="chancellor of justice")
@@ -550,7 +556,7 @@ class TestStoreExtractionResult:
         )
 
         extractor = EntityExtractor(mock_llm, memory_store)
-        extractor.store_extraction_result(ep, result)
+        await extractor.store_extraction_result(ep, result)
 
         updated = memory_store.get_episode(ep.id)
         assert updated.entity_ids == ["other:chancellor of justice"]
