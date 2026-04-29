@@ -140,7 +140,7 @@ async def tool_remember(
     lines = [f"Remembered as episode {episode_id}"]
     
     if ep_type:
-        lines.append(f"  Type: {ep_type.value}")
+        lines.append(f"  Type: {ep_type}")
     if entity_list:
         lines.append(f"  Entities: {', '.join(entity_list)}")
     if topic:
@@ -633,7 +633,7 @@ async def tool_update_episode(
             preview = content[:50] + "..." if len(content) > 50 else content
             lines.append(f"  Content: {preview}")
         if ep_type:
-            lines.append(f"  Type: {ep_type.value}")
+            lines.append(f"  Type: {ep_type}")
         if entity_list:
             lines.append(f"  Entities: {', '.join(entity_list)}")
         if plan_id:
