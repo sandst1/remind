@@ -35,10 +35,10 @@ ingest(content="<meeting transcript>", instructions="extract decisions and actio
 |-----------|------|----------|-------------|
 | `content` | string | Yes | Raw text to ingest |
 | `source` | string | No | Source label for metadata (default: `conversation`) |
-| `topic` | string | No | Topic ID or name. When set, all extracted episodes go to this topic. When omitted, the triage LLM infers per-episode topics automatically. |
+| `topic` | string | No | Topic ID or name. When set, all extracted episodes go to this topic. When omitted, episodes get `topic_id=None`. |
 | `instructions` | string | No | Natural-language instructions to steer what the triage LLM extracts (e.g. `"focus on architectural decisions"`). Appended to the triage system prompt; takes priority over default extraction behavior. |
 
-**Topic behavior**: With `topic`, all episodes are assigned to the given topic (no inference). Without `topic`, the triage LLM maps each episode to an existing topic or suggests a new one (auto-created).
+**Topic behavior**: With `topic`, all extracted episodes are assigned to that topic. Without `topic`, episodes get `topic_id=None` — no automatic inference.
 
 **Instructions**: Use `instructions` to focus extraction on specific types of information. Without `instructions`, the triage LLM uses its default behavior (capture anything potentially useful). With `instructions`, the LLM prioritizes the given directive — useful for ingesting meeting notes, transcripts, or documents where you know what you're looking for.
 
@@ -103,13 +103,17 @@ View concepts or episodes.
 ```
 inspect()                              # List all concepts
 inspect(concept_id="abc123")           # Concept details
-inspect(show_episodes=True)            # Include episodes
+inspect(show_episodes=True)            # Recent episodes
+inspect(show_episodes=True, limit=25, start_date="2024-01-01", end_date="2024-12-31")
 ```
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `concept_id` | string | No | Specific concept to inspect |
-| `show_episodes` | boolean | No | Include episode details |
+| `show_episodes` | boolean | No | List recent episodes instead of concepts |
+| `limit` | integer | No | Max items (default: 10) |
+| `start_date` | string | No | ISO date/datetime filter (episodes), inclusive |
+| `end_date` | string | No | ISO date/datetime filter (episodes), inclusive |
 
 ## entities
 
@@ -147,6 +151,14 @@ Memory statistics.
 stats()
 ```
 
+## episode_types
+
+List episode types enabled for this server (from environment, project config, global config, then defaults). Use when `episode_types` is customized.
+
+```
+episode_types()
+```
+
 ## update_episode
 
 Correct or modify an episode. Updating content resets it for re-consolidation.
@@ -154,6 +166,8 @@ Correct or modify an episode. Updating content resets it for re-consolidation.
 ```
 update_episode(episode_id="abc123", content="Corrected information")
 update_episode(episode_id="abc123", episode_type="decision")
+update_episode(episode_id="abc123", topic="architecture")
+update_episode(episode_id="abc123", topic="")   # clear topic (empty string)
 ```
 
 | Parameter | Type | Required | Description |
@@ -161,7 +175,12 @@ update_episode(episode_id="abc123", episode_type="decision")
 | `episode_id` | string | Yes | Episode ID |
 | `content` | string | No | New content |
 | `episode_type` | string | No | New type |
-| `entities` | string | No | New entity tags |
+| `entities` | string | No | Comma-separated entity tags |
+| `plan_id` | string | No | Optional metadata link (legacy DB content) |
+| `spec_ids` | string | No | Comma-separated spec episode IDs (legacy) |
+| `depends_on` | string | No | Comma-separated task IDs (legacy) |
+| `priority` | string | No | `p0`, `p1`, or `p2` (legacy) |
+| `topic` | string | No | Topic ID or name; **empty string clears** the episode topic |
 
 ## delete_episode / restore_episode
 
@@ -179,6 +198,8 @@ Refine a concept. Updating summary clears the embedding.
 ```
 update_concept(concept_id="def456", summary="Refined understanding")
 update_concept(concept_id="def456", confidence=0.9, tags="auth,security")
+update_concept(concept_id="def456", topic="architecture")
+update_concept(concept_id="def456", topic="")   # clear topic
 ```
 
 | Parameter | Type | Required | Description |
@@ -188,6 +209,8 @@ update_concept(concept_id="def456", confidence=0.9, tags="auth,security")
 | `summary` | string | No | New summary |
 | `confidence` | float | No | New confidence |
 | `tags` | string | No | Comma-separated tags |
+| `relations` | string | No | JSON array of relations |
+| `topic` | string | No | Topic ID or name; **empty string clears** the concept topic |
 
 ## delete_concept / restore_concept
 
@@ -204,9 +227,54 @@ List soft-deleted items.
 
 ```
 list_deleted()
-list_deleted(item_type="episode")
-list_deleted(item_type="concept")
+list_deleted(item_type="episodes")
+list_deleted(item_type="concepts")
+list_deleted(item_type="all")
 ```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `item_type` | string | No | `episodes`, `concepts`, or `all` (default: show both) |
+| `limit` | integer | No | Max items per type (default: 20) |
+
+## create_topic
+
+Create a topic for grouping episodes and concepts.
+
+```
+create_topic(name="Architecture", description="System design and infra")
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Display name |
+| `description` | string | No | Optional description |
+
+## update_topic
+
+Update a topic's name or description.
+
+```
+update_topic(topic_id="architecture", name="System architecture")
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `topic_id` | string | Yes | Topic ID |
+| `name` | string | No | New display name (omit to keep) |
+| `description` | string | No | New description (omit to keep) |
+
+## delete_topic
+
+Delete a topic only if no episodes or concepts reference it.
+
+```
+delete_topic(topic_id="old-theme")
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `topic_id` | string | Yes | Topic ID |
 
 ## list_topics
 
@@ -223,11 +291,11 @@ Returns each topic's name, number of episodes, number of concepts, and when it w
 Get top concepts for a specific topic — a quick way to see what Remind knows about a knowledge area without running a query.
 
 ```
-topic_overview(topic="architecture")
-topic_overview(topic="product", k=10)
+topic_overview(topic_id="architecture")
+topic_overview(topic_id="product", k=10)
 ```
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `topic` | string | Yes | Topic name |
+| `topic_id` | string | Yes | Topic ID (slug), e.g. `architecture` |
 | `k` | integer | No | Number of concepts to return (default: 5) |

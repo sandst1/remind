@@ -113,7 +113,7 @@ async def tool_remember(
     This is a fast operation - no LLM calls. Entity extraction and
     type classification happen during consolidation.
     
-    Auto-consolidation triggers when episode threshold (default: 10) is reached.
+    Auto-consolidation triggers when episode threshold (default: 5) is reached.
     """
     from remind.models import EpisodeType
     
@@ -862,11 +862,7 @@ async def tool_list_deleted(
 # ============================================================================
 
 def create_mcp_server(config=None):
-    """Create and configure the FastMCP server.
-    
-    Tools for spec, plan, and task episode types are only registered
-    when those types are present in config.episode_types.
-    """
+    """Create and configure the FastMCP server."""
     from fastmcp import FastMCP
     
     if config is None:
@@ -892,7 +888,7 @@ def create_mcp_server(config=None):
         This is a fast operation - no LLM calls. Entity extraction and type
         classification happen during consolidation.
         
-        Auto-consolidation: When the episode threshold (default: 10) is reached,
+        Auto-consolidation: When the episode threshold (default: 5, configurable) is reached,
         consolidation runs automatically after this call.
         
         Use this to log important information that should be remembered across sessions:
@@ -904,7 +900,7 @@ def create_mcp_server(config=None):
         Args:
             content: The experience/observation to remember (clear, standalone statement)
             metadata: Optional JSON string with additional metadata
-            episode_type: Optional explicit type (e.g., observation, decision, question, meta, preference, spec, plan, task, outcome, fact).
+            episode_type: Optional explicit type (e.g., observation, decision, question, meta, preference, outcome, fact).
                           Custom types are also accepted if configured. Auto-detected during consolidation if not provided.
             entities: Optional comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
                       (auto-detected during consolidation if not provided)
@@ -1309,8 +1305,8 @@ def create_mcp_server(config=None):
 
         Streams raw conversation text into Remind's auto-ingest pipeline.
         Text accumulates in an internal buffer until the threshold (~4000
-        chars) is reached, then gets scored for information density and
-        distilled into memory-worthy episodes automatically.
+        chars) is reached, then the triage LLM extracts memory-worthy episodes.
+        An optional density score may be recorded for diagnostics only; it does not gate extraction.
 
         Use this instead of remember() when you want Remind to decide
         what's worth remembering. remember() stores everything as-is;

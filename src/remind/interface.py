@@ -781,9 +781,8 @@ class MemoryInterface:
             content: Raw text to ingest (conversation fragments, tool output, etc.)
             source: Source label for metadata (default: "conversation")
             topic: Optional topic ID or name for extracted episodes.
-                   When set, all episodes are assigned this topic (no inference).
-                   When None, the triage LLM infers per-episode topics from
-                   content, mapping to existing topics or creating new ones.
+                   When set, all episodes are assigned this topic.
+                   When None (default), episodes get topic_id=None.
             instructions: Optional natural-language instructions that steer
                    what the triage LLM extracts (e.g. "focus on architectural
                    decisions", "extract all config values"). Appended to the
@@ -817,7 +816,7 @@ class MemoryInterface:
         Args:
             topic: Optional topic ID or name for extracted episodes.
                    When set, all episodes are assigned this topic.
-                   When None, topics are inferred by the triage LLM.
+                   When None (default), episodes get topic_id=None.
             instructions: Optional natural-language instructions that steer
                    what the triage LLM extracts. Same as ingest() instructions.
 

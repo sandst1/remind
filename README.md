@@ -81,7 +81,7 @@ remind ui
 
 - **Dual-track concepts** — Pattern concepts for generalizations, fact clusters for verbatim details. Facts are never abstracted away.
 - **Generalization** — Episodes are consolidated into concepts with confidence, conditions, and exceptions
-- **Auto-ingest** — Stream raw conversation text; Remind scores information density and distills memory-worthy episodes automatically
+- **Auto-ingest** — Stream raw conversation text; an LLM triage pass extracts memory-worthy episodes (optional density score is diagnostic only, not a gate)
 - **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph, with hybrid embedding+keyword scoring and optional cross-encoder reranking
 - **Native vector indexes** — sqlite-vec for SQLite, pgvector for PostgreSQL; automatic fallback to brute-force when unavailable
 - **Entity graph** — Files, functions, people, tools and other entities are extracted and linked to episodes and concepts
@@ -126,7 +126,7 @@ Remind creates the schema automatically on first use. See the [examples/](exampl
 Core
   remember     Add an episode (-t type, -e entity, -m metadata, --no-embed)
   recall       Semantic or entity-based memory retrieval (-k, --episode-k)
-  ingest       Auto-ingest raw text with density scoring
+  ingest       Auto-ingest raw text (LLM triage; optional diagnostic density score)
   flush-ingest Force-flush the ingestion buffer
   consolidate  Run consolidation manually (--background, --force)
   reconsolidate  Reset derived data and re-consolidate from scratch
@@ -136,6 +136,7 @@ Inspection
   inspect      List or detail concepts; use --episodes for episodes
   stats        Memory statistics and decay info
   status       Processing status (workers, queues, pending)
+  types        Show configured episode types for this environment
   search       Keyword/tag search across concepts
   entities     List entities or show a specific entity
   mentions     All episodes mentioning an entity
@@ -144,20 +145,16 @@ Inspection
 Episode types
   decisions    Show decision episodes
   questions    Show open question episodes
-  specs        Show spec episodes (requires spec type enabled)
-  plans        Show plan episodes (requires plan type enabled)
 
-Task management (requires task type enabled)
-  tasks               List tasks grouped by status
-  task add            Create a task (--priority, --plan, --spec, --depends-on)
-  task update         Update a task's linkage, priority, or description (--plan, --spec, --depends-on, --priority)
-  task start          Mark task in_progress
-  task done           Mark task done
-  task block          Block a task with an optional reason
-  task unblock        Return a blocked task to todo
+Topics
+  topics list       List topics with stats (--json / --compact-json)
+  topics create     Create a topic (--description)
+  topics update     Rename or update description
+  topics delete     Delete an empty topic
+  topics overview   Top concepts for a topic (-k)
 
 Editing
-  update-episode      Update content, type, entities, metadata, or topic (--plan, --spec, --depends-on, --priority, --topic, --clear-topic)
+  update-episode      Update content, type, entities, or topic (--topic, --clear-topic)
   update-concept      Update title, summary, confidence, tags, relations, or topic (--topic, --clear-topic)
   extract-relations   Backfill entity relationships from existing episodes
 

@@ -10,7 +10,7 @@ Commands:
     remind status                - Show processing status (workers, queues)
     remind export <file>         - Export memory to JSON
     remind import <file>         - Import memory from JSON
-    remind ingest "text"         - Auto-ingest with density scoring
+    remind ingest "text"         - Auto-ingest (LLM triage; density score diagnostic only)
     remind flush-ingest          - Force-flush ingestion buffer
     remind re-embed              - Recompute embeddings for episodes/concepts
 """
@@ -2172,15 +2172,10 @@ def ui(ctx, port: int, host: str, no_open: bool):
 @main.command("skill-install")
 @click.argument("names", nargs=-1)
 def skill_install(names: tuple):
-    """Install Remind skills for Claude Code in the current project.
+    """Install the Remind skill for Claude Code in the current project.
 
-    Installs skill files to .claude/skills/<name>/SKILL.md from the
-    bundled package data, keeping them in sync with the installed version.
-
-    Available skills: remind, remind-plan, remind-spec, remind-implement
-
-    With no arguments, installs all skills. Pass specific names to install
-    only those (e.g., "remind skill-install remind remind-plan").
+    Installs .claude/skills/remind/SKILL.md from the bundled package data,
+    keeping it in sync with the installed version.
     """
     to_install = list(names) if names else SKILL_NAMES
 

@@ -43,24 +43,27 @@ The `db` parameter is a simple name that resolves to `~/.remind/{name}.db`. Each
 
 ## Available tools
 
+Full parameter lists and examples: **[MCP tools reference](/reference/mcp-tools)**.
+
+Summary:
+
 | Tool | Purpose |
 |------|---------|
-| `remember` | Store experiences (observation, decision, question, preference, meta, outcome, fact) |
-| `recall` | Retrieve relevant memories via spreading activation or entity lookup |
-| `ingest` | Stream raw text for automatic density scoring and episode extraction |
-| `flush_ingest` | Force-flush the ingestion buffer |
-| `consolidate` | Process episodes into concepts |
-| `inspect` | View concepts or episodes |
-| `entities` | List entities with mention counts |
-| `inspect_entity` | View entity details and relationships |
+| `remember` | Store an episode (optional `episode_type`, `entities`, `topic`, `source_type`, `metadata`) |
+| `recall` | Spreading activation (+ optional `entity`, `episode_k`, `topic`) |
+| `ingest` | Buffer raw text; **triage LLM** extracts episodes. Optional density score is **diagnostic only**, not a gate |
+| `flush_ingest` | Flush buffer (optional `topic`, `instructions`) |
+| `list_topics` | List topics with counts |
+| `create_topic` / `update_topic` / `delete_topic` | Manage topics |
+| `topic_overview` | Top concepts for a topic (`topic_id`) |
+| `consolidate` | Run consolidation (`force`) |
+| `inspect` | Concepts or episodes (`show_episodes`, date filters, `limit`) |
 | `stats` | Memory statistics |
-| `update_episode` | Correct or modify an episode |
-| `delete_episode` | Soft delete an episode |
-| `restore_episode` | Restore a deleted episode |
-| `update_concept` | Refine a concept |
-| `delete_concept` | Soft delete a concept |
-| `restore_concept` | Restore a deleted concept |
-| `list_deleted` | List soft-deleted items |
+| `episode_types` | Show configured episode types |
+| `entities` / `inspect_entity` | Entity graph |
+| `update_episode` / `delete_episode` / `restore_episode` | Episode maintenance (`topic` clears with `""`) |
+| `update_concept` / `delete_concept` / `restore_concept` | Concept maintenance |
+| `list_deleted` | Soft-deleted items (`item_type`: `episodes`, `concepts`, `all`) |
 
 ## Agent instructions
 

@@ -43,7 +43,7 @@ async def main():
 
     # Explore topics
     topics = memory.list_topics()
-    overview = await memory.get_topic_overview("architecture")
+    overview = memory.get_topic_overview("architecture")
 
 asyncio.run(main())
 ```
@@ -53,7 +53,7 @@ asyncio.run(main())
 Stream raw text and let Remind decide what's worth remembering:
 
 ```python
-# Stream conversation fragments — topics are inferred automatically
+# Stream conversation fragments — no topic → episodes get topic_id=None
 await memory.ingest("User: How should we handle rate limiting?")
 await memory.ingest("Assistant: I'd suggest a token bucket at the gateway...")
 
@@ -68,7 +68,7 @@ await memory.ingest(meeting_notes, instructions="focus on decisions and risks")
 await memory.flush_ingest()
 ```
 
-`ingest()` buffers text until a threshold (~4000 chars) is reached, then runs **triage**: an LLM extracts memory-worthy episodes. A density score may be produced for logging only; extraction is not gated by a numeric threshold. When `topic` is given, all episodes go to that topic. When omitted, the triage LLM infers per-episode topics (mapping to existing topics or creating new ones). When `instructions` is given, the triage LLM uses those instructions to decide what to extract — useful for focused ingestion of meeting notes, transcripts, or documentation. Use `remember()` when you already know what's important; use `ingest()` when you want the triage LLM to filter and distill.
+`ingest()` buffers text until a threshold (~4000 chars) is reached, then runs **triage**: an LLM extracts memory-worthy episodes. A density score may be produced for logging only; extraction is not gated by a numeric threshold. When `topic` is given, all episodes go to that topic. When omitted, episodes get `topic_id=None` — no automatic inference. When `instructions` is given, the triage LLM uses those instructions to decide what to extract — useful for focused ingestion of meeting notes, transcripts, or documentation. Use `remember()` when you already know what's important; use `ingest()` when you want the triage LLM to filter and distill.
 
 ## Fact and outcome episodes
 
@@ -87,7 +87,7 @@ memory.remember(
 ## Key design decisions
 
 - **`remember()` is synchronous and fast** — No LLM calls, just stores the episode. This keeps the write path non-blocking.
-- **`ingest()` is async with LLM triage** — Buffers raw text, extracts episodes with topic inference, and consolidates automatically.
+- **`ingest()` is async with LLM triage** — Buffers raw text, extracts memory-worthy episodes, and consolidates automatically. Episodes get `topic_id=None` unless you pass a `topic`.
 - **`consolidate()` is async** — This is where all LLM work happens (extraction, generalization). Call it explicitly or let auto-consolidation handle it.
 - **`recall()` is async** — Uses embeddings and spreading activation.
 

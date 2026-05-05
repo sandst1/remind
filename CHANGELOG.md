@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-05-05
+
+### Added
+
+- **Dual-track concepts** — Concepts are now classified as either `pattern` (generalizations from observations and decisions) or `fact_cluster` (verbatim fact details that are never abstracted away). Fact clusters include a `summary` generated from their constituent facts.
+- **Entity embeddings** — Entities are now embedded alongside episodes for richer retrieval.
+
+### Changed
+
+- **Consolidation prompts** — Improved concept and fact-tracking prompts for better specificity and throughput; fact clustering logic tuned for higher precision.
+
+### Removed
+
+- **Plan / spec / task episode types and CLI** — The `spec`, `plan`, and `task` episode types, related CLI commands (`specs`, `plans`, `tasks`, `task …`), and MCP tools have been removed. Remind is a memory layer, not a task planner. Use standard episode types (`observation`, `decision`, `question`, `fact`, etc.) with entities and metadata to track work. Existing databases with these episode types continue to work; the types are just no longer surfaced by the CLI or MCP.
+- **Bundled plan/spec/implement skills** — `remind-plan`, `remind-spec`, and `remind-implement` skills removed from the package. `skill-install` now installs only the base `remind` skill.
+
+### Fixed
+
+- **Entity processing bug** — Fixed a bug where entity extraction could produce incorrect associations during consolidation.
+- **UI fixes** — Various web UI reliability improvements.
+
+### Documentation
+
+- README, MCP reference, CLI reference, and concept pages updated to reflect removed types and current CLI (topics subgroup, `types` command, corrected `ingest` topic behavior, expanded MCP tool list).
+
 ## [0.10.4] - 2026-04-09
 
 ### Added
