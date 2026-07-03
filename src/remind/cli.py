@@ -436,7 +436,7 @@ def apply(ctx, changeset: Optional[str], input_file: Optional[str], dry_run: boo
     engine = ApplyEngine(
         store=memory.store,
         embedding=memory.embedding,
-        fact_cluster_jaccard_threshold=memory.config.fact_cluster_jaccard_threshold,
+        fact_cluster_jaccard_threshold=memory.fact_cluster_jaccard_threshold,
     )
     
     async def _apply():
@@ -1011,6 +1011,9 @@ def re_embed(ctx, episodes: bool, concepts: bool, entities: bool, all_targets: b
     console.print(f"  Dimensions: {plan['stored_dimensions']} -> {plan['target_dimensions']}")
 
     if not yes:
+        if not sys.stdin.isatty():
+            console.print("[red]Error: Use -y/--yes flag for non-interactive re-embedding[/red]")
+            raise SystemExit(1)
         proceed = click.confirm("Proceed with re-embedding?", default=True)
         if not proceed:
             console.print("[yellow]Cancelled. No changes made.[/yellow]")
@@ -2156,6 +2159,10 @@ def delete_episode(ctx, episode_id: str, yes: bool):
         return
 
     if not yes:
+        # Skip confirmation if stdin is not a TTY (automation-friendly)
+        if not sys.stdin.isatty():
+            console.print("[red]Error: Use -y/--yes flag for non-interactive deletion[/red]")
+            raise SystemExit(1)
         console.print(f"Episode to delete:")
         console.print(f"  ID: [cyan]{episode.id}[/cyan]")
         console.print(f"  Content: {episode.content[:60]}...")
@@ -2192,6 +2199,9 @@ def purge_episode(ctx, episode_id: str, yes: bool):
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     if not yes:
+        if not sys.stdin.isatty():
+            console.print("[red]Error: Use -y/--yes flag for non-interactive purge[/red]")
+            raise SystemExit(1)
         console.print(f"[red]WARNING: This will PERMANENTLY delete episode {episode_id}[/red]")
         if not click.confirm("Are you sure?"):
             console.print("[yellow]Cancelled[/yellow]")
@@ -2287,6 +2297,9 @@ def delete_concept(ctx, concept_id: str, yes: bool):
         return
 
     if not yes:
+        if not sys.stdin.isatty():
+            console.print("[red]Error: Use -y/--yes flag for non-interactive deletion[/red]")
+            raise SystemExit(1)
         console.print(f"Concept to delete:")
         console.print(f"  ID: [cyan]{concept.id}[/cyan]")
         console.print(f"  Title: {concept.title or 'N/A'}")
@@ -2324,6 +2337,9 @@ def purge_concept(ctx, concept_id: str, yes: bool):
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     if not yes:
+        if not sys.stdin.isatty():
+            console.print("[red]Error: Use -y/--yes flag for non-interactive purge[/red]")
+            raise SystemExit(1)
         console.print(f"[red]WARNING: This will PERMANENTLY delete concept {concept_id}[/red]")
         if not click.confirm("Are you sure?"):
             console.print("[yellow]Cancelled[/yellow]")
@@ -2431,6 +2447,9 @@ def purge_all(ctx, yes: bool):
     console.print(f"  Concepts: {len(deleted_concepts)}")
 
     if not yes:
+        if not sys.stdin.isatty():
+            console.print("[red]Error: Use -y/--yes flag for non-interactive purge[/red]")
+            raise SystemExit(1)
         console.print(f"\n[red]WARNING: This will PERMANENTLY delete all {len(deleted_episodes) + len(deleted_concepts)} items[/red]")
         if not click.confirm("Are you sure?"):
             console.print("[yellow]Cancelled[/yellow]")
