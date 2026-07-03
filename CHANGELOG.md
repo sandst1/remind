@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-07-03
+
+### Fixed
+
+- **`remind apply link` crash** — Fixed `'SQLAlchemyMemoryStore' object has no attribute 'add_relation'` when creating concept relations via the `link` operation in batch changesets.
+- **`remind topics list` crash** — Fixed `TypeError: 'Topic' object is not subscriptable` when listing topics. The CLI now receives proper dict records with stats.
+- **`remind update-concept` crash** — Fixed `TypeError: MemoryInterface.update_concept() got an unexpected keyword argument 'confidence'`. The method now accepts `confidence`, `tags`, and `relations` parameters.
+- **`remind purge-concept` crash** — Fixed `TypeError: SQLAlchemyMemoryStore.get_concept() got an unexpected keyword argument 'include_deleted'`. The store method now supports the `include_deleted` parameter.
+- **`remind status` crash** — Fixed `ImportError: cannot import name 'is_consolidation_running' from 'remind.background'`. Added stub implementations for consolidation and ingest worker status checks.
+- **Missing `RELATED_TO` relation type** — Added `related_to` to the `RelationType` enum as the default generic relationship type used by the `link` operation.
+
 ## [0.11.4] - 2026-07-03
 
 ### Added

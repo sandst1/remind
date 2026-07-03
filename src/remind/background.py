@@ -48,6 +48,67 @@ def build_recall_worker_key(
     })
 
 
+def get_consolidation_lock_path(
+    db_url: str,
+    remind_dir: Optional[Path] = None,
+) -> Path:
+    """Get lock file path for consolidation worker."""
+    base = remind_dir if remind_dir is not None else REMIND_DIR
+    return base / f".consolidation-{_db_hash(db_url)}.lock"
+
+
+def is_consolidation_running(
+    db_url: str,
+    remind_dir: Optional[Path] = None,
+) -> bool:
+    """Check whether a consolidation worker lock is held."""
+    lock_path = get_consolidation_lock_path(db_url, remind_dir=remind_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lock = FileLock(str(lock_path), timeout=0)
+    try:
+        lock.acquire(blocking=False)
+        lock.release()
+        return False
+    except Timeout:
+        return True
+
+
+def get_ingest_lock_path(
+    db_url: str,
+    remind_dir: Optional[Path] = None,
+) -> Path:
+    """Get lock file path for ingest worker."""
+    base = remind_dir if remind_dir is not None else REMIND_DIR
+    return base / f".ingest-{_db_hash(db_url)}.lock"
+
+
+def is_ingest_running(
+    db_url: str,
+    remind_dir: Optional[Path] = None,
+) -> bool:
+    """Check whether an ingest worker lock is held."""
+    lock_path = get_ingest_lock_path(db_url, remind_dir=remind_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lock = FileLock(str(lock_path), timeout=0)
+    try:
+        lock.acquire(blocking=False)
+        lock.release()
+        return False
+    except Timeout:
+        return True
+
+
+def get_ingest_queue_dir(
+    db_url: str,
+    remind_dir: Optional[Path] = None,
+) -> Path:
+    """Get directory for queued ingest chunks."""
+    base = remind_dir if remind_dir is not None else REMIND_DIR
+    return base / f"ingest-queue-{_db_hash(db_url)}"
+
+
 def get_recall_lock_path(
     db_url: str,
     worker_key: str,

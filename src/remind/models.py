@@ -12,6 +12,7 @@ import re
 class RelationType(Enum):
     """Types of relationships between concepts."""
     
+    RELATED_TO = "related_to"     # Generic relationship (default)
     IMPLIES = "implies"           # A implies B (if A then likely B)
     CONTRADICTS = "contradicts"   # A contradicts B (tension/conflict)
     SPECIALIZES = "specializes"   # A is a more specific version of B

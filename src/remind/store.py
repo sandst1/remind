@@ -1380,7 +1380,34 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 )
             )
 
-    def get_concept(self, id: str) -> Optional[Concept]:
+    def add_relation(self, concept_id: str, relation: Relation) -> None:
+        """Add a single relation from a concept to another concept."""
+        with self._connect() as conn:
+            conn.execute(
+                relations_table.insert().values(
+                    source_id=concept_id,
+                    target_id=relation.target_id,
+                    type=relation.type.value,
+                    strength=relation.strength,
+                    context=relation.context,
+                )
+            )
+            # Also update the concept's in-memory relations list
+            row = conn.execute(
+                select(concepts_table.c.data).where(concepts_table.c.id == concept_id)
+            ).fetchone()
+            if row:
+                data = _parse_json(row.data)
+                relations_list = data.get("relations", [])
+                relations_list.append(relation.to_dict())
+                data["relations"] = relations_list
+                conn.execute(
+                    concepts_table.update()
+                    .where(concepts_table.c.id == concept_id)
+                    .values(data=_dump_json(data))
+                )
+
+    def get_concept(self, id: str, include_deleted: bool = False) -> Optional[Concept]:
         with self._connect() as conn:
             row = conn.execute(
                 select(concepts_table.c.data, concepts_table.c.embedding)
@@ -1389,7 +1416,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             if not row:
                 return None
             data = _parse_json(row.data)
-            if data.get("deleted_at"):
+            if data.get("deleted_at") and not include_deleted:
                 return None
             if row.embedding:
                 data["embedding"] = _bytes_to_embedding(row.embedding)

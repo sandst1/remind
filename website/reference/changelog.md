@@ -2,6 +2,17 @@
 
 All notable changes to Remind.
 
+## [0.11.5] - 2026-07-03
+
+### Fixed
+
+- **`remind apply link` crash** — Fixed missing `add_relation` method when creating concept relations via the `link` operation.
+- **`remind topics list` crash** — Fixed `TypeError: 'Topic' object is not subscriptable` when listing topics.
+- **`remind update-concept` crash** — The method now accepts `confidence`, `tags`, and `relations` parameters.
+- **`remind purge-concept` crash** — The `get_concept` method now supports the `include_deleted` parameter.
+- **`remind status` crash** — Added missing consolidation and ingest worker status check functions.
+- **Missing `RELATED_TO` relation type** — Added `related_to` to the `RelationType` enum as the default generic relationship type.
+
 ## [0.11.4] - 2026-07-03
 
 ### Added

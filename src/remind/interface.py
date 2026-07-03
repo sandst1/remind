@@ -586,8 +586,9 @@ class MemoryInterface:
     def get_topic(self, id: str) -> Optional[Topic]:
         return self.store.get_topic(id)
 
-    def list_topics(self) -> list[Topic]:
-        return self.store.get_all_topics()
+    def list_topics(self) -> list[dict]:
+        """List all topics with stats (episode/concept counts, latest activity)."""
+        return self.store.get_topic_stats()
 
     def update_topic(
         self,
@@ -799,6 +800,9 @@ class MemoryInterface:
         id: str,
         summary: Optional[str] = None,
         title: Optional[str] = None,
+        confidence: Optional[float] = None,
+        tags: Optional[list[str]] = None,
+        relations: Optional[list[dict]] = None,
         topic: Optional[str] = None,
         clear_topic: bool = False,
     ) -> Optional[Concept]:
@@ -812,6 +816,28 @@ class MemoryInterface:
 
         if title is not None:
             concept.title = title
+
+        if confidence is not None:
+            concept.confidence = max(0.0, min(1.0, confidence))
+
+        if tags is not None:
+            concept.tags = tags
+
+        if relations is not None:
+            new_relations = []
+            for rel_dict in relations:
+                rel_type_str = rel_dict.get("type", "related_to")
+                try:
+                    rel_type = RelationType(rel_type_str)
+                except ValueError:
+                    rel_type = RelationType.RELATED_TO
+                new_relations.append(Relation(
+                    type=rel_type,
+                    target_id=rel_dict.get("target_id", ""),
+                    strength=float(rel_dict.get("strength", 0.5)),
+                    context=rel_dict.get("context"),
+                ))
+            concept.relations = new_relations
 
         if clear_topic:
             concept.topic_id = None

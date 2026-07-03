@@ -1367,7 +1367,7 @@ def status(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
 
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
     db_path = ctx.obj["db"]
-    memory = get_memory(db_path, ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(db_path, ctx.obj["embedding"])
     stats_data = memory.get_stats()
     config = load_config(project_dir=Path.cwd())
 
@@ -1401,10 +1401,9 @@ def status(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
     else:
         lines.append("[bold dim]○ Ingest worker[/bold dim]  [dim]idle[/dim]")
 
-    if config.reranking_enabled and config.cli_recall_worker_enabled:
+    if config.reranking_enabled and getattr(config, "cli_recall_worker_enabled", True):
         worker_key = build_recall_worker_key(
             db_url=db_path,
-            llm_provider=ctx.obj["llm"],
             embedding_provider=ctx.obj["embedding"],
             config_fingerprint=_recall_config_fingerprint(config),
         )
@@ -1456,10 +1455,9 @@ def status(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
 
     if out_fmt in ("json", "compact_json"):
         recall_json: Optional[dict] = None
-        if config.reranking_enabled and config.cli_recall_worker_enabled:
+        if config.reranking_enabled and getattr(config, "cli_recall_worker_enabled", True):
             worker_key = build_recall_worker_key(
                 db_url=db_path,
-                llm_provider=ctx.obj["llm"],
                 embedding_provider=ctx.obj["embedding"],
                 config_fingerprint=_recall_config_fingerprint(config),
             )

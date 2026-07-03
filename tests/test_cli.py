@@ -22,7 +22,7 @@ class _FakeMemory:
         self.plan_calls = []
         self.reembed_calls = []
 
-    async def get_reembed_plan(self, include_episodes: bool, include_concepts: bool):
+    async def get_reembed_plan(self, include_episodes: bool, include_concepts: bool, include_entities: bool = True):
         self.plan_calls.append({
             "include_episodes": include_episodes,
             "include_concepts": include_concepts,
@@ -30,11 +30,12 @@ class _FakeMemory:
         return {
             "episodes": 4,
             "concepts": 3,
+            "entities": 2,
             "stored_dimensions": 3072,
             "target_dimensions": 1536,
         }
 
-    async def reembed(self, include_episodes: bool, include_concepts: bool, batch_size: int):
+    async def reembed(self, include_episodes: bool, include_concepts: bool, include_entities: bool = True, batch_size: int = 50):
         self.reembed_calls.append({
             "include_episodes": include_episodes,
             "include_concepts": include_concepts,
@@ -43,8 +44,10 @@ class _FakeMemory:
         return {
             "concepts_embedded": 3,
             "episodes_embedded": 4,
+            "entities_embedded": 2,
             "concepts_cleared": 3,
             "episodes_cleared": 4,
+            "entities_cleared": 2,
             "stored_dimensions": 3072,
             "target_dimensions": 1536,
         }
@@ -70,7 +73,7 @@ def test_re_embed_defaults_to_all(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["--db", "test", "--llm", "openai", "--embedding", "openai", "re-embed", "--yes"],
+        ["--db", "test", "--embedding", "openai", "re-embed", "--yes"],
     )
 
     assert result.exit_code == 0
@@ -82,20 +85,21 @@ def test_re_embed_defaults_to_all(monkeypatch):
     }]
 
 
-def test_re_embed_cancelled_on_prompt(monkeypatch):
+def test_re_embed_requires_tty_or_yes_flag(monkeypatch):
+    """In non-TTY mode, re-embed requires --yes flag to proceed."""
     fake_memory = _FakeMemory()
     _patch_cli_config(monkeypatch)
     monkeypatch.setattr("remind.cli.get_memory", lambda *_args, **_kwargs: fake_memory)
-    monkeypatch.setattr("remind.cli.click.confirm", lambda *_args, **_kwargs: False)
 
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["--db", "test", "--llm", "openai", "--embedding", "openai", "re-embed"],
+        ["--db", "test", "--embedding", "openai", "re-embed"],
     )
 
-    assert result.exit_code == 0
-    assert "Cancelled. No changes made." in result.output
+    # In non-TTY mode, should fail with helpful message
+    assert result.exit_code == 1
+    assert "Use -y/--yes flag" in result.output
     assert len(fake_memory.plan_calls) == 1
     assert fake_memory.reembed_calls == []
 
@@ -105,7 +109,7 @@ def test_types_json_output(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["--db", "test", "--llm", "openai", "--embedding", "openai", "types", "--json"],
+        ["--db", "test", "--embedding", "openai", "types", "--json"],
     )
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -119,7 +123,7 @@ def test_cli_output_flags_mutually_exclusive(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["--db", "test", "--llm", "openai", "--embedding", "openai", "types", "--json", "--table"],
+        ["--db", "test", "--embedding", "openai", "types", "--json", "--table"],
     )
     assert result.exit_code != 0
     assert "only one of" in result.output.lower()
@@ -129,8 +133,6 @@ def test_cli_output_flags_mutually_exclusive(monkeypatch):
         [
             "--db",
             "test",
-            "--llm",
-            "openai",
             "--embedding",
             "openai",
             "types",
@@ -147,7 +149,7 @@ def test_types_compact_json_output(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["--db", "test", "--llm", "openai", "--embedding", "openai", "types", "--compact-json"],
+        ["--db", "test", "--embedding", "openai", "types", "--compact-json"],
     )
     assert result.exit_code == 0
     data = json.loads(result.output)
