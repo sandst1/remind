@@ -2,6 +2,13 @@
 
 All notable changes to Remind.
 
+## [0.11.3] - 2026-07-03
+
+### Fixed
+
+- **Web UI Topics crash** — Fixed `Object of type Topic is not JSON serializable` error on the dashboard.
+- **`snapshot query:` crash** — Fixed `AttributeError` when using semantic search scope.
+
 ## [0.11.2] - 2026-07-03
 
 ### Fixed

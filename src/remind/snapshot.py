@@ -374,9 +374,9 @@ class SnapshotEngine:
             return {"error": f"Embedding failed: {e}"}
         
         # Vector search for concepts
-        concepts = self.store.vector_search_concepts(query_embedding, k=10)
+        results = self.store.find_by_embedding(query_embedding, k=10)
         
         return {
             "query": query_text,
-            "concepts": [_concept_to_dict(c) for c in concepts],
+            "concepts": [_concept_to_dict(concept) for concept, score in results],
         }

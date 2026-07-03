@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-07-03
+
+### Fixed
+
+- **Web UI Topics crash** — Fixed `Object of type Topic is not JSON serializable` error on the dashboard and Topics view.
+- **`snapshot query:` crash** — Fixed `AttributeError: 'SQLAlchemyMemoryStore' object has no attribute 'vector_search_concepts'` when using semantic search scope.
+
 ## [0.11.2] - 2026-07-03
 
 ### Fixed
