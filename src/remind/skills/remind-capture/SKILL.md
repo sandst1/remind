@@ -40,11 +40,17 @@ remind remember "User wants retry-after headers on 429s" -t preference --topic p
 
 Write clear standalone statements: "User prefers tabs" not "tabs". A memory is read without the conversation that produced it.
 
-### Handling fact collisions
+### Handling fact collisions and related facts
 
-For `fact` type episodes, `remember` returns potential collisions — active facts in the same cluster that may conflict. Collisions are detected via:
+For `fact` type episodes, `remember` returns two lists of potentially conflicting facts:
+
+**Collisions** — active facts in the *same cluster* detected via:
 1. **Entity overlap**: facts sharing any entity IDs
 2. **Semantic similarity**: facts with similar embeddings (cosine > 0.7)
+
+**Related facts** — active facts in *other clusters* detected via:
+1. **Bare-name entity match**: strips the type prefix (`person:alice` → `alice`) so `concept:alice`, `project:alice`, etc. are all found, regardless of how the entity was typed
+2. **Global embedding similarity**: facts across all clusters with cosine > 0.6
 
 The output looks like:
 
@@ -53,15 +59,20 @@ Remembered as episode ep-abc123
   Type: fact
   Fact ID: f-xyz789
   Cluster: c-12345
-  ⚠ 1 potential collision(s):
-  - f-old456: Cache TTL is 300 seconds... (entity overlap)
-  - f-old789: Default timeout is 5 minutes... (semantic similarity)
+  ⚠ 1 potential collision(s) in same cluster:
+  - f-old456: Cache TTL is 300 seconds...
+
+Related facts — check for conflicts (2):
+  [f-old789] "Alice is a dog" · person:alice · user · 2026-07-03
+  [f-old012] "Alice was really a horse" · concept:alice · user · 2026-07-03
 ```
 
-When you see collisions:
-1. Check if the new fact supersedes the old one (use `remind apply` with `supersede`)
-2. Or if both are valid in different contexts (dismiss the collision later via curate)
-3. Don't ignore collisions — they indicate contested information
+When you see either list:
+1. Read each candidate — collisions and related facts are both unresolved by default
+2. If the new fact supersedes an old one: use `remind apply` with `supersede old=<id> new=<id>`
+3. If there is a genuine contradiction: use `conflict` op to record it formally
+4. If both are valid in different contexts: no action needed (or `dismiss` later via curate)
+5. **Don't ignore either list** — cross-cluster related facts are the most likely source of silent contradictions (same subject, different entity type)
 
 ## Batch capture: apply
 
