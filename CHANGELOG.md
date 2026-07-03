@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - **`remind purge-concept` crash** — Fixed `TypeError: SQLAlchemyMemoryStore.get_concept() got an unexpected keyword argument 'include_deleted'`. The store method now supports the `include_deleted` parameter.
 - **`remind status` crash** — Fixed `ImportError: cannot import name 'is_consolidation_running' from 'remind.background'`. Added stub implementations for consolidation and ingest worker status checks.
 - **Missing `RELATED_TO` relation type** — Added `related_to` to the `RelationType` enum as the default generic relationship type used by the `link` operation.
+- **REST API topics endpoint crash** — Fixed `'dict' object has no attribute 'to_dict'` error on `/api/v1/topics` after `list_topics()` return type change.
 
 ## [0.11.4] - 2026-07-03
 

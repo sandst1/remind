@@ -12,6 +12,7 @@ All notable changes to Remind.
 - **`remind purge-concept` crash** — The `get_concept` method now supports the `include_deleted` parameter.
 - **`remind status` crash** — Added missing consolidation and ingest worker status check functions.
 - **Missing `RELATED_TO` relation type** — Added `related_to` to the `RelationType` enum as the default generic relationship type.
+- **REST API topics endpoint crash** — Fixed `'dict' object has no attribute 'to_dict'` error on `/api/v1/topics`.
 
 ## [0.11.4] - 2026-07-03
 
