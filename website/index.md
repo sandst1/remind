@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: Remind
-  text: Make AI dream about your tokens.
-  tagline: A memory layer that consolidates raw experiences into generalized knowledge. Episodes in, concepts out — like how your brain works overnight.
+  text: Agent-driven memory for LLMs.
+  tagline: A memory layer where agents curate knowledge. Episodes in, curated concepts out — with first-class fact handling and conflict detection.
   actions:
     - theme: brand
       text: Get Started
@@ -16,8 +16,8 @@ hero:
 features:
   - icon:
       src: /icons/brain-circuit.svg
-    title: Generalization, not storage
-    details: Episodes are consolidated into generalized concepts with confidence, conditions, and exceptions. Not another vector store.
+    title: Agent-driven curation
+    details: Your agent decides what to remember and how to organize it. Remind is the substrate, not the intelligence.
   - icon:
       src: /icons/puzzle.svg
     title: Composable via Skills
@@ -32,12 +32,12 @@ features:
     details: Queries activate matching concepts, which activate related concepts through the graph. Like how human memory works.
   - icon:
       src: /icons/cpu.svg
-    title: Multi-provider
-    details: Works with Anthropic, OpenAI, Azure OpenAI, and Ollama. Use cloud or run fully local.
+    title: Local by default
+    details: No API keys needed. Local embeddings via fastembed. Optional remote providers for higher quality.
   - icon:
       src: /icons/layout-dashboard.svg
     title: Web UI included
-    details: Dashboard, concept graph, entity explorer, and memory health — all built in.
+    details: Dashboard, concept graph, entity explorer, and conflict inbox — all built in.
 ---
 
 <style>
@@ -160,15 +160,15 @@ features:
 </style>
 
 <div class="showcase">
-  <img src="/ui-entity-graph.png" alt="Remind entity graph showing concepts and relationships extracted from research papers" />
-  <p class="caption">Entity graph built from ingesting research papers — concepts, tools, and their relationships, all extracted automatically.</p>
+  <img src="/ui-entity-graph.png" alt="Remind entity graph showing concepts and relationships" />
+  <p class="caption">Entity graph showing concepts, tools, and their relationships.</p>
 </div>
 
 <div class="how-it-works">
 
 ## How it works
 
-<p class="subtitle">The same consolidation loop your brain runs during sleep, applied to AI memory.</p>
+<p class="subtitle">Your agent curates memory. Remind handles storage, clustering, and retrieval.</p>
 
 <div class="flow">
 
@@ -176,11 +176,11 @@ features:
 
 ### 1. Remember
 
-Your agent stores raw experiences as episodes. Fast — no LLM calls.
+Store experiences as episodes. Fast — uses local embeddings by default.
 
 ```
 remind remember "User prefers Rust for systems work"
-remind remember "Chose PostgreSQL over MySQL for the user store" -t decision
+remind remember "Cache TTL is 300s" -t fact -e tool:redis
 ```
 
 </div>
@@ -189,12 +189,16 @@ remind remember "Chose PostgreSQL over MySQL for the user store" -t decision
 
 <div class="flow-step">
 
-### 2. Consolidate
+### 2. Curate
 
-Remind's "sleep" process. The LLM reviews episodes, finds patterns, extracts entities, and creates generalized concepts with relations.
+Your agent reviews pending state and organizes knowledge via batch tools.
 
 ```
-remind consolidate
+remind snapshot pending,conflicts
+remind apply << 'EOF'
+concept from=ep:11,ep:12 title="Tech stack" "Rust + Redis"
+processed ids=ep:11,ep:12
+EOF
 ```
 
 </div>
@@ -205,13 +209,14 @@ remind consolidate
 
 ### 3. Recall
 
-Spreading activation retrieval — not just keyword matching. Queries activate matching concepts, which activate related concepts through the graph.
+Spreading activation retrieval — not just keyword matching. Time-travel for facts.
 
 ```
 remind recall "What tech stack decisions have we made?"
+remind recall --as-of 2024-06-01 "cache config"
 ```
 
-Returns generalized concepts like *"User gravitates toward statically typed, performance-oriented languages"* — not a list of raw transcripts.
+Returns curated concepts with provenance, not raw transcripts.
 
 </div>
 
@@ -237,7 +242,7 @@ Returns generalized concepts like *"User gravitates toward statically typed, per
 
 <a class="example-card" href="./examples/research-ingestion">
 <h3>Research Ingestion</h3>
-<p>Feed in papers, find commonalities and contradictions. Consolidation surfaces themes across sources.</p>
+<p>Feed in papers, find commonalities and contradictions. The agent surfaces themes across sources.</p>
 </a>
 
 </div>

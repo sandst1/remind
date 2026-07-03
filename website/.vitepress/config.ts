@@ -16,7 +16,7 @@ export default defineConfig({
       { text: 'Examples', link: '/examples/' },
       { text: 'Reference', link: '/reference/cli-commands' },
       {
-        text: 'v0.10.5',
+        text: 'v0.11.0',
         items: [
           { text: 'Changelog', link: '/reference/changelog' },
           { text: 'PyPI', link: 'https://pypi.org/project/remind-mcp/' },
@@ -49,12 +49,13 @@ export default defineConfig({
           text: 'Core Concepts',
           items: [
             { text: 'Episodes', link: '/concepts/episodes' },
-            { text: 'Consolidation', link: '/concepts/consolidation' },
+            { text: 'Memory Curation', link: '/concepts/consolidation' },
             { text: 'Concepts', link: '/concepts/concepts' },
+            { text: 'Fact Pipeline', link: '/concepts/auto-ingest' },
+            { text: 'Facts & Conflicts', link: '/concepts/facts-and-conflicts' },
             { text: 'Entities', link: '/concepts/entities' },
             { text: 'Relations', link: '/concepts/relations' },
             { text: 'Retrieval', link: '/concepts/retrieval' },
-            { text: 'Auto-Ingest', link: '/concepts/auto-ingest' },
             { text: 'Memory Decay', link: '/concepts/memory-decay' },
           ],
         },

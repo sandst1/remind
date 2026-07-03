@@ -1,20 +1,15 @@
-"""LLM and Embedding providers."""
+"""Embedding providers."""
 
-from remind.providers.base import LLMProvider, EmbeddingProvider
-from remind.providers.anthropic import AnthropicLLM, AnthropicEmbedding
-from remind.providers.openai import OpenAILLM, OpenAIEmbedding
-from remind.providers.ollama import OllamaLLM, OllamaEmbedding
-from remind.providers.azure_openai import AzureOpenAILLM, AzureOpenAIEmbedding
+from remind.providers.base import EmbeddingProvider
+from remind.providers.local import LocalEmbedding
+from remind.providers.openai import OpenAIEmbedding
+from remind.providers.ollama import OllamaEmbedding
+from remind.providers.azure_openai import AzureOpenAIEmbedding
 
 __all__ = [
-    "LLMProvider",
     "EmbeddingProvider",
-    "AnthropicLLM",
-    "AnthropicEmbedding", 
-    "OpenAILLM",
+    "LocalEmbedding",
     "OpenAIEmbedding",
-    "OllamaLLM",
     "OllamaEmbedding",
-    "AzureOpenAILLM",
     "AzureOpenAIEmbedding",
 ]

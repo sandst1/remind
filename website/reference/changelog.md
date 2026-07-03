@@ -2,225 +2,149 @@
 
 All notable changes to Remind.
 
-## [Unreleased]
+## [0.11.0] - 2026-07-03
+
+### BREAKING CHANGES
+
+This release fundamentally changes how Remind works. **All internal LLM usage has been removed.** The calling agent is now the only intelligence — Remind is a deterministic memory substrate that you curate explicitly.
+
+**Migration required:**
+- Remove any `consolidate`, `ingest`, `flush-ingest`, `end-session` commands from scripts
+- Remove `--llm` flags from CLI invocations
+- Update any code that called `memory.consolidate()`, `memory.ingest()`, etc.
+- Run `remind re-embed --all` if switching from OpenAI to local embeddings (dimensions change from 1536 to 384)
+
+### Added
+
+- **Local embedding provider (default)** — `LocalEmbedding` using fastembed (ONNX-based, no API key). Zero-config default.
+- **`remind snapshot`** — Batch read tool returning a single JSON document. Scopes: `pending`, `conflicts`, `entity:<id>`, `topic:<id>`, `concept:<id>`, `recent:<n>`, `stats`, `query:<text>`.
+- **`remind apply`** — Batch write tool for transactional memory curation. Operations: `remember`, `supersede`, `conflict`, `resolve`, `dismiss`, `concept`, `update`, `link`, `topic`, `set_topic`, `delete`, `restore`, `processed`. Local refs, JSON and compact line format.
+- **Deterministic fact pipeline** — `remember()` with `type=fact` creates `Fact` rows using Jaccard similarity for cluster assignment. Collisions returned in `RememberResult` for agent disposition.
+- **Transaction support** — `store.transaction()` context manager for atomic operations.
+- **Episode provenance** — `asserted_by` and `source_ref` on episodes. Shown in recall output and web UI.
+- **First-class temporal facts** — `Fact` model with validity windows, supersession, provenance.
+- **Time-travel recall (`as_of`)** — Show facts valid at a past point in time.
+- **Conflict lifecycle** — `Conflict` model with `open` → `resolved`/`dismissed` lifecycle.
+- **Conflicts inbox in web UI** — New view with open-count badge.
+- **Rewritten agent skills** — `remind-capture`, `remind-context`, `remind-curate` for snapshot/apply workflow.
+
+### Changed
+
+- **`embedding_provider` default is now `"local"`** — No API key required.
+- **`remember()` returns `RememberResult`** — Contains `episode_id`, and for facts: collision info.
+- **`create_memory()` no longer accepts `llm_provider`** — Only embedding providers supported.
+- **Dashboard card renamed** — "Consolidation Status" → "Pending Review".
+
+### Removed
+
+- **All LLM providers** — `AnthropicLLM`, `OpenAILLM`, `AzureOpenAILLM`, `OllamaLLM` removed.
+- **Consolidation** — `memory.consolidate()`, CLI `remind consolidate`, MCP `consolidate` tool.
+- **Ingestion** — `memory.ingest()`, `memory.flush_ingest()`, CLI commands, MCP tools.
+- **Transcript capture** — `remind ingest-transcript`, `remind hook-install`.
+- **Entity extraction** — `extraction.py` removed. Entities must be specified explicitly.
+- **Chat endpoint** — `POST /api/v1/chat` removed.
+- **Background workers** — Consolidation and ingest workers removed.
 
 ## [0.10.5] - 2026-05-05
 
 ### Added
 
-- **Dual-track concepts** — Concepts are now classified as either `pattern` (generalizations from observations and decisions) or `fact_cluster` (verbatim fact details that are never abstracted away). Fact clusters include a `summary` generated from their constituent facts.
-- **Entity embeddings** — Entities are now embedded alongside episodes for richer retrieval.
+- **Dual-track concepts** — `pattern` (generalizations) or `fact_cluster` (verbatim facts).
+- **Entity embeddings** — Entities embedded alongside episodes for richer retrieval.
 
 ### Changed
 
-- **Consolidation prompts** — Improved concept and fact-tracking prompts for better specificity and throughput; fact clustering logic tuned for higher precision.
+- **Consolidation prompts** — Improved specificity and throughput.
 
 ### Removed
 
-- **Plan / spec / task episode types and CLI** — The `spec`, `plan`, and `task` episode types, related CLI commands (`specs`, `plans`, `tasks`, `task …`), and MCP tools have been removed. Remind is a memory layer, not a task planner. Use standard episode types (`observation`, `decision`, `question`, `fact`, etc.) with entities and metadata to track work. Existing databases with these episode types continue to work; the types are just no longer surfaced by the CLI or MCP.
-- **Bundled plan/spec/implement skills** — `remind-plan`, `remind-spec`, and `remind-implement` skills removed from the package. `skill-install` now installs only the base `remind` skill.
+- **Plan / spec / task episode types and CLI** — Removed. Use standard episode types.
+- **Bundled plan/spec/implement skills** — Removed.
 
 ### Fixed
 
-- **Entity processing bug** — Fixed a bug where entity extraction could produce incorrect associations during consolidation.
-- **UI fixes** — Various web UI reliability improvements.
-
-### Documentation
-
-- README, MCP reference, CLI reference, and concept pages updated to reflect removed types and current CLI (topics subgroup, `types` command, corrected `ingest` topic behavior, expanded MCP tool list).
+- **Entity processing bug** — Fixed incorrect associations during consolidation.
+- **UI fixes** — Various reliability improvements.
 
 ## [0.10.4] - 2026-04-09
 
 ### Added
-- **`cli_output_mode` / `REMIND_CLI_OUTPUT_MODE`** — Default `table`, or `json` / `compact-json` for machine-readable browse output; `--json`, `--compact-json`, and `--table` override per run (at most one).
-- **JSON output** — `inspect`, `specs`, `plans`, `tasks`, `topics list`/`overview`, `entities`, `search`, `mentions`, `decisions`, `questions`, `types`, `status`, `entity-relations`, `deleted` support `--json` / `cli_output_mode=json`.
-- **`--compact-json`** — Minimal `id` / `title` / `summary` payloads (plus per-command fields such as task `plan_id`/`plan`, search `score`, entities `mention_count`, status metadata wrapper).
-- **`remind tasks`** — Plan column; `--by-plan` groups by plan then status; JSON includes enriched `plan` and optional `by_plan` shape.
-
-### Documentation
-- **Docs site** — Fixed navigation links and expanded the SQLite examples page.
+- **`cli_output_mode`** — `table`, `json`, or `compact-json` output modes.
+- **JSON output** — For browse commands.
+- **`--compact-json`** — Minimal payloads.
 
 ## [0.10.3] - 2026-04-08
 
 ### Added
-- **Topic reassignment** — Existing episodes and concepts can be moved between topics (or cleared) via `update-episode` / `update-concept` (`--topic`, `--clear-topic`), REST `topic` field on updates, and MCP `topic` (empty string clears).
+- **Topic reassignment** — Move episodes/concepts between topics.
 
 ## [0.10.2] - 2026-04-08
 
 ### Fixed
-- **SQLite startup crash with sqlite-vec** — If `sqlite-vec` was installed but Python’s `sqlite3` could not load extensions (common on macOS / some pyenv builds), Remind could crash on first DB connection. Remind now detects this and falls back to brute-force vector similarity.
-
-### Documentation
-- **SQLite vector search** — Requirements for native sqlite-vec indexes, how to verify `enable_load_extension`, and typical Homebrew + pyenv setup are documented under Configuration and Retrieval, plus the SQLite example README.
+- **SQLite startup crash** — Fallback when sqlite-vec can't load.
 
 ## [0.10.1] - 2026-04-08
 
 ### Added
-- **`re-embed` command** — Regenerate stored embeddings after changing embedding model or dimensions.
+- **`re-embed` command** — Regenerate embeddings after model change.
 
 ## [0.10.0] - 2026-04-08
 
 ### Added
-- **Native vector indexes** — Retrieval now uses `sqlite-vec` on SQLite and `pgvector` on PostgreSQL when available, with automatic brute-force cosine fallback.
-- **Cross-encoder reranking** — Optional reranking stage for recall (`sentence-transformers`) with configurable `recall_initial_candidates`.
-- **Hybrid retrieval scoring** — Embedding similarity is fused with keyword overlap via configurable `hybrid_keyword_weight`.
-- **Topics as first-class partitions** — `topic` support on episodes/concepts with topic-aware consolidation and retrieval behavior.
-- **Topic APIs/tools** — `list_topics` and `topic_overview` available in CLI, MCP, and Python API.
-- **Ingest controls** — Optional ingest `instructions` plus topic inference when topic is omitted.
-- **Configurable `episode_types`** — Plan/spec/task CLI and MCP surfaces register only when enabled.
-- **Project-local config** — `.remind/remind.config.json` supported alongside project database.
-- **SQLAlchemy databases** — PostgreSQL and MySQL support through `REMIND_DB_URL` / `db_url`.
-- **Parallel consolidation and richer stats** — Faster batch consolidation and episode type breakdowns in stats.
-- **Memory metadata additions** — `source_type` on episodes and `supersedes` relation surfaced in recall.
+- **Native vector indexes** — sqlite-vec and pgvector support.
+- **Cross-encoder reranking** — Optional reranking for recall.
+- **Hybrid retrieval** — Embedding + keyword scoring.
+- **Topics** — First-class memory partitions.
+- **PostgreSQL/MySQL support** — Via SQLAlchemy.
 
 ### Changed
-- **Auto-ingest** — Removed configurable density-threshold gating; improved chunking and text processing.
-- **Consolidation & extraction** — Tuned prompts, token limits, and concurrency defaults for better quality/throughput.
-- **Retrieval runtime** — Improved recall performance, including reranker warm-up behavior in CLI workflows.
-- **Web UI** — Better handling for custom episode types, topics, task flows, and non-SQLite database URLs/paths.
-
-### Fixed
-- Reconsolidation edge cases.
-- MCP episode argument parsing.
-- Task creation from the web UI.
-- Web UI and stats with PostgreSQL and other SQLAlchemy URLs.
-- Embedding dimension handling and reranker NaN-score safety.
+- Improved consolidation, retrieval, and web UI.
 
 ## [0.8.0] - 2026-03-23
 
 ### Added
-- **Episode embeddings** — `remember` now embeds episode content by default for direct vector search during recall. Use `--no-embed` to skip (faster, no API call).
-- **Direct episode recall** — `recall --episode-k N` (CLI) or `episode_k` parameter (Python/MCP) retrieves episodes by embedding similarity alongside concept-based spreading activation. Default: 5. Set to 0 to disable.
-- **`embed-episodes` command** — Backfill embeddings for episodes created before episode embedding was enabled.
-- **Contradiction display** — Recall output now shows inbound and outbound `contradicts` relations per concept, with context.
-- **Batched contradiction detection** — Consolidation compares new material against existing concepts in configurable batches (`consolidation_concepts_per_pass`, default: 64).
-
-### Changed
-- Azure OpenAI provider upgraded to OpenAI v1 API; `api_version` config removed, `/openai/v1` appended to base URL automatically
-- Default `episode_k` set to 5 for direct episode recall
-
-### Fixed
-- Ingest buffer handling in foreground mode
-- Async processing fixes in background worker
-- Contradiction retrieval improvements (batched comparison against existing concepts)
+- **Episode embeddings** — Direct vector search during recall.
+- **Contradiction display** — Shows `contradicts` relations.
 
 ## [0.7.0] - 2026-03-19
 
 ### Added
-- **Auto-ingest pipeline** — `ingest()` and `flush_ingest()` for automatic memory curation. Buffers raw text, scores information density via LLM, and distills memory-worthy episodes automatically. Available via CLI, MCP, and Python API.
-- **Fact episodes** — New `fact` episode type for specific factual assertions (config values, names, dates, technical details). Consolidation preserves fact details verbatim rather than generalizing them away.
-- **Outcome episodes** — New `outcome` episode type for action-result pairs with structured metadata (`strategy`, `result`, `prediction_error`). Consolidation extracts causal strategy patterns.
-- **Entity name matching in retrieval** — Queries now match against entity names directly (fast, no embedding needed), complementing semantic search.
-- **Minimum activation floor** — Retrieval drops concepts below a configurable `min_activation` threshold (default: 0.15), reducing low-relevance noise.
-- **Entity deduplication** — Entity extraction deduplicates by name across types to prevent duplicates like `family:Capulet` and `character:Capulet`.
-- **`status` CLI command** — Shows processing status: running workers, pending episodes, queued ingest chunks.
-- **Per-provider ingest model** — Configure a separate (cheaper/faster) model for triage without affecting consolidation quality.
-- **Debug file logging** — Enable `logging_enabled` in config to get full LLM prompt/response logs in `remind.log` next to the database.
-- **Background ingest worker** — CLI `ingest` command queues work and spawns a background worker by default. Use `--foreground` for synchronous processing.
-- **Batch consolidation progress** — `consolidate` and `reconsolidate` commands show per-batch progress for large runs.
-- **Hybrid recall episodes** — Retrieval now returns source episodes with type labels and entity context alongside concepts.
-
-### Changed
-- Default recall `k` reduced from 5 to 3 for more focused results
-- `recall` no longer requires a query when `--entity` is provided
-- `end-session` now flushes the ingestion buffer before consolidating
-- Consolidation loops through all batches internally instead of requiring external batch loop
-- Foreground consolidation acquires a file lock to prevent concurrent runs
+- **Auto-ingest** — LLM-powered triage pipeline.
+- **Fact/outcome episodes** — New episode types.
+- **Hybrid recall** — Entity name matching.
 
 ## [0.6.0] - 2026-03-09
 
 ### Added
-- Task management system: task episodes with status tracking (todo, in_progress, done, blocked), dependency chains, plan/spec linking, and priority levels
-- Agent workflow skills for the plan-to-implementation lifecycle:
-  - `remind` -- base memory operations reference
-  - `remind-plan` -- interactive planning with sparring and crystallization
-  - `remind-spec` -- spec-driven development with lifecycle management
-  - `remind-implement` -- systematic task execution loop
-- Active tasks are excluded from consolidation; completed tasks become eligible
-
-### Changed
-- Updated web UI
-
-### Fixed
-- `run_async` helper function
-
-## [0.5.3] - 2026-03-03
-
-### Fixed
-- When updating episodes, reset entity associations so they are rebuilt on next consolidation
-
-## [0.5.2] - 2026-03-02
-
-### Fixed
-- Actually include web UI static files in wheel builds
-
-## [0.5.1] - 2026-03-02
-
-### Fixed
-- Include built web UI assets in package
+- **Task management** — Task episodes with status tracking.
+- **Agent workflow skills** — Plan/spec/implement lifecycle.
 
 ## [0.5.0] - 2026-03-02
 
 ### Added
-- Support for updating and deleting concepts and episodes
-- Built-in memories about Remind itself for self-aware assistance
-
-### Changed
-- Consolidation is now non-blocking, improving CLI responsiveness
-
-### Fixed
-- Explicit consolidation command now works correctly
-- Build issues resolved
+- Support for updating and deleting concepts/episodes.
 
 ## [0.4.0] - 2026-02-26
 
 ### Added
-- Memory decay system: concepts gradually lose retrieval priority based on recall frequency
-  - `decay_factor` (0.0--1.0) multiplies retrieval activation score
-  - Decay runs every N recalls with configurable rate
-  - Rejuvenation: recalled concepts receive activation-proportional boost
-  - 60-second grace window protects recently-accessed concepts
-- `DecayConfig` in config file under `"decay"` key
-- Metadata table in SQLite for persistent key-value storage
-- Memory status panel in web UI
-
-## [0.3.1] - 2026-02-25
-
-### Fixed
-- Bump numpy requirement to `>=2.0.0` to prevent segfault on macOS in sandboxed environments
+- **Memory decay** — Concepts lose priority based on recall frequency.
 
 ## [0.3.0] - 2026-02-25
 
 ### Added
-- Global config file support (`~/.remind/remind.config.json`)
-- `--version` CLI argument
-- Collapsible sidebar in web UI
-- Agent skills support for Claude Code integration
-
-### Fixed
-- Entity relationship extraction
-- Consolidation with explicit entities
+- Global config file support.
+- Agent skills for Claude Code.
 
 ## [0.2.0] - 2026-01-09
 
 ### Added
-- Web UI with interactive concept graph visualization (D3-based)
-- Docker support
-- Entity inspection UI and MCP tools
-- LLM-powered query answering with source episodes
-- Dark mode support
-- Batch consolidation and reconsolidation
+- Web UI with concept graph visualization.
+- Docker support.
 
 ## [0.1.0] - 2026-01-04
 
 ### Added
-- Core memory system with episodes and concepts
-- Spreading activation retrieval algorithm
-- LLM-powered consolidation
-- Entity extraction from episodes
-- Provider support: Anthropic, OpenAI, Azure OpenAI, Ollama
-- MCP server (SSE mode)
-- CLI tool
-- SQLite persistence layer
-- Background consolidation
-- Project-aware database paths
+- Core memory system.
+- Spreading activation retrieval.
+- LLM-powered consolidation.
+- MCP server and CLI.

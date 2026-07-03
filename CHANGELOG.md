@@ -4,6 +4,60 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-03
+
+### BREAKING CHANGES
+
+This release fundamentally changes how Remind works. **All internal LLM usage has been removed.** The calling agent is now the only intelligence — Remind is a deterministic memory substrate that you curate explicitly.
+
+**Migration required:**
+- Remove any `consolidate`, `ingest`, `flush-ingest`, `end-session` commands from scripts
+- Remove `--llm` flags from CLI invocations
+- Update any code that called `memory.consolidate()`, `memory.ingest()`, etc.
+- Run `remind re-embed --all` if switching from OpenAI to local embeddings (dimensions change from 1536 to 384)
+- Rewrite any custom automation using the old MCP tools
+
+### Added
+
+- **Local embedding provider (default)** — `LocalEmbedding` using fastembed (ONNX-based, no torch, no API key). Model `all-MiniLM-L6-v2` (384 dims), lazy-loaded. Zero-config default: no embedding provider configuration needed.
+- **`remind snapshot`** — Batch read tool returning a single JSON document. Scopes are combinable: `pending` (unprocessed episodes), `conflicts` (open with fact details), `entity:<id>`, `topic:<id>`, `concept:<id>` (with supersession history), `recent:<n>`, `stats`, `query:<text>`. CLI and MCP tool.
+- **`remind apply`** — Batch write tool for transactional memory curation. Operations: `remember`, `supersede`, `conflict`, `resolve`, `dismiss`, `concept`, `update`, `link`, `topic`, `set_topic`, `delete`, `restore`, `processed`. Local refs (`$name`) for referencing items within the same changeset. JSON and compact line format (canonical). All-or-nothing transaction semantics. `--dry-run` for validation. CLI and MCP tool.
+- **Deterministic fact pipeline** — `remember()` with `type=fact` now creates `Fact` rows synchronously using Jaccard similarity for cluster assignment (no LLM). Collisions are detected and returned in `RememberResult` for agent disposition (commit-then-report pattern).
+- **Transaction support** — `store.transaction()` context manager for atomic multi-operation changesets.
+- **Episode provenance** — Episodes now carry optional `asserted_by` (who asserted the information) and `source_ref` (permalink to the original artifact). Threaded through `remember()`, CLI (`--asserted-by`, `--source-ref`), and MCP tools. Provenance is shown in recall output, the REST API, and the web episode timeline.
+- **First-class temporal facts** — New `Fact` model and `facts` table. Each fact is a row with a validity window (`valid_from`/`valid_to`), structural supersession (`superseded_by`), provenance (`asserted_by`, `source_ref`, `source_episode_id`), and entity references. Existing fact_cluster `specifics` strings are backfilled into fact rows once per database. Stats now include `facts` and `active_facts` counts.
+- **Time-travel recall (`as_of`)** — `recall(as_of=...)` (datetime or ISO string), CLI `remind recall --as-of 2026-01-15 "query"`, and MCP `recall(as_of=...)` show the facts that were valid at that point in time for fact_cluster concepts.
+- **Conflict lifecycle** — New `Conflict` model and `conflicts` table with status lifecycle (`open` → `resolved`/`dismissed`), severity, resolution metadata. Stats include `open_conflicts`.
+- **Conflict resolution workflow** — `resolve_conflict(id, winning_fact_id, note, resolved_by)`: the losing fact is structurally superseded. `dismiss_conflict(id, note)`: both facts stay active. Exposed as REST routes, MCP tools, and CLI (`remind conflicts`).
+- **Conflicts inbox in web UI** — new "Conflicts" view with an open-count badge in the sidebar.
+- **Rewritten agent skills** — `remind-capture`, `remind-context`, `remind-curate` updated for the snapshot/apply workflow. `remind-curate` now documents the consolidation procedure (what the LLM consolidator used to do) as agent instructions.
+
+### Changed
+
+- **`embedding_provider` default is now `"local"`** — No API key required. OpenAI embedding is available via `pip install "remind-mcp[openai]"`.
+- **`remember()` returns `RememberResult`** — Contains `episode_id`, and for facts: `fact_id`, `cluster_id`, `cluster_created`, and `collisions` (list of potentially conflicting facts).
+- **`create_memory()` no longer accepts `llm_provider`** — Only embedding providers are supported.
+- **Dashboard card renamed** — "Consolidation Status" → "Pending Review" (shows unprocessed episodes awaiting agent curation).
+- **Fact-cluster recall shows fact rows** — recall output for fact clusters now renders active fact rows with provenance and validity instead of the raw `specifics` cache.
+
+### Removed
+
+- **All LLM providers and internal LLM usage** — `AnthropicLLM`, `OpenAILLM`, `AzureOpenAILLM`, `OllamaLLM` removed. The `LLMProvider` ABC is gone.
+- **Consolidation** — `memory.consolidate()`, CLI `remind consolidate`, `remind reconsolidate`, MCP `consolidate` tool. Consolidation logic is now documented in the `remind-curate` skill for agents to implement.
+- **Ingestion** — `memory.ingest()`, `memory.flush_ingest()`, CLI `remind ingest`, `remind flush-ingest`, `remind end-session`, MCP `ingest`/`flush_ingest` tools. The triage LLM is gone; capture directly with `remember` or `apply`.
+- **Transcript capture** — `remind ingest-transcript`, `remind hook-install`, the `transcript.py` module.
+- **Entity extraction** — `extraction.py` module removed. Entities must be specified explicitly on `remember()`.
+- **Chat endpoint** — `POST /api/v1/chat` REST route and `stream_chat()` removed. The web UI no longer has a chat feature.
+- **Config options** — `llm_provider`, `consolidation_threshold`, `concepts_per_pass`, `auto_consolidate`, `extraction_batch_size`, `extraction_llm_batch_size`, `consolidation_batch_size`, `llm_concurrency`, `ingest_buffer_size`, `AnthropicConfig`.
+- **Evals** — The `evals/` directory is deleted (recoverable from git history).
+- **Background workers** — Consolidation and ingest workers removed. Only the recall worker (for reranking warmup) remains.
+
+### Documentation
+
+- AGENTS.md updated to reflect agent-driven architecture
+- Skills rewritten for snapshot/apply workflow
+- Website documentation updated
+
 ## [0.10.5] - 2026-05-05
 
 ### Added
@@ -48,7 +102,7 @@ All notable changes to this project will be documented in this file.
 ## [0.10.2] - 2026-04-08
 
 ### Fixed
-- Crash on startup when the `sqlite-vec` package was installed but Python’s `sqlite3` was built without extension loading (common on macOS / some pyenv builds). Remind now detects this and falls back to brute-force vector similarity instead of calling `enable_load_extension`.
+- Crash on startup when the `sqlite-vec` package was installed but Python's `sqlite3` was built without extension loading (common on macOS / some pyenv builds). Remind now detects this and falls back to brute-force vector similarity instead of calling `enable_load_extension`.
 
 ### Documentation
 - Documented SQLite vector search (sqlite-vec) requirements, how to verify extension support, and typical pyenv + Homebrew steps to enable native SQLite vector indexes.

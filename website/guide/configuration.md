@@ -2,7 +2,7 @@
 
 Remind is configured via config files, environment variables, or CLI arguments. Settings resolve with this priority (highest first):
 
-1. CLI arguments (`--llm`, `--embedding`)
+1. CLI arguments (`--embedding`)
 2. Environment variables
 3. Project-local config file (`<project>/.remind/remind.config.json`)
 4. Global config file (`~/.remind/remind.config.json`)
@@ -16,39 +16,27 @@ Create `~/.remind/remind.config.json`:
 
 ```json
 {
-  "llm_provider": "anthropic",
-  "embedding_provider": "openai",
-  "consolidation_threshold": 5,
-  "auto_consolidate": true,
-
-  "anthropic": {
-    "api_key": "sk-ant-...",
-    "model": "claude-sonnet-4-20250514",
-    "ingest_model": "claude-haiku-4-20250414"
-  },
+  "embedding_provider": "local",
 
   "openai": {
     "api_key": "sk-...",
-    "base_url": null,
-    "model": "gpt-4.1",
-    "embedding_model": "text-embedding-3-small",
-    "ingest_model": "gpt-4.1-mini"
+    "embedding_model": "text-embedding-3-small"
   },
 
   "azure_openai": {
     "api_key": "...",
     "base_url": "https://your-resource.openai.azure.com",
-    "deployment_name": "gpt-4",
     "embedding_deployment_name": "text-embedding-3-small",
-    "embedding_size": 1536,
-    "ingest_deployment_name": "gpt-4-mini"
+    "embedding_size": 1536
   },
 
   "ollama": {
     "url": "http://localhost:11434",
-    "llm_model": "llama3.2",
-    "embedding_model": "nomic-embed-text",
-    "ingest_model": "llama3.2:1b"
+    "embedding_model": "nomic-embed-text"
+  },
+
+  "local": {
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"
   },
 
   "decay": {
@@ -57,9 +45,9 @@ Create `~/.remind/remind.config.json`:
     "decay_rate": 0.1
   },
 
-  "ingest_buffer_size": 4000,
-
   "hybrid_keyword_weight": 0.3,
+
+  "fact_cluster_jaccard_threshold": 0.5,
 
   "db_url": null,
 
@@ -72,13 +60,17 @@ Create `~/.remind/remind.config.json`:
 }
 ```
 
-You only need to include settings you want to change from defaults. A minimal config:
+You only need to include settings you want to change from defaults. A minimal config uses local embeddings (no API keys):
+
+```json
+{}
+```
+
+Or for OpenAI embeddings:
 
 ```json
 {
-  "llm_provider": "anthropic",
   "embedding_provider": "openai",
-  "anthropic": { "api_key": "sk-ant-..." },
   "openai": { "api_key": "sk-..." }
 }
 ```
@@ -97,12 +89,12 @@ myproject/
 
 Project-local config uses the same format as the global config. Settings in the project-local file override the global file, but are themselves overridden by environment variables and CLI arguments.
 
-A typical use case is selecting a different provider or model for a specific project:
+A typical use case is selecting a different embedding provider for a specific project:
 
 ```json
 {
-  "llm_provider": "ollama",
-  "ollama": { "llm_model": "deepseek-coder-v2" }
+  "embedding_provider": "ollama",
+  "ollama": { "embedding_model": "mxbai-embed-large" }
 }
 ```
 
@@ -114,10 +106,10 @@ If your project-local config contains API keys or other secrets, make sure `.rem
 
 ### CLI output mode
 
-`cli_output_mode` sets the default for browse/list commands (`inspect`, `topics`, `entities`, `status`, and others): `table` (human-readable, default), `json` (full structured stdout), or `compact-json` (minimal `id` / `title` / `summary` objects, command-specific extras such as `mention_count` on `entities` list). In JSON config you can also use the alias `cliOutputMode`, or set `compactJson` to a string such as `"compact-json"` (same normalization as `cli_output_mode`).
+`cli_output_mode` sets the default for browse/list commands (`status`, `topics`, etc.): `table` (human-readable, default), `json` (full structured stdout), or `compact-json` (minimal objects).
 
-- Per command: `--json`, `--compact-json`, or `--table` — at most one (they override the default mode).
-- Environment: `REMIND_CLI_OUTPUT_MODE=table`, `json`, or `compact-json`.
+- Per command: `--json`, `--compact-json`, or `--table`
+- Environment: `REMIND_CLI_OUTPUT_MODE=table`, `json`, or `compact-json`
 
 ## Environment variables
 
@@ -129,32 +121,24 @@ Every config-file setting has a corresponding environment variable. Environment 
 
 | Env variable | Config field | Type | Default |
 |---|---|---|---|
-| `LLM_PROVIDER` | `llm_provider` | string | `anthropic` |
-| `EMBEDDING_PROVIDER` | `embedding_provider` | string | `openai` |
-| `CONSOLIDATION_THRESHOLD` | `consolidation_threshold` | int | `5` |
-| `CONCEPTS_PER_PASS` | `concepts_per_pass` | int | `64` |
-| `AUTO_CONSOLIDATE` | `auto_consolidate` | bool | `true` |
-| `EXTRACTION_BATCH_SIZE` | `extraction_batch_size` | int | `50` |
-| `EXTRACTION_LLM_BATCH_SIZE` | `extraction_llm_batch_size` | int | `10` |
-| `CONSOLIDATION_BATCH_SIZE` | `consolidation_batch_size` | int | `25` |
-| `LLM_CONCURRENCY` | `llm_concurrency` | int | `3` |
-| `INGEST_BUFFER_SIZE` | `ingest_buffer_size` | int | `4000` |
+| `EMBEDDING_PROVIDER` | `embedding_provider` | string | `local` |
 | `REMIND_HYBRID_KEYWORD_WEIGHT` | `hybrid_keyword_weight` | float | `0.3` |
 | `REMIND_RECALL_INITIAL_CANDIDATES` | `recall_initial_candidates` | int | `10` |
 | `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
 | `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
+| `REMIND_FACT_CLUSTER_JACCARD_THRESHOLD` | `fact_cluster_jaccard_threshold` | float | `0.5` |
 | `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
-| `REMIND_CLI_OUTPUT_MODE` | `cli_output_mode` | string | `table` (`table`, `json`, or `compact-json`; default CLI output for browse/list commands) |
+| `REMIND_CLI_OUTPUT_MODE` | `cli_output_mode` | string | `table` |
 | `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
 
-#### Anthropic (Claude)
+#### Local embeddings (default)
 
 | Env variable | Config field | Type | Default |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | `anthropic.api_key` | string | — |
-| `ANTHROPIC_MODEL` | `anthropic.model` | string | `claude-sonnet-4-20250514` |
-| `ANTHROPIC_INGEST_MODEL` | `anthropic.ingest_model` | string | — |
+| `LOCAL_EMBEDDING_MODEL` | `local.embedding_model` | string | `sentence-transformers/all-MiniLM-L6-v2` |
+
+No API keys needed. Uses fastembed with ONNX for fast local inference.
 
 #### OpenAI
 
@@ -162,9 +146,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 |---|---|---|---|
 | `OPENAI_API_KEY` | `openai.api_key` | string | — |
 | `OPENAI_BASE_URL` | `openai.base_url` | string | — |
-| `OPENAI_MODEL` | `openai.model` | string | `gpt-4.1` |
 | `OPENAI_EMBEDDING_MODEL` | `openai.embedding_model` | string | `text-embedding-3-small` |
-| `OPENAI_INGEST_MODEL` | `openai.ingest_model` | string | — |
 
 #### Azure OpenAI
 
@@ -172,25 +154,20 @@ Every config-file setting has a corresponding environment variable. Environment 
 |---|---|---|---|
 | `AZURE_OPENAI_API_KEY` | `azure_openai.api_key` | string | — |
 | `AZURE_OPENAI_API_BASE_URL` | `azure_openai.base_url` | string | — |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | `azure_openai.deployment_name` | string | — |
 | `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME` | `azure_openai.embedding_deployment_name` | string | — |
 | `AZURE_OPENAI_EMBEDDING_SIZE` | `azure_openai.embedding_size` | int | `1536` |
-| `AZURE_OPENAI_INGEST_DEPLOYMENT_NAME` | `azure_openai.ingest_deployment_name` | string | — |
 
 #### Ollama (local)
 
 | Env variable | Config field | Type | Default |
 |---|---|---|---|
 | `OLLAMA_URL` | `ollama.url` | string | `http://localhost:11434` |
-| `OLLAMA_LLM_MODEL` | `ollama.llm_model` | string | `llama3.2` |
 | `OLLAMA_EMBEDDING_MODEL` | `ollama.embedding_model` | string | `nomic-embed-text` |
-| `OLLAMA_INGEST_MODEL` | `ollama.ingest_model` | string | — |
 
-No API keys needed. Install [Ollama](https://ollama.ai/) and pull models:
+No API keys needed. Install [Ollama](https://ollama.ai/) and pull an embedding model:
 
 ```bash
-ollama pull llama3.2           # LLM
-ollama pull nomic-embed-text   # Embeddings
+ollama pull nomic-embed-text
 ```
 
 #### Memory decay
@@ -205,18 +182,17 @@ Boolean env vars accept `true`, `1`, `yes` (case-insensitive) as truthy values; 
 
 ### Quick-start examples
 
-**Anthropic + OpenAI embeddings (most common):**
+**Local embeddings (default, no API keys):**
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-export OPENAI_API_KEY=sk-...
+# Nothing needed — works out of the box
+remind remember "Hello world"
 ```
 
-**OpenAI for everything:**
+**OpenAI embeddings:**
 
 ```bash
 export OPENAI_API_KEY=sk-...
-export LLM_PROVIDER=openai
 export EMBEDDING_PROVIDER=openai
 ```
 
@@ -225,16 +201,13 @@ export EMBEDDING_PROVIDER=openai
 ```bash
 export AZURE_OPENAI_API_KEY=...
 export AZURE_OPENAI_API_BASE_URL=https://your-resource.openai.azure.com
-export AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
 export AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME=text-embedding-3-small
-export LLM_PROVIDER=azure_openai
 export EMBEDDING_PROVIDER=azure_openai
 ```
 
 **Ollama (fully local):**
 
 ```bash
-export LLM_PROVIDER=ollama
 export EMBEDDING_PROVIDER=ollama
 ```
 
@@ -278,15 +251,15 @@ pip install "remind-mcp[mysql]"      # MySQL (PyMySQL)
 
 Remind uses native vector indexes for embedding search when available:
 
-- **SQLite**: [sqlite-vec](https://github.com/asg017/sqlite-vec) is pulled in as a dependency. When your Python build can load SQLite extensions, Remind loads sqlite-vec and stores embeddings in `vec0` virtual tables with cosine-distance KNN.
-- **PostgreSQL**: The Python driver is included with `remind-mcp[postgres]`. Embeddings are stored in `vector(N)` columns with HNSW indexes. The `vector` extension is created automatically — but the **PostgreSQL server** must have pgvector installed (e.g. use the [`pgvector/pgvector`](https://hub.docker.com/r/pgvector/pgvector) Docker image instead of vanilla `postgres`).
-- **Fallback**: If sqlite-vec cannot be loaded (see below) or pgvector is unavailable, Remind uses brute-force NumPy cosine similarity. Results are the same; large databases may be slower on recall.
+- **SQLite**: [sqlite-vec](https://github.com/asg017/sqlite-vec) is pulled in as a dependency.
+- **PostgreSQL**: The Python driver is included with `remind-mcp[postgres]`.
+- **Fallback**: If native indexes are unavailable, Remind uses brute-force NumPy cosine similarity.
 
-Vector tables are created lazily when the first embedding is written. No manual schema setup is needed.
+Vector tables are created lazily when the first embedding is written.
 
 #### SQLite: when sqlite-vec is not used
 
-sqlite-vec is a **loadable extension**. Python’s `sqlite3` module only exposes `enable_load_extension` when the interpreter was built against a SQLite library that supports loadable extensions. Many **macOS** Python builds (including some **pyenv** installs linked against the system SQLite) omit this, so Remind cannot load sqlite-vec even though the `sqlite-vec` package is installed. In that case Remind logs an informational message and uses the brute-force path instead of crashing.
+sqlite-vec is a **loadable extension**. Some Python builds (especially on macOS) don't support extension loading. Remind falls back to brute-force search in that case.
 
 **Check your interpreter:**
 
@@ -294,27 +267,11 @@ sqlite-vec is a **loadable extension**. Python’s `sqlite3` module only exposes
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); print('load_extension:', hasattr(c, 'enable_load_extension'))"
 ```
 
-If this prints `load_extension: False`, native SQLite vector indexes are unavailable until you use a Python build that supports extension loading.
-
-**Typical fix with Homebrew + pyenv** (Apple Silicon and Intel; paths come from `brew --prefix`):
-
-```bash
-brew install sqlite openssl xz
-
-export PYTHON_CONFIGURE_OPTS="--enable-loadable-sqlite-extensions --with-openssl=$(brew --prefix openssl)"
-export LDFLAGS="-L$(brew --prefix sqlite)/lib"
-export CPPFLAGS="-I$(brew --prefix sqlite)/include"
-
-pyenv install 3.12.11   # or your target version
-```
-
-Then reinstall Remind into that Python. Alternatively, **Homebrew’s** `python@3.x` often works out of the box; create a venv from `$(brew --prefix python@3.12)/bin/python3.12` and install Remind there.
-
-See also [Retrieval — Vector indexes](/concepts/retrieval#vector-indexes) and the [SQLite example](/examples/sqlite).
+See [Retrieval — Vector indexes](/concepts/retrieval#vector-indexes) for details.
 
 ## Memory decay
 
-Concepts that are rarely recalled gradually lose retrieval priority, mimicking how human memory fades.
+Concepts that are rarely recalled gradually lose retrieval priority.
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -322,46 +279,30 @@ Concepts that are rarely recalled gradually lose retrieval priority, mimicking h
 | `decay.decay_interval` | `20` | Recalls between decay passes |
 | `decay.decay_rate` | `0.1` | How much `decay_factor` drops per interval (0.0-1.0) |
 
-When a concept is recalled, it gets **rejuvenated** — its decay factor gets a boost proportional to match strength. Recently recalled concepts are protected by a 60-second grace window.
+When a concept is recalled, it gets **rejuvenated** — its decay factor gets a boost proportional to match strength.
 
 View decay stats with `remind stats`.
 
-## Consolidation
+## Fact clustering
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `consolidation_threshold` | `5` | Episodes before auto-consolidation triggers |
-| `concepts_per_pass` | `64` | Max concepts included per consolidation LLM pass |
-| `auto_consolidate` | `true` | Whether to auto-consolidate after `remember` |
-| `extraction_batch_size` | `50` | Episodes fetched per extraction loop pass (independent of consolidation batch size) |
-| `extraction_llm_batch_size` | `10` | Episodes grouped into each extraction LLM call |
-| `consolidation_batch_size` | `25` | Episodes fetched and generalized per consolidation loop pass |
-| `llm_concurrency` | `3` | Max concurrent LLM calls across extraction + consolidation; also bounds topic-group parallelism |
-| `fact_cluster_jaccard_threshold` | `0.5` | Min Jaccard similarity between entity sets to cluster facts together. Lower values create larger clusters; higher values create more focused clusters. |
+| `fact_cluster_jaccard_threshold` | `0.5` | Min Jaccard similarity between entity sets to cluster facts together |
 
-| Env variable | Config field | Type | Default |
-|---|---|---|---|
-| `REMIND_FACT_CLUSTER_JACCARD_THRESHOLD` | `fact_cluster_jaccard_threshold` | float | `0.5` |
-
-Legacy aliases remain supported: `consolidation_concepts_per_pass`, `entity_extraction_batch_size`, and `consolidation_llm_concurrency`.
+Lower values create larger clusters (more facts grouped together). Higher values create more focused clusters (facts need more entity overlap).
 
 ## Retrieval tuning
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `hybrid_keyword_weight` | `0.3` | Blend between embedding similarity and keyword overlap. `0.0` = pure embedding, `1.0` = pure keyword. |
-| `recall_initial_candidates` | `10` | How many initial embedding candidates to fetch before spreading activation and reranking. Increase to 15-20 when using reranking. |
+| `recall_initial_candidates` | `10` | How many initial embedding candidates to fetch before spreading activation and reranking. |
 
-The default `0.3` keyword weight means 70% embedding similarity + 30% keyword overlap. This helps surface results with exact term matches that embeddings alone might miss. See [Retrieval](/concepts/retrieval) for details.
-
-| Env variable | Config field | Type | Default |
-|---|---|---|---|
-| `REMIND_HYBRID_KEYWORD_WEIGHT` | `hybrid_keyword_weight` | float | `0.3` |
-| `REMIND_RECALL_INITIAL_CANDIDATES` | `recall_initial_candidates` | int | `10` |
+The default `0.3` keyword weight means 70% embedding similarity + 30% keyword overlap. See [Retrieval](/concepts/retrieval) for details.
 
 ## Reranking
 
-Cross-encoder reranking rescores retrieval candidates using a model that reads the query and each document together, producing more accurate relevance judgments than embedding similarity alone. Disabled by default — requires installing the `rerank` extra.
+Cross-encoder reranking rescores retrieval candidates. Disabled by default — requires the `rerank` extra.
 
 ```bash
 pip install "remind-mcp[rerank]"
@@ -369,19 +310,10 @@ pip install "remind-mcp[rerank]"
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `reranking_enabled` | `false` | Enable cross-encoder reranking during recall |
-| `reranking_model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Which cross-encoder model to use |
-| `cli_recall_worker_enabled` | `true` | Use a persistent CLI recall worker when reranking is enabled |
-| `cli_recall_worker_idle_seconds` | `600` | Idle timeout before the CLI recall worker exits |
+| `reranking_enabled` | `false` | Enable cross-encoder reranking |
+| `reranking_model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Which model to use |
 
-| Env variable | Config field | Type | Default |
-|---|---|---|---|
-| `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
-| `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
-| `REMIND_CLI_RECALL_WORKER_ENABLED` | `cli_recall_worker_enabled` | bool | `true` |
-| `REMIND_CLI_RECALL_WORKER_IDLE_SECONDS` | `cli_recall_worker_idle_seconds` | int | `600` |
-
-Enable via config file:
+Enable via config:
 
 ```json
 {
@@ -390,68 +322,17 @@ Enable via config file:
 }
 ```
 
-Or environment variables:
-
-```bash
-REMIND_RERANKING_ENABLED=true
-REMIND_RECALL_INITIAL_CANDIDATES=15
-```
-
-When reranking is enabled, the CLI (`remind recall`) starts/reuses a local background recall worker automatically so the reranker stays warm between calls. The worker exits after `cli_recall_worker_idle_seconds` of inactivity.
-
-If worker startup or IPC fails, CLI recall falls back to one-shot in-process recall and still returns results.
-
-The model is loaded lazily on the first recall request that actually runs reranking. See [Retrieval — Reranking](/concepts/retrieval#reranking) for details on how reranking interacts with spreading activation.
-
-## Auto-ingest
-
-Settings for the `ingest()` pipeline, which buffers raw text and extracts memory-worthy episodes automatically. The LLM decides directly what's worth remembering -- no numeric density threshold is needed.
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `ingest_buffer_size` | `4000` | Character threshold before buffer flushes and triggers triage |
-
-Each provider config has an optional `ingest_model` field (or `ingest_deployment_name` for Azure) to use a cheaper/faster model for triage without affecting consolidation quality. When unset, triage uses the same model as consolidation.
-
-| Provider | Config field | Env var | Example |
-|----------|-------------|---------|---------|
-| Anthropic | `anthropic.ingest_model` | `ANTHROPIC_INGEST_MODEL` | `claude-haiku-4-20250414` |
-| OpenAI | `openai.ingest_model` | `OPENAI_INGEST_MODEL` | `gpt-4.1-mini` |
-| Azure OpenAI | `azure_openai.ingest_deployment_name` | `AZURE_OPENAI_INGEST_DEPLOYMENT_NAME` | `gpt-4-mini` |
-| Ollama | `ollama.ingest_model` | `OLLAMA_INGEST_MODEL` | `llama3.2:1b` |
-
 ## Logging
 
-When enabled, Remind writes detailed debug logs to `remind.log` in the same directory as the database. This includes full LLM prompts and responses for triage, extraction, and consolidation — useful for debugging why episodes were scored a certain way or how concepts were derived.
+When enabled, Remind writes debug logs to `remind.log` in the same directory as the database.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `logging_enabled` | `false` | Write debug logs to `remind.log` next to the database |
-
-The log file location follows the database:
-
-| Database path | Log path |
-|--------------|----------|
-| `~/.remind/myproject.db` | `~/.remind/remind.log` |
-| `<project>/.remind/remind.db` | `<project>/.remind/remind.log` |
-
-Enable via config file:
-
-```json
-{
-  "logging_enabled": true
-}
-```
-
-Or environment variable:
-
-```bash
-REMIND_LOGGING_ENABLED=true
-```
+| `logging_enabled` | `false` | Write debug logs |
 
 ## Episode types
 
-Control which episode types are valid for ingestion and storage.
+Control which episode types are valid.
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -459,18 +340,16 @@ Control which episode types are valid for ingestion and storage.
 
 Built-in types: `observation`, `decision`, `question`, `meta`, `preference`, `outcome`, `fact`.
 
-By default all types are enabled. To restrict to a subset:
+To restrict to a subset:
 
 ```json
 {
-  "episode_types": ["observation", "decision", "question", "outcome", "fact"]
+  "episode_types": ["observation", "decision", "fact"]
 }
 ```
 
 Or via environment variable (comma-separated):
 
 ```bash
-REMIND_EPISODE_TYPES=observation,decision,question,outcome,fact
+REMIND_EPISODE_TYPES=observation,decision,fact
 ```
-
-Custom type names are also accepted — they will be used in LLM prompts for triage and extraction with generic descriptions.

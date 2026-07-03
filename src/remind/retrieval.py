@@ -51,8 +51,12 @@ _DEFAULT_EPISODE_TYPE_WEIGHT = 0.6
 
 def _format_episode_line(ep: "Episode", prefix: str = "    • ") -> str:
     """Format a single episode as a compact one-liner with metadata."""
-    date = ep.updated_at.strftime("%Y-%m-%d %H:%M")
+    date = ep.created_at.strftime("%Y-%m-%d %H:%M")
     meta = ep.metadata or {}
+
+    header_parts = [ep.episode_type, date]
+    if ep.asserted_by:
+        header_parts.append(f"by {ep.asserted_by}")
 
     meta_parts = []
     for k, v in meta.items():
@@ -61,7 +65,8 @@ def _format_episode_line(ep: "Episode", prefix: str = "    • ") -> str:
         meta_parts.append(f"{k}={v}")
 
     meta_str = f" ({', '.join(meta_parts)})" if meta_parts else ""
-    return f"{prefix}[{ep.episode_type}, {date}]{meta_str} {ep.content}"
+    ref_str = f" <{ep.source_ref}>" if ep.source_ref else ""
+    return f"{prefix}[{', '.join(header_parts)}]{meta_str} {ep.content}{ref_str}"
 
 
 # Episode type weights for scoring -- higher value = more signal
@@ -1045,6 +1050,7 @@ class MemoryRetriever:
         direct_episodes: Optional[list["ScoredEpisode"]] = None,
         group_by_topic: bool = False,
         topic_names: Optional[dict[str, str]] = None,
+        as_of: Optional[datetime] = None,
     ) -> str:
         """
         Format retrieved concepts and episodes for injection into an LLM prompt.
@@ -1059,6 +1065,8 @@ class MemoryRetriever:
             direct_episodes: Episodes matched by direct embedding search.
             group_by_topic: When True, group concepts under topic headers.
             topic_names: {topic_id: display_name} map for headers.
+            as_of: When set, fact_cluster concepts show the facts that were
+                   valid at this point in time instead of the current ones.
         """
         if matched_entities is None:
             matched_entities = getattr(self, "_last_matched_entities", None) or []
@@ -1086,11 +1094,11 @@ class MemoryRetriever:
                 tname = topic_names.get(topic_id, topic_id) if topic_id else "General"
                 lines.append(f"## Topic: {tname}\n")
                 for ac in group:
-                    self._format_concept_block(ac, lines, include_relations, max_relations, include_episodes)
+                    self._format_concept_block(ac, lines, include_relations, max_relations, include_episodes, as_of)
                 lines.append("")
         else:
             for ac in activated:
-                self._format_concept_block(ac, lines, include_relations, max_relations, include_episodes)
+                self._format_concept_block(ac, lines, include_relations, max_relations, include_episodes, as_of)
 
         if matched_entities:
             lines.append("---")
@@ -1126,6 +1134,7 @@ class MemoryRetriever:
         include_relations: bool,
         max_relations: int,
         include_episodes: bool,
+        as_of: Optional[datetime] = None,
     ) -> None:
         """Render a single activated concept into *lines*."""
         c = ac.concept
@@ -1151,23 +1160,42 @@ class MemoryRetriever:
         lines.append(header)
 
         # Format differently based on concept type
-        if c.concept_type == "fact_cluster" and c.specifics:
-            # Show bulleted facts for fact_clusters
-            lines.append("  Facts:")
-            for specific in c.specifics:
-                lines.append(f"    • {specific}")
+        if c.concept_type == "fact_cluster" and (c.specifics or as_of):
+            def _fact_line(fact) -> str:
+                meta = []
+                if fact.asserted_by:
+                    meta.append(fact.asserted_by)
+                meta.append(f"since {fact.valid_from.strftime('%Y-%m-%d')}")
+                return f"    • {fact.statement} ({', '.join(meta)})"
 
-            # Show conflicts prominently if any
-            if c.conflicts:
-                lines.append(f"  ⚠ CONFLICTS ({len(c.conflicts)} detected):")
-                for conflict in c.conflicts:
-                    fact_a = conflict.get("fact_a", "")
-                    fact_b = conflict.get("fact_b", "")
-                    detected_at = conflict.get("detected_at", "")
-                    lines.append(f"    • {fact_a}")
-                    lines.append(f"      vs: {fact_b}")
-                    if detected_at:
-                        lines.append(f"      (detected: {detected_at})")
+            if as_of is not None:
+                # Time-travel view: show the facts valid at that point in time
+                historical = self.store.get_facts(cluster_id=c.id, as_of=as_of)
+                lines.append(f"  Facts (as of {as_of.strftime('%Y-%m-%d')}):")
+                if historical:
+                    for fact in historical:
+                        lines.append(_fact_line(fact))
+                else:
+                    lines.append("    (no facts were valid at that time)")
+            else:
+                # Current view: active fact rows with provenance; fall back to
+                # the specifics render cache for clusters without fact rows.
+                active = self.store.get_facts(cluster_id=c.id, active_only=True)
+                lines.append("  Facts:")
+                if active:
+                    for fact in active:
+                        lines.append(_fact_line(fact))
+                else:
+                    for specific in c.specifics:
+                        lines.append(f"    • {specific}")
+
+            # Show open (untriaged) conflicts prominently
+            open_conflicts = self.store.get_conflicts(status="open", concept_id=c.id)
+            if open_conflicts:
+                lines.append(f"  ⚠ OPEN CONFLICTS ({len(open_conflicts)}):")
+                for conflict in open_conflicts:
+                    lines.append(f"    • [{conflict.id}] {conflict.description}")
+                    lines.append(f"      (detected: {conflict.created_at.strftime('%Y-%m-%d')}, severity: {conflict.severity})")
         else:
             # Standard summary for patterns and legacy concepts
             lines.append(f"  {c.summary}")
@@ -1257,10 +1285,14 @@ class MemoryRetriever:
             if entity_names:
                 lines.append(f"  Entities: {', '.join(entity_names)}")
 
-            lines.append("")
-            lines.append("  Source episodes:")
-            for episode in source_eps:
-                lines.append(_format_episode_line(episode))
+            # Fact clusters render their fact rows (with provenance and
+            # validity) above; repeating raw episodes would resurface
+            # superseded values as if current.
+            if c.concept_type != "fact_cluster":
+                lines.append("")
+                lines.append("  Source episodes:")
+                for episode in source_eps:
+                    lines.append(_format_episode_line(episode))
 
         lines.append("")
     

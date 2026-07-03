@@ -4,7 +4,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Generalization-capable memory layer for LLMs. Unlike simple RAG systems that store verbatim text, Remind extracts and maintains *generalized concepts* from experiences — mimicking how human memory consolidates specific events into abstract knowledge.
+Agent-driven memory layer for LLMs. Remind is a deterministic memory substrate with temporal facts, semantic retrieval, and structured curation — the calling agent is the only intelligence.
 
 **[Documentation](https://sandst1.github.io/remind/)** · **[Examples](https://sandst1.github.io/remind/examples/)** · **[Changelog](https://sandst1.github.io/remind/reference/changelog)**
 
@@ -14,46 +14,77 @@ Generalization-capable memory layer for LLMs. Unlike simple RAG systems that sto
 pip install remind-mcp
 ```
 
-Configure a provider (`~/.remind/remind.config.json`):
-
-```json
-{
-  "llm_provider": "anthropic",
-  "embedding_provider": "openai",
-  "anthropic": { "api_key": "sk-ant-..." },
-  "openai": { "api_key": "sk-..." }
-}
-```
-
-Use it:
+**No configuration required** — Remind uses local embeddings by default (fastembed, no API key).
 
 ```bash
 remind remember "This project uses React with TypeScript"
 remind remember "Chose PostgreSQL for the database" -t decision
-remind consolidate
+remind remember "Cache TTL is 600 seconds" -t fact -e concept:caching
 remind recall "What tech stack are we using?"
 ```
 
-Episodes go in, consolidation runs, generalized concepts come out.
+## How it works
 
-## Two ways to use Remind
+Remind stores **episodes** (raw experiences) and **concepts** (generalized knowledge). You capture and curate memories explicitly using CLI commands or MCP tools.
 
-### Skills + CLI (recommended)
+For **facts** (`-t fact`), Remind automatically:
+1. Creates a `Fact` row with validity tracking
+2. Assigns it to a cluster based on entity overlap (Jaccard similarity)
+3. Detects potential collisions with existing facts (returned for your review)
 
-Project-local memory via composable skills. The database lives in your repo at `.remind/remind.db`.
+For **patterns and concepts**, you use `remind apply` to create them from episodes:
 
 ```bash
-remind skill-install                    # Install the remind skill
-remind remember "..."                   # Store experiences
-remind recall "..."                     # Retrieve memories
-remind end-session                      # Consolidate at end of session
+remind apply << 'EOF'
+concept from=ep:11,ep:12 title="Retry-with-backoff for resilience" "Exponential backoff resolves flaky deploys and API timeouts."
+processed ids=ep:11,ep:12
+EOF
 ```
 
-Skills are Markdown files read by AI agents (Claude Code, Cursor, etc.) — they teach the agent how to use Remind as a memory layer for your project.
+## Two batch tools
 
-### MCP Server
+### `remind snapshot` — Read state
 
-Centralized memory for IDE agents (Cursor, Claude Desktop, etc.):
+```bash
+remind snapshot stats pending conflicts              # Memory overview
+remind snapshot entity:concept:caching               # Everything about an entity
+remind snapshot concept:abc123                       # Concept detail with history
+```
+
+Returns JSON. Combinable scopes: `pending`, `conflicts`, `entity:<id>`, `topic:<id>`, `concept:<id>`, `recent:<n>`, `stats`, `query:<text>`.
+
+### `remind apply` — Write changes
+
+```bash
+remind apply << 'EOF'
+remember as=f1 t=fact e=concept:cache "Cache TTL is 600 seconds"
+supersede old=fact:old123 new=$f1
+concept from=ep:1,ep:2 title="Pattern name" "Summary"
+resolve id=conflict:7 winner=fact:abc "confirmed by alice"
+processed ids=ep:1,ep:2
+EOF
+```
+
+Operations: `remember`, `supersede`, `conflict`, `resolve`, `dismiss`, `concept`, `update`, `link`, `topic`, `set_topic`, `delete`, `restore`, `processed`.
+
+All operations run in a single transaction. `--dry-run` validates without executing.
+
+## Agent skills
+
+Install skills to teach AI agents how to use Remind:
+
+```bash
+remind skill-install
+```
+
+Three skills:
+- **remind-capture** — When and how to write memories
+- **remind-context** — When and how to recall before acting
+- **remind-curate** — How to process pending episodes into concepts, resolve conflicts, maintain quality
+
+## MCP Server
+
+For IDE agents (Cursor, Claude Desktop, etc.):
 
 ```bash
 remind-mcp --port 8765
@@ -69,133 +100,104 @@ remind-mcp --port 8765
 }
 ```
 
-The MCP server also serves a web UI at `http://127.0.0.1:8765/ui/` and a REST API at `/api/v1/`.
+Tools: `remember`, `recall`, `snapshot`, `apply`, plus topic/conflict/entity management.
 
-You can also launch the UI directly from the CLI against the current project's database:
-
-```bash
-remind ui
-```
+Web UI at `http://127.0.0.1:8765/ui/`, REST API at `/api/v1/`.
 
 ## Key features
 
-- **Dual-track concepts** — Pattern concepts for generalizations, fact clusters for verbatim details. Facts are never abstracted away.
-- **Generalization** — Episodes are consolidated into concepts with confidence, conditions, and exceptions
-- **Auto-ingest** — Stream raw conversation text; an LLM triage pass extracts memory-worthy episodes (optional density score is diagnostic only, not a gate)
-- **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph, with hybrid embedding+keyword scoring and optional cross-encoder reranking
-- **Native vector indexes** — sqlite-vec for SQLite, pgvector for PostgreSQL; automatic fallback to brute-force when unavailable
-- **Entity graph** — Files, functions, people, tools and other entities are extracted and linked to episodes and concepts
-- **Outcome tracking** — Record action-result pairs; consolidation extracts causal strategy patterns
-- **Soft delete / restore** — Episodes and concepts can be deleted and restored; permanent purge is a separate step
-- **Memory decay** — Rarely-recalled concepts fade; frequently-used ones stay sharp
-- **Composable via Skills** — Build any workflow on top of the `remind` CLI
-- **Debug logging** — Enable `logging_enabled` to get full LLM prompt/response logs in `remind.log` next to the database
-- **Multi-provider** — Anthropic, OpenAI, Azure OpenAI, Ollama (fully local)
-- **Web UI** — Dashboard, concept graph, entity explorer
+- **Zero-config embeddings** — Local fastembed by default (no API key required)
+- **Temporal facts** — Validity windows, structural supersession, time-travel queries (`--as-of`)
+- **Conflict detection** — Collisions reported on write for your disposition
+- **Transactional writes** — `apply` runs all operations atomically
+- **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph
+- **Native vector indexes** — sqlite-vec (SQLite), pgvector (PostgreSQL)
+- **Entity graph** — Files, functions, people, tools linked to episodes and concepts
+- **Memory decay** — Rarely-recalled concepts fade
+- **Soft delete / restore** — With permanent purge as a separate step
+- **Web UI** — Dashboard, concept graph, entity explorer, conflicts inbox
+
+## Embedding providers
+
+Local embedding is the default (384-dim `all-MiniLM-L6-v2`). For cloud embeddings:
+
+```bash
+pip install "remind-mcp[openai]"   # OpenAI embeddings
+pip install "remind-mcp[rerank]"   # Cross-encoder reranking
+```
+
+```json
+{
+  "embedding_provider": "openai",
+  "openai": { "api_key": "sk-..." }
+}
+```
 
 ## Database backends
 
-SQLite is the default with `sqlite-vec` for native vector search (included as a dependency). For PostgreSQL or MySQL, install the corresponding extra:
+SQLite is the default. For PostgreSQL or MySQL:
 
 ```bash
 pip install "remind-mcp[postgres]"   # PostgreSQL (psycopg v3 + pgvector)
 pip install "remind-mcp[mysql]"      # MySQL (PyMySQL)
-pip install "remind-mcp[rerank]"     # Cross-encoder reranking (sentence-transformers)
-```
-
-PostgreSQL installations get `pgvector` for HNSW-indexed vector search. Enable the extension with `CREATE EXTENSION vector` (Remind does this automatically).
-
-**SQLite note:** sqlite-vec only activates if your Python build supports SQLite extension loading (`enable_load_extension`). Some macOS/pyenv Pythons do not; Remind then falls back to in-process similarity. See [Configuration — Vector search](https://sandst1.github.io/remind/guide/configuration.html#vector-search).
-
-Point Remind at your database via config file, environment variable, or CLI flag:
-
-```json
-{ "db_url": "postgresql+psycopg://user:pass@localhost:5432/mydb" }
 ```
 
 ```bash
 export REMIND_DB_URL="postgresql+psycopg://user:pass@localhost:5432/mydb"
-remind --db "postgresql+psycopg://user:pass@localhost:5432/mydb" remember "..."
 ```
-
-Remind creates the schema automatically on first use. See the [examples/](examples/) directory for ready-to-run setups ([SQLite](examples/sqlite/), [PostgreSQL + Docker](examples/postgres-docker/)).
 
 ## CLI reference
 
 ```
 Core
-  remember     Add an episode (-t type, -e entity, -m metadata, --no-embed)
-  recall       Semantic or entity-based memory retrieval (-k, --episode-k)
-  ingest       Auto-ingest raw text (LLM triage; optional diagnostic density score)
-  flush-ingest Force-flush the ingestion buffer
-  consolidate  Run consolidation manually (--background, --force)
-  reconsolidate  Reset derived data and re-consolidate from scratch
-  end-session  Flush ingest buffer, then consolidate in background
+  remember     Add an episode (-t type, -e entity, --asserted-by, --source-ref)
+  recall       Semantic or entity-based retrieval (-k, --episode-k, --as-of)
+  snapshot     Read memory state as JSON (combinable scopes)
+  apply        Apply a batch changeset transactionally
 
 Inspection
   inspect      List or detail concepts; use --episodes for episodes
-  stats        Memory statistics and decay info
-  status       Processing status (workers, queues, pending)
-  types        Show configured episode types for this environment
-  search       Keyword/tag search across concepts
-  entities     List entities or show a specific entity
-  mentions     All episodes mentioning an entity
-  entity-relations  Relationships between entities
-
+  stats        Memory statistics
+  entities     List entities or show details
+  
 Episode types
   decisions    Show decision episodes
   questions    Show open question episodes
 
 Topics
-  topics list       List topics with stats (--json / --compact-json)
-  topics create     Create a topic (--description)
-  topics update     Rename or update description
-  topics delete     Delete an empty topic
-  topics overview   Top concepts for a topic (-k)
+  topics list/create/update/delete/overview
+
+Conflicts
+  conflicts list/resolve/dismiss
 
 Editing
-  update-episode      Update content, type, entities, or topic (--topic, --clear-topic)
-  update-concept      Update title, summary, confidence, tags, relations, or topic (--topic, --clear-topic)
-  extract-relations   Backfill entity relationships from existing episodes
-
-Soft delete / restore
-  delete-episode   Soft delete an episode
-  restore-episode  Restore a soft-deleted episode
-  purge-episode    Permanently delete an episode
-
-  delete-concept   Soft delete a concept
-  restore-concept  Restore a soft-deleted concept
-  purge-concept    Permanently delete a concept
-
-  deleted          List all soft-deleted items
-  purge-all        Permanently delete all soft-deleted items
+  update-episode/update-concept
+  delete-episode/restore-episode/purge-episode
+  delete-concept/restore-concept/purge-concept
 
 Embeddings
-  embed-episodes  Backfill embeddings for older episodes (--batch-size)
-  re-embed        Recompute episode/concept embeddings for model or dimension changes (--episodes/--concepts/--all)
+  embed-episodes  Backfill embeddings
+  re-embed        Recompute embeddings (--episodes/--concepts/--entities/--all)
 
 Import / Export
-  export       Export memory to JSON
-  import       Import memory from JSON
+  export/import
 
 Skills
-  skill-install  Install Remind skills into .claude/skills/
+  skill-install  Install Remind skills
 
 UI
-  ui           Launch the web UI (auto-opens browser)
+  ui           Launch the web UI
 ```
 
 ## Documentation
 
 Full documentation at **[sandst1.github.io/remind](https://sandst1.github.io/remind/)**:
 
-- [What is Remind?](https://sandst1.github.io/remind/guide/what-is-remind) — How it works, how it differs from RAG
-- [Skills + CLI](https://sandst1.github.io/remind/guide/skills) — The recommended integration path
-- [Configuration](https://sandst1.github.io/remind/guide/configuration) — Providers, config file, env vars
-- [Core Concepts](https://sandst1.github.io/remind/concepts/episodes) — Episodes, consolidation, concepts, entities, relations
-- [Examples](https://sandst1.github.io/remind/examples/) — Project memory, sparring partner, research ingestion
+- [What is Remind?](https://sandst1.github.io/remind/guide/what-is-remind) — How it works
+- [Skills + CLI](https://sandst1.github.io/remind/guide/skills) — Agent integration
+- [Configuration](https://sandst1.github.io/remind/guide/configuration) — Providers, config
 - [CLI Reference](https://sandst1.github.io/remind/reference/cli-commands) — All commands
-- [MCP Tools](https://sandst1.github.io/remind/reference/mcp-tools) — MCP tool reference
+- [MCP Tools](https://sandst1.github.io/remind/reference/mcp-tools) — MCP reference
 
 ## License
 

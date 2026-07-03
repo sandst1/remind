@@ -1,88 +1,73 @@
-# Consolidation
+# Memory Curation
 
-Consolidation is Remind's "sleep" process — the mechanism that transforms raw episodes into generalized concepts. This is where the LLM does its work, and it's what separates Remind from a simple vector store.
+Memory curation is how agents organize raw episodes into structured knowledge. Unlike previous versions where an LLM did this automatically, Remind v1.0 puts the agent in control via `snapshot` and `apply`.
 
-## The brain analogy
+## Agent-driven approach
 
-During human sleep, the hippocampus replays episodic memories and transfers patterns to the neocortex, compressing specific events into abstract knowledge. You don't remember every meal you've ever had — you have a generalized understanding of "restaurants I like" and "foods I prefer."
+The agent decides:
+- What episodes to group into concepts
+- How to resolve fact conflicts
+- When to supersede outdated information
+- What relations exist between concepts
 
-Remind does the same thing. Raw episodes are replayed through an LLM, which identifies patterns, extracts entities, creates generalized concepts, and establishes relations.
+Remind provides the tools; the agent provides the judgment.
 
-## Two phases
+## The curation workflow
 
-### Phase 1: Extraction
+### 1. Capture experiences
 
-Episodes are grouped into batches (default 5 per batch) and sent to the LLM in a single call per batch, rather than one call per episode. For each episode in a batch:
-- **Type classification** — Is this an observation, decision, question, meta, preference, outcome, or fact?
-- **Entity extraction** — What files, people, tools, and concepts are mentioned?
-- **Relationship extraction** — When multiple entities appear in the same episode, their relationships are inferred (e.g., "Alice manages Bob" → `person:alice → manages → person:bob`)
+During work, store raw experiences:
 
-### Phase 2: Generalization
-
-Episodes are grouped by **topic** and each group is consolidated independently. This prevents cross-domain noise (e.g., product discussions polluting architecture concepts).
-
-### Dual-Track Processing
-
-Consolidation now runs two parallel tracks:
-
-1. **Pattern track** — Observations, decisions, outcomes → generalized pattern concepts
-2. **Fact track** — Fact episodes → fact_cluster concepts (no generalization)
-
-Facts are clustered using **Jaccard similarity** on entity sets — episodes cluster together when their entity overlap exceeds a threshold (default 0.5). This avoids transitive explosion where unrelated facts get merged just because they share a common entity like "government" or "user". When consolidating fact episodes:
-- Cluster facts by Jaccard similarity: `|shared entities| / |total entities|` ≥ threshold
-- Look up existing fact_clusters for the same entities
-- Look up other fact episodes mentioning the same entities  
-- Group related facts into clusters, preserving each verbatim
-- Store all linked entities on the cluster (enabling direct entity → concept lookup)
-- Detect conflicts via LLM when facts disagree (flag, don't resolve)
-- Standalone facts (no related facts) skip concept creation
-
-The threshold is configurable via `fact_cluster_jaccard_threshold` (default 0.5). Lower values create larger clusters; higher values create more focused clusters.
-
-This ensures concrete details like config values, port numbers, and API limits are never abstracted away.
-
-Within each topic group (for pattern track):
-- **Pattern identification** — What recurs across episodes?
-- **Concept archetype recognition** — The LLM is guided to recognize distinct knowledge types:
-  - *Heuristics*: Decision rules ("When deploying to prod, always run migrations first")
-  - *Definitions*: What things mean ("Our 'active user' means logged in within 7 days")
-  - *Constraints*: Hard invariants ("API responses must be under 200ms")
-  - *Preferences*: Stylistic choices ("Team prefers composition over inheritance")
-  - *Procedures*: Step-by-step how-to ("To reset staging: 1) backup db, 2) run seed script...")
-  - *Causal*: Strategy-outcome patterns ("Caching reduced latency by 40%")
-- **Concept creation** — New generalized concepts with confidence scores, inheriting the topic from their source episodes
-- **Concept update** — Existing concepts are strengthened, refined, or given exceptions
-- **Relation establishment** — Typed edges between concepts (implies, contradicts, specializes, supersedes, etc.)
-- **Contradiction detection** — Flagging when new episodes conflict with existing knowledge
-- **Supersession detection** — When a concept is replaced by a newer understanding, a `supersedes` relation is created (distinct from `contradicts` — supersession is temporal replacement, contradiction is simultaneous tension)
-- **Causal pattern detection** — For outcome-typed episodes, identifying strategy-outcome patterns (e.g., "strategy X tends to fail in context Y") and connecting them with `causes` relations
-
-## Triggering consolidation
-
-### Automatic
-
-When `auto_consolidate` is enabled (default), consolidation runs in the background after `remember` once the episode threshold is reached (default: 5 episodes).
-
-```json
-{
-  "consolidation_threshold": 5,
-  "auto_consolidate": true
-}
+```
+remember(content="Rate limiting is at gateway level", topic="architecture")
+remember(content="Max connections is 100", episode_type="fact", entities="tool:postgres")
 ```
 
-### Manual
+### 2. Review pending state
 
-```bash
-remind consolidate          # Threshold-based
-remind consolidate --force  # Force even with few episodes
-remind end-session          # Consolidate + session cleanup
+Use `snapshot` to see what needs curation:
+
+```
+snapshot(scopes="pending,conflicts")
 ```
 
-### Background
+Returns:
+- `pending` — Unprocessed episodes with their entities
+- `conflicts` — Open contradictions awaiting resolution
 
-The CLI runs consolidation in a background subprocess to keep things fast. Lock files at `~/.remind/.consolidate-{hash}.lock` prevent concurrent runs. Logs go to `~/.remind/logs/consolidation.log`.
+### 3. Curate with apply
 
-## What consolidation produces
+Send a changeset that organizes the knowledge:
+
+```
+concept from=ep:11,ep:12 title="Gateway handles rate limits" "All rate limiting at gateway"
+resolve id=conflict:3 winner=fact:abc "newer config value"
+processed ids=ep:11,ep:12
+```
+
+## Fact handling (automatic)
+
+While concepts require agent curation, **fact episodes** are processed automatically:
+
+1. **Store** — Episode is stored and embedded
+2. **Cluster** — Assigned to existing fact cluster by entity overlap (Jaccard similarity ≥ 0.5), or a new cluster is created
+3. **Detect collisions** — Active facts in the cluster with overlapping entities are flagged
+4. **Return result** — Collision info is returned for agent triage
+
+Collisions are NOT auto-resolved. The agent decides via `apply`:
+
+```
+# New fact supersedes old
+supersede old=fact:abc new=fact:def
+
+# Or: both are valid in different contexts
+dismiss id=conflict:7 "staging vs prod"
+
+# Or: genuine contradiction
+conflict fact_a=abc fact_b=def severity=high
+```
+
+## What curation produces
 
 Given these episodes:
 
@@ -93,36 +78,43 @@ Given these episodes:
 "User values type safety in all their projects"
 ```
 
-Consolidation might produce:
+The agent might create:
 
-> **Concept**: "User is a polyglot programmer drawn to statically typed, performance-oriented languages"
-> - Confidence: 0.85
-> - Instance count: 4
-> - Conditions: "Applies to language preferences for new projects"
-> - Relations: implies → "User likely prefers compiled languages"
-> - Source episodes: [ep_1, ep_2, ep_3, ep_4]
+```
+concept from=ep:1,ep:2,ep:3,ep:4 title="Language preferences" "User is a polyglot programmer drawn to statically typed languages"
+link source=$c1 type=implies target=concept:compiled-languages
+processed ids=ep:1,ep:2,ep:3,ep:4
+```
 
-This is understanding, not storage.
+The difference from automatic consolidation: the agent has full context of what these episodes mean in the current project, and can make informed decisions about how to organize them.
 
-Consolidation prioritizes specificity and falsifiability — concepts should be concrete enough to be validated against reality. For `fact` episodes, consolidation preserves details verbatim in concept summaries rather than abstracting them away.
+## Pending vs processed
 
-## Performance tuning
+Episodes have a `consolidated` flag (semantically: "processed"):
 
-Consolidation performance can be tuned with four settings:
+- **Pending** — Not yet reviewed by the agent
+- **Processed** — Agent has reviewed and either created a concept or marked as `processed`
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `extraction_batch_size` | `50` | Number of episodes fetched per extraction loop pass. This is independent from `consolidation_batch_size`. |
-| `extraction_llm_batch_size` | `10` | Number of episodes grouped into each extraction LLM call. Higher values mean fewer LLM calls but larger prompts and slower individual calls. |
-| `consolidation_batch_size` | `25` | Number of episodes fetched and generalized per consolidation pass. Controls how much episode context each consolidation batch sees. |
-| `llm_concurrency` | `3` | Maximum concurrent LLM calls within a consolidation run. This shared cap applies to extraction sub-batches, topic-group work, and concept-chunk sub-passes. |
+Use `snapshot(scopes="pending")` to see what needs attention.
 
-With the defaults, 30 episodes split across 3 topics can process up to 3 LLM calls in parallel. Increase `llm_concurrency` to parallelize more aggressively.
+Use `processed ids=ep:1,ep:2` to mark episodes as reviewed without creating a concept.
 
-Legacy aliases remain supported: `entity_extraction_batch_size` and `consolidation_llm_concurrency`.
+## Fact clusters
 
-Only LLM calls are parallelized — all store writes (entity deduplication, concept creation, relation storage) remain sequential to avoid conflicts.
+Fact episodes are automatically grouped into fact_cluster concepts:
 
-## Immediate consolidation from auto-ingest
+- **Cluster title** — Generated from shared entities
+- **Active facts** — Facts with open validity windows
+- **Superseded facts** — Facts that have been replaced (closed validity window, links to replacement)
 
-Episodes created via `ingest()` are immediately consolidated with `force=True`, bypassing the normal episode threshold. The triage step already filtered for quality, so there's no reason to wait. This does not affect `remember()`-created episodes, which still follow normal threshold-based consolidation.
+Use `snapshot(scopes="concept:cluster_id")` to see full cluster detail including supersession history.
+
+## Time-travel
+
+Fact clusters support time-travel queries:
+
+```
+recall(query="cache config", as_of="2024-06-01")
+```
+
+This shows what facts were valid at that point in time, not the current values. Useful for debugging "what did we believe then".

@@ -174,11 +174,32 @@ When a `topic` is provided to recall, initial concept matches are filtered to th
 
 This reduces noise when querying a specific knowledge area while still allowing relevant cross-domain insights to surface.
 
+## Fact clusters in recall output
+
+Fact-cluster concepts render their **active fact rows** with provenance and validity:
+
+```
+- Cache TTL is 600 seconds (alice, since 2026-03-01)
+- Cache backend is Redis (since 2026-01-10)
+```
+
+Superseded values don't appear — a fact that was updated shows only its current value, with history reachable via [as-of recall](#as-of-recall-time-travel) or the concept detail view. Episode lines show the episode's creation date (when it was asserted) and provenance.
+
+## As-of recall (time travel)
+
+Passing `as_of` (ISO date/datetime) makes fact clusters show the facts that were **valid at that point in time** instead of the current ones:
+
+```bash
+remind recall --as-of 2026-01-15 "cache configuration"
+```
+
+Useful for "what did we believe then" questions — auditing past decisions against the knowledge available at the time. See [Facts & Conflicts](/concepts/facts-and-conflicts#as-of-recall-time-travel).
+
 ## Contradiction and supersession display
 
-Each concept in recall output shows **inbound and outbound contradictions** — concepts that have a `contradicts` relation to or from the current concept. This surfaces conflicting knowledge directly in the retrieval context, so the consumer can see tensions without needing to inspect relations manually.
+When a retrieved concept is involved in **open conflicts**, recall output includes an `OPEN CONFLICTS` warning with the conflict IDs and descriptions, so the consumer knows the retrieved knowledge is contested and can triage it (`remind conflicts`) instead of silently picking a side. Resolved and dismissed conflicts don't clutter the output.
 
-Similarly, **supersedes** relations are surfaced explicitly:
+Similarly, **supersedes** relations between concepts are surfaced explicitly:
 - `→ supersedes [old_id]: <old summary>` — this concept replaces an older one
 - `→ SUPERSEDED BY [new_id]: <new summary>` — this concept has been replaced
 
@@ -212,6 +233,7 @@ remind recall "performance" -k 10            # More results
 remind recall "auth" --episode-k 10          # More direct episode matches
 remind recall "auth" --episode-k 0           # Concepts only, no episodes
 remind recall "database design" --topic architecture  # Topic-scoped
+remind recall --as-of 2026-01-15 "cache config"       # Time-travel
 ```
 
 ```python [Python]
@@ -221,6 +243,7 @@ context = await memory.recall(entity="module:auth")       # Entity-only
 context = await memory.recall("auth", episode_k=10)       # More episode matches
 context = await memory.recall("auth", episode_k=0)        # Concepts only
 context = await memory.recall("database design", topic="architecture")  # Topic-scoped
+context = await memory.recall("cache config", as_of="2026-01-15")  # Time-travel
 ```
 
 ```text [MCP]
@@ -230,6 +253,7 @@ recall(entity="module:auth")
 recall(query="auth", episode_k=10)
 recall(query="auth", episode_k=0)
 recall(query="database design", topic="architecture")
+recall(query="cache config", as_of="2026-01-15")
 ```
 
 :::

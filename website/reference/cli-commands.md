@@ -12,7 +12,8 @@ Store an episode.
 remind remember "content"
 remind remember "content" -t decision          # Typed
 remind remember "content" -e tool:redis        # With entity
-remind remember "content" --topic architecture --source-type agent
+remind remember "content" --topic architecture
+remind remember "Cache TTL is 300s" -t fact -e tool:redis --asserted-by alice
 ```
 
 | Flag | Description |
@@ -20,38 +21,12 @@ remind remember "content" --topic architecture --source-type agent
 | `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `outcome`, `fact` |
 | `-e, --entity` | Entity tag(s) in `type:name` format. Repeat for multiple. |
 | `-m, --metadata` | JSON metadata string |
-| `--topic` | Knowledge area (e.g., `architecture`, `product`). Scopes consolidation and retrieval. |
-| `--source-type` | Origin of the memory (e.g., `agent`, `slack`, `manual`). |
-| `--no-embed` | Skip embedding the episode (faster, no API call). Useful for bulk imports. |
+| `--topic` | Knowledge area (e.g., `architecture`, `product`) |
+| `--asserted-by` | Who asserted this information (provenance) |
+| `--source-ref` | Link to the original artifact (URL/permalink) |
+| `--no-embed` | Skip embedding (faster). Useful for bulk imports. |
 
-### ingest
-
-Auto-ingest raw text: the triage LLM extracts memory-worthy episodes (and may assign topics). Text buffers internally until the character threshold is reached, then flushes to triage.
-
-```bash
-remind ingest "User said they prefer dark mode and Vim keybindings"
-remind ingest "Rate limiting at gateway" --topic architecture
-echo "conversation log" | remind ingest
-cat transcript.txt | remind ingest --source transcript
-cat meeting.txt | remind ingest -i "extract decisions and action items"
-```
-
-| Flag | Description |
-|------|-------------|
-| `-s, --source` | Source label for metadata (default: `conversation`) |
-| `--topic` | Topic ID or name. When set, all extracted episodes go to this topic. When omitted, episodes get `topic_id=None`. |
-| `-i, --instructions` | Natural-language instructions to steer what gets extracted (e.g. `"focus on decisions"`). Appended to the triage system prompt. |
-| `-f, --foreground` | Run triage and consolidation in foreground (blocking). By default, processing is spawned in a background worker. |
-
-Accepts text as an argument or via stdin (for piping).
-
-### flush-ingest
-
-Force-flush the ingestion buffer, processing whatever has accumulated.
-
-```bash
-remind flush-ingest
-```
+For `fact` episodes, the output includes collision information if there are existing facts with overlapping entities.
 
 ### recall
 
@@ -65,46 +40,79 @@ remind recall "query" -k 10                        # More results
 remind recall "query" --episode-k 10               # More direct episode matches
 remind recall "query" --episode-k 0                # Concepts only, no episode search
 remind recall "database design" --topic architecture  # Topic-scoped
+remind recall --as-of 2024-06-01 "cache configuration" # Time-travel
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--entity` | Scope retrieval to an entity (can be used without a query) |
 | `-k` | Number of concepts to return (default: 3) |
-| `--episode-k, -ek` | Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable. |
-| `--topic` | Filter to a knowledge area. Cross-topic concepts may still surface via spreading activation but are penalized. |
+| `--episode-k, -ek` | Number of episodes via direct vector search (default: 5, 0 to disable) |
+| `--topic` | Filter to a knowledge area |
+| `--as-of` | ISO date/datetime for time-travel (facts valid at that point) |
 
-### consolidate
+### snapshot
 
-Process episodes into concepts.
-
-```bash
-remind consolidate            # Threshold-based
-remind consolidate --force    # Force even with few episodes
-```
-
-### end-session
-
-Flush the ingestion buffer, then consolidate pending episodes in the background. Recommended at the end of every session.
+Batch read returning current memory state as JSON.
 
 ```bash
-remind end-session
+remind snapshot pending                  # Unprocessed episodes
+remind snapshot conflicts                # Open conflicts
+remind snapshot pending,conflicts        # Both at once
+remind snapshot entity:tool:redis        # Entity detail
+remind snapshot topic:architecture       # Topic detail
+remind snapshot concept:abc123           # Concept detail
+remind snapshot recent:20                # Recent episodes
+remind snapshot stats                    # Statistics
+remind snapshot query:cache              # Semantic search
 ```
+
+| Scope | Description |
+|-------|-------------|
+| `pending` | Unprocessed episodes with entities |
+| `conflicts` | Open conflicts with fact context |
+| `entity:<id>` | Entity detail with episodes and fact clusters |
+| `topic:<id>` | Topic detail with episodes and concepts |
+| `concept:<id>` | Concept detail with facts and history |
+| `recent:<n>` | N most recent episodes |
+| `stats` | Memory statistics |
+| `query:<text>` | Semantic search for concepts |
+
+### apply
+
+Batch write for transactional memory curation.
+
+```bash
+# From stdin
+remind apply << 'EOF'
+remember as=f1 t=fact e=tool:redis "Cache TTL is 600s"
+supersede old=fact:abc123 new=$f1
+concept from=ep:11,ep:12 title="Redis config" "TTL-based caching"
+processed ids=ep:11,ep:12
+EOF
+
+# From file
+remind apply -f changeset.txt
+
+# Dry run (validate without executing)
+remind apply --dry-run << 'EOF'
+remember t=fact "Test fact"
+EOF
+```
+
+| Flag | Description |
+|------|-------------|
+| `-f, --file` | Read changeset from file instead of stdin |
+| `--dry-run` | Validate without executing |
+| `--json` | Output results as JSON |
+
+See [MCP Tools — apply](/reference/mcp-tools#apply) for the full op vocabulary.
 
 ## Inspection
 
-### inspect
-
-View concepts or episodes.
-
-```bash
-remind inspect                    # List all concepts
-remind inspect <concept-id>       # Concept details
-```
-
 ### stats
 
-Summary counts (concepts, episodes, relations, entities, mentions), consolidation status (pending and unextracted episodes, threshold, auto-consolidate, last run), **episode types** and **entity types** (per-type counts), **relation distribution**, configured LLM and embedding providers, decay settings and stats, and the **database** path in use.
+Summary counts, decay settings, embedding provider, and database path.
 
 ```bash
 remind stats
@@ -112,7 +120,7 @@ remind stats
 
 ### types
 
-Show which episode types are enabled for this environment (from env vars, project config, global config, or defaults). Useful when you have restricted `episode_types` and want to confirm what the CLI and consolidation will accept.
+Show which episode types are enabled.
 
 ```bash
 remind types
@@ -120,17 +128,7 @@ remind types
 
 ### status
 
-Show processing status: running workers, pending episodes, queued ingest chunks.
-
-Includes three worker lines:
-- **Consolidation** worker state
-- **Ingest worker** state
-- **Recall worker** state
-
-Recall worker behavior:
-- When `reranking_enabled=false`, status shows recall worker as inactive.
-- When reranking is enabled and `cli_recall_worker_enabled=true`, status shows `idle` (auto-starts on `remind recall`) or `running`.
-- When reranking is enabled but `cli_recall_worker_enabled=false`, status shows recall worker as disabled by config.
+Show processing status and worker states.
 
 ```bash
 remind status
@@ -143,6 +141,28 @@ Search concepts by keyword.
 ```bash
 remind search "keyword"
 ```
+
+## Conflicts
+
+Triage detected memory conflicts.
+
+```bash
+remind conflicts                          # List open conflicts
+remind conflicts list --status all        # Include resolved/dismissed
+remind conflicts list --kind fact         # Filter by kind
+
+# Resolve: winning fact stays, loser is superseded
+remind conflicts resolve <id> <winning_fact_id> --note "confirmed" --by alice
+
+# Dismiss: both valid in different contexts
+remind conflicts dismiss <id> --note "staging vs prod"
+```
+
+| Subcommand | Flags |
+|------------|-------|
+| `list` | `--status open\|resolved\|dismissed\|all`, `--kind fact\|concept` |
+| `resolve <id> <winning_fact_id>` | `--note`, `--by` |
+| `dismiss <id>` | `--note`, `--by` |
 
 ## Topic management
 
@@ -166,8 +186,6 @@ remind entities                           # List all entities
 remind entities file:src/auth.ts          # Entity details
 remind mentions file:src/auth.ts          # Episodes mentioning entity
 remind entity-relations file:src/auth.ts  # Entity relationships
-remind extract-relations                  # Extract from unprocessed episodes
-remind extract-relations --force          # Re-extract all
 ```
 
 ## Memory management
@@ -200,18 +218,22 @@ remind purge-all                      # All soft-deleted items
 
 ## Embeddings
 
-### embed-episodes
+### re-embed
 
-Backfill embeddings for episodes that don't have them yet. Useful after upgrading from a version that didn't embed episodes, or after bulk-importing with `--no-embed`.
+Re-embed all concepts, episodes, and entities. Useful when switching embedding providers or dimensions.
 
 ```bash
-remind embed-episodes                    # Default batch size (50)
-remind embed-episodes --batch-size 100   # Larger batches
+remind re-embed --all                   # Re-embed everything
+remind re-embed --batch-size 100        # Larger batches
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--batch-size` | Number of episodes to embed per batch (default: 50) |
+### clear-embeddings
+
+Clear all embeddings (requires re-embed after).
+
+```bash
+remind clear-embeddings
+```
 
 ## Export / Import
 
@@ -228,17 +250,19 @@ remind ui --port 9000        # Custom port
 remind ui --no-open          # Start server only
 ```
 
-## Skill installation
+## Skills
 
 ```bash
-remind skill-install          # Install base skill to .claude/skills/remind/
+remind skill-install                 # Install all bundled skills to .claude/skills/
+remind skill-install remind-capture  # Install a specific skill
 ```
+
+Installs `remind-capture`, `remind-context`, and `remind-curate`. See [Skills + CLI](/guide/skills).
 
 ## Global flags
 
 | Flag | Description |
 |------|-------------|
 | `--db NAME` | Use `~/.remind/NAME.db` instead of project-local |
-| `--llm PROVIDER` | Override LLM provider |
 | `--embedding PROVIDER` | Override embedding provider |
 | `--version` | Show version |

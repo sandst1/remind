@@ -452,6 +452,48 @@ class TestRetrieverFormatting:
         result = retriever.format_for_llm(activated)
         assert "via association" in result
 
+    def test_format_for_llm_as_of_shows_historical_facts(self, retriever, memory_store):
+        """as_of renders the facts valid at that time, not the current ones."""
+        from datetime import datetime
+        from remind.models import Fact
+
+        cluster = Concept(
+            title="Pricing",
+            summary="Pricing facts",
+            concept_type="fact_cluster",
+            specifics=["Price is $49"],
+        )
+        memory_store.add_concept(cluster)
+
+        old = Fact(
+            cluster_id=cluster.id,
+            statement="Price is $29",
+            valid_from=datetime(2026, 1, 1),
+        )
+        new = Fact(
+            cluster_id=cluster.id,
+            statement="Price is $49",
+            valid_from=datetime(2026, 3, 1),
+        )
+        memory_store.add_fact(old)
+        memory_store.add_fact(new)
+        memory_store.supersede_fact(old.id, new.id, at=datetime(2026, 3, 1))
+
+        activated = [ActivatedConcept(
+            concept=cluster, activation=0.8, source="embedding", hops=0,
+        )]
+
+        # Current view shows the active fact
+        current = retriever.format_for_llm(activated)
+        assert "Price is $49" in current
+        assert "Price is $29" not in current
+
+        # as_of Feb 2026 shows the fact valid then
+        historical = retriever.format_for_llm(activated, as_of=datetime(2026, 2, 1))
+        assert "Facts (as of 2026-02-01)" in historical
+        assert "Price is $29" in historical
+        assert "Price is $49" not in historical
+
     def test_format_for_llm_with_conditions(self, retriever, memory_store):
         """Test formatting includes conditions."""
         concept = Concept(

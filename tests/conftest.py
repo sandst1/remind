@@ -6,7 +6,7 @@ import os
 import hashlib
 from typing import Optional
 
-from remind.providers.base import LLMProvider, EmbeddingProvider
+from remind.providers.base import EmbeddingProvider
 from remind.store import SQLiteMemoryStore
 from remind.models import (
     Episode, Concept, Entity, EntityType, EpisodeType,
@@ -17,106 +17,6 @@ from remind.models import (
 # =============================================================================
 # Mock Provider Implementations
 # =============================================================================
-
-class MockLLMProvider(LLMProvider):
-    """
-    Mock LLM provider for testing.
-
-    Provides predictable responses for different types of prompts.
-    """
-
-    def __init__(self):
-        self._complete_response: str = "Mock LLM response"
-        self._complete_structured_text_response: str = ""
-        self._complete_json_response: dict = {}
-        self._complete_json_responses: list[dict] = []
-        self._complete_json_call_idx: int = 0
-        self._call_history: list[dict] = []
-
-    def set_complete_response(self, response: str) -> None:
-        """Set the response for complete() calls."""
-        self._complete_response = response
-
-    def set_complete_structured_text_response(self, response: str) -> None:
-        """Set the response for complete_structured_text() calls."""
-        self._complete_structured_text_response = response
-
-    def set_complete_json_response(self, response: dict) -> None:
-        """Set the response for complete_json() calls."""
-        self._complete_json_response = response
-        self._complete_json_responses = []
-
-    def set_complete_json_responses(self, responses: list[dict]) -> None:
-        """Set a sequence of responses for successive complete_json() calls."""
-        self._complete_json_responses = list(responses)
-        self._complete_json_call_idx = 0
-
-    def get_call_history(self) -> list[dict]:
-        """Get history of all calls made to this mock."""
-        return self._call_history
-
-    def clear_history(self) -> None:
-        """Clear call history."""
-        self._call_history = []
-
-    async def complete(
-        self,
-        prompt: str,
-        system: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 4096,
-    ) -> str:
-        self._call_history.append({
-            "method": "complete",
-            "prompt": prompt,
-            "system": system,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        })
-        return self._complete_response
-
-    async def complete_json(
-        self,
-        prompt: str,
-        system: Optional[str] = None,
-        temperature: float = 0.3,
-        max_tokens: int = 4096,
-    ) -> dict:
-        self._call_history.append({
-            "method": "complete_json",
-            "prompt": prompt,
-            "system": system,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        })
-        if self._complete_json_responses:
-            idx = min(self._complete_json_call_idx, len(self._complete_json_responses) - 1)
-            self._complete_json_call_idx += 1
-            return self._complete_json_responses[idx]
-        return self._complete_json_response
-
-    async def complete_structured_text(
-        self,
-        prompt: str,
-        system: Optional[str] = None,
-        temperature: float = 0.3,
-        max_tokens: int = 4096,
-    ) -> str:
-        self._call_history.append({
-            "method": "complete_structured_text",
-            "prompt": prompt,
-            "system": system,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        })
-        if self._complete_structured_text_response:
-            return self._complete_structured_text_response
-        return self._complete_response
-
-    @property
-    def name(self) -> str:
-        return "mock/llm"
-
 
 class MockEmbeddingProvider(EmbeddingProvider):
     """
@@ -183,12 +83,6 @@ class MockEmbeddingProvider(EmbeddingProvider):
 # =============================================================================
 
 @pytest.fixture
-def mock_llm():
-    """Create a mock LLM provider."""
-    return MockLLMProvider()
-
-
-@pytest.fixture
 def mock_embedding():
     """Create a mock embedding provider."""
     return MockEmbeddingProvider(dimensions=128)
@@ -222,32 +116,27 @@ def sample_episode():
 
 @pytest.fixture
 def sample_episodes():
-    """Create multiple sample episodes for consolidation testing."""
+    """Create multiple sample episodes for testing."""
     return [
         Episode(
             content="User prefers Python for backend development",
             episode_type=EpisodeType.PREFERENCE,
-            entities_extracted=True,
         ),
         Episode(
             content="User mentioned they work on distributed systems",
             episode_type=EpisodeType.OBSERVATION,
-            entities_extracted=True,
         ),
         Episode(
             content="Decided to use async patterns for the API",
             episode_type=EpisodeType.DECISION,
-            entities_extracted=True,
         ),
         Episode(
             content="What testing framework should be used?",
             episode_type=EpisodeType.QUESTION,
-            entities_extracted=True,
         ),
         Episode(
             content="User values clean, readable code over clever optimizations",
             episode_type=EpisodeType.PREFERENCE,
-            entities_extracted=True,
         ),
     ]
 
@@ -311,35 +200,3 @@ def sample_entity():
         type=EntityType.FILE,
         display_name="auth.ts",
     )
-
-
-# =============================================================================
-# Helper Functions for Mock Responses
-# =============================================================================
-
-def make_extraction_response(
-    episode_type: str = "observation",
-    entities: list[dict] = None,
-) -> dict:
-    """Create a mock extraction response."""
-    return {
-        "type": episode_type,
-        "entities": entities or [],
-    }
-
-
-def make_consolidation_response(
-    analysis: str = "Test consolidation analysis",
-    updates: list[dict] = None,
-    new_concepts: list[dict] = None,
-    new_relations: list[dict] = None,
-    contradictions: list[dict] = None,
-) -> dict:
-    """Create a mock consolidation response."""
-    return {
-        "analysis": analysis,
-        "updates": updates or [],
-        "new_concepts": new_concepts or [],
-        "new_relations": new_relations or [],
-        "contradictions": contradictions or [],
-    }

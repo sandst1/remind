@@ -165,6 +165,31 @@ class TestEpisode:
         assert restored.consolidated == episode.consolidated
         assert restored.metadata == episode.metadata
 
+    def test_provenance_roundtrip(self):
+        episode = Episode(
+            content="Pricing changed to $49/mo",
+            asserted_by="alice",
+            source_ref="https://example.slack.com/archives/C1/p123",
+        )
+
+        d = episode.to_dict()
+        assert d["asserted_by"] == "alice"
+        assert d["source_ref"] == "https://example.slack.com/archives/C1/p123"
+
+        restored = Episode.from_dict(d)
+        assert restored.asserted_by == "alice"
+        assert restored.source_ref == "https://example.slack.com/archives/C1/p123"
+
+    def test_provenance_defaults_to_none(self):
+        episode = Episode(content="test")
+        assert episode.asserted_by is None
+        assert episode.source_ref is None
+
+        # Old serialized episodes (no provenance keys) load cleanly
+        restored = Episode.from_dict({"id": "x", "content": "test"})
+        assert restored.asserted_by is None
+        assert restored.source_ref is None
+
 
 class TestEpisodeTypeAsString:
     """Tests for configurable episode types (episode_type is now a str)."""
