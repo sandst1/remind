@@ -2,6 +2,16 @@
 
 All notable changes to Remind.
 
+## [0.11.4] - 2026-07-03
+
+### Added
+
+- **`entity_relation` apply operation** — Create relationships between entities using `entity_relation source=X target=Y relation=Z`. Builds the entity graph visible in the web UI.
+
+### Documentation
+
+- Updated `remind-capture` and `remind-curate` skills to document entity relationships.
+
 ## [0.11.3] - 2026-07-03
 
 ### Fixed

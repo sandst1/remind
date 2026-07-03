@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-07-03
+
+### Added
+
+- **`entity_relation` apply operation** — Create relationships between entities using `entity_relation source=X target=Y relation=Z`. Builds the entity graph visible in the web UI. Supports `strength` (0-1) and `context` parameters.
+
+### Documentation
+
+- Updated `remind-capture` and `remind-curate` skills to document entity relationships and when to capture them.
+
 ## [0.11.3] - 2026-07-03
 
 ### Fixed

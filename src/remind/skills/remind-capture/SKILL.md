@@ -34,7 +34,7 @@ remind remember "User wants retry-after headers on 429s" -t preference --topic p
 ```
 
 - **Type** (`-t`): Always set the type explicitly when you know it.
-- **Entities** (`-e`): `type:name` format (`file`, `function`, `class`, `person`, `concept`, `tool`, `project`). Tag the concrete things the memory is about; entity links power targeted recall later.
+- **Entities** (`-e`): `type:name` format (`file`, `function`, `class`, `person`, `concept`, `tool`, `project`). Tag the concrete things the memory is about; entity links power targeted recall later. See "Entity relationships" below to capture how entities relate.
 - **Topic** (`--topic`): topic ID or name; groups related memories.
 - **Provenance**: `--asserted-by <who>` (person or `agent:<name>`) and `--source-ref <url>` whenever the information came from somewhere specific. Provenance is what makes later conflict resolution possible — "alice said X on 2026-03-01" beats "X".
 
@@ -73,11 +73,37 @@ EOF
 
 Apply runs all operations in a single transaction. Use `$refs` to reference items created earlier in the same changeset.
 
+## Entity relationships
+
+When content describes relationships between entities, capture both the fact AND the relationship. Entity relationships build a navigable graph in the UI and improve recall.
+
+```bash
+remind apply << 'EOF'
+remember t=fact e=person:alice,project:backend "Alice owns the backend project"
+entity_relation source=person:alice target=project:backend relation=owns strength=0.9
+EOF
+```
+
+The `entity_relation` operation accepts:
+- **source**: Entity ID (e.g., `person:alice`)
+- **target**: Entity ID (e.g., `project:backend`)
+- **relation**: Free-form relationship type (e.g., `owns`, `manages`, `depends_on`, `imports`, `authored`)
+- **strength**: 0.0–1.0 confidence (default 0.5)
+- **context**: Optional qualifier (e.g., "as of Q2 2026")
+
+**When to capture relationships:**
+- Ownership/responsibility: `person:X owns/manages project:Y`
+- Dependencies: `module:A imports/depends_on module:B`
+- Hierarchy: `concept:X part_of concept:Y`
+- Authorship: `person:X authored file:Y`
+- Domain relationships: `concept:parliament elects concept:president`
+
 ### Compact format reference
 
 ```
 remember as=<ref> t=<type> e=<entity1>,<entity2> by=<who> ref=<url> "content"
 supersede old=<fact_id> new=<fact_id_or_$ref>
+entity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context="optional"
 concept as=<ref> from=<ep1>,<ep2> title="Title" "Summary text"
 processed ids=<ep1>,<ep2>
 ```

@@ -30,6 +30,7 @@ Look at the pending episodes. Ask:
 - Are there recurring themes, entities, or decisions?
 - Do any episodes together support a generalized concept?
 - Are there any implicit contradictions between episodes?
+- What relationships exist between entities mentioned? (e.g., "X owns Y", "A depends on B")
 
 ### 3. Write a changeset
 
@@ -129,6 +130,7 @@ remind topics update architecture -n "System Architecture" -d "Updated descripti
 ```
 remember as=<ref> t=<type> e=<entities> by=<who> ref=<url> "content"
 supersede old=<fact_id> new=<fact_id_or_$ref>
+entity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context="optional"
 concept as=<ref> from=<ep_ids> title="Title" "Summary"
 link from=<concept_id_or_$ref> to=<concept_id> type=<relation_type>
 resolve id=<conflict_id> winner=<fact_id> by=<who> "resolution note"

@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from remind.models import (
     Episode, Concept, Fact, Conflict, Topic, Relation, RelationType,
-    EpisodeType, EntityType, Entity,
+    EpisodeType, EntityType, Entity, EntityRelation,
     slugify, canonicalize_entity_name, strip_entity_label_prefix,
 )
 from remind.store import MemoryStore
@@ -337,7 +337,7 @@ class ApplyEngine:
         valid_ops = {
             "remember", "supersede", "conflict", "resolve", "dismiss",
             "concept", "update", "link", "topic", "set_topic",
-            "delete", "restore", "processed",
+            "delete", "restore", "processed", "entity_relation",
         }
         
         for i, op in enumerate(ops):
@@ -426,6 +426,13 @@ class ApplyEngine:
                         line=None, op_index=i, op_type=op_type,
                         message="processed requires 'ids'",
                     ))
+            
+            elif op_type == "entity_relation":
+                if not op.get("source") or not op.get("target") or not op.get("relation"):
+                    errors.append(OpError(
+                        line=None, op_index=i, op_type=op_type,
+                        message="entity_relation requires 'source', 'target', and 'relation'",
+                    ))
         
         return errors
     
@@ -467,6 +474,8 @@ class ApplyEngine:
                 return self._op_restore(index, op, refs, ref_name)
             elif op_type == "processed":
                 return self._op_processed(index, op, refs, ref_name)
+            elif op_type == "entity_relation":
+                return self._op_entity_relation(index, op, refs, ref_name)
             else:
                 return OpResult(
                     op_index=index, op_type=op_type, success=False,
@@ -927,6 +936,36 @@ class ApplyEngine:
         return OpResult(
             op_index=index,
             op_type="processed",
+            success=True,
+            ref=ref_name,
+        )
+    
+    def _op_entity_relation(
+        self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
+    ) -> OpResult:
+        """Execute an entity_relation operation to create a relationship between entities."""
+        source_raw = op.get("source", "")
+        target_raw = op.get("target", "")
+        relation_type = op.get("relation", "")
+        strength = float(op.get("strength", 0.5))
+        context = op.get("context")
+        
+        source_id = self._resolve_entity_id(source_raw)
+        target_id = self._resolve_entity_id(target_raw)
+        
+        relation = EntityRelation(
+            source_id=source_id,
+            target_id=target_id,
+            relation_type=relation_type,
+            strength=strength,
+            context=context,
+        )
+        
+        self.store.add_entity_relation(relation)
+        
+        return OpResult(
+            op_index=index,
+            op_type="entity_relation",
             success=True,
             ref=ref_name,
         )
