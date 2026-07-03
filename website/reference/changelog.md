@@ -2,6 +2,21 @@
 
 All notable changes to Remind.
 
+## [0.12.1] - 2026-07-03
+
+### Added
+
+- **Cross-cluster related facts on `remember()`** — `RememberResult` now includes
+  `related_facts`: active facts in other clusters that share a subject name (type
+  prefix stripped) or have high embedding similarity (≥ 0.6). The MCP `remember`
+  tool renders these as a "Related facts — check for conflicts" block for immediate
+  agent triage.
+
+### Changed
+
+- New config knobs: `fact_related_similarity_threshold` (default `0.6`) and
+  `fact_related_max_results` (default `10`).
+
 ## [0.12.0] - 2026-07-03
 
 ### Added

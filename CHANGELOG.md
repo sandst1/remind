@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-03
+
+### Added
+
+- **Cross-cluster related facts on `remember()`** — When a `fact`-type episode is
+  stored, `RememberResult` now includes a `related_facts` list in addition to the
+  existing same-cluster `collisions`. Related facts are found by:
+  1. Bare-name entity matching — strips the type prefix (`person:alice` →
+     `alice`) so facts tagged `concept:alice`, `project:alice`, etc. are all
+     surfaced together, regardless of entity type.
+  2. Global embedding similarity (cosine ≥ 0.6, configurable) across all
+     clusters.
+  The MCP `remember` tool renders these as a compact
+  "Related facts — check for conflicts" block so the calling agent can
+  immediately spot and resolve cross-cluster contradictions.
+
+### Changed
+
+- Two new config knobs: `fact_related_similarity_threshold` (default `0.6`) and
+  `fact_related_max_results` (default `10`).
+
 ## [0.12.0] - 2026-07-03
 
 ### Added
