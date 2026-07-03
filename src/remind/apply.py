@@ -597,12 +597,50 @@ class ApplyEngine:
     def _op_supersede(
         self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
     ) -> OpResult:
-        """Execute a supersede operation."""
+        """Execute a supersede operation.
+
+        In addition to closing the old fact's validity window, upserts a
+        resolved Conflict row so the replacement is visible in recall conflict
+        history, snapshot, and the UI — even when the agent skips the formal
+        conflict → resolve workflow.
+        """
         old_id = self._resolve_ref(op.get("old", ""), refs)
         new_id = self._resolve_ref(op.get("new", ""), refs)
-        
+        resolved_by = op.get("by") or op.get("resolved_by")
+        resolution_note = op.get("note") or op.get("resolution_note")
+
         self.store.supersede_fact(old_id, new_id)
-        
+
+        # Upsert a resolved Conflict row for provenance
+        now = datetime.now()
+        existing = self.store.find_open_conflict_for_facts(old_id, new_id)
+        if existing:
+            existing.status = "resolved"
+            existing.winning_fact_id = new_id
+            existing.resolved_at = now
+            existing.resolved_by = resolved_by
+            if resolution_note:
+                existing.resolution_note = resolution_note
+            self.store.update_conflict(existing)
+        else:
+            old_fact = self.store.get_fact(old_id)
+            concept_ids = [old_fact.cluster_id] if old_fact and old_fact.cluster_id else []
+            conflict = Conflict(
+                kind="fact",
+                fact_a_id=old_id,
+                fact_b_id=new_id,
+                concept_ids=concept_ids,
+                description=f"Superseded: {old_id} replaced by {new_id}",
+                severity="low",
+                status="resolved",
+                created_at=now,
+                resolved_at=now,
+                resolved_by=resolved_by,
+                resolution_note=resolution_note,
+                winning_fact_id=new_id,
+            )
+            self.store.add_conflict(conflict)
+
         return OpResult(
             op_index=index,
             op_type="supersede",

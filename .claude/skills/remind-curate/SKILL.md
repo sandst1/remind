@@ -71,6 +71,8 @@ processed ids=<ep1>,<ep2>
 
 When `snapshot` shows conflicts, or `recall` warns about contested information:
 
+**Note**: direct `supersede` ops also automatically create a resolved conflict row, so the full replacement chain (dog → fish → cow) appears in conflict history and recall output even without a formal `conflict` → `resolve` workflow. Use `snapshot conflicts` with `status=resolved` to review those too.
+
 ### Resolve: One claim is correct
 
 ```

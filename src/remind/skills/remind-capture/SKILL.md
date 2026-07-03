@@ -76,8 +76,8 @@ Related facts — check for conflicts (1):
 
 When you see collision/related lists:
 1. Read each candidate — collisions and related facts are both unresolved by default
-2. If the new fact supersedes an old one: use `remind apply` with `supersede old=<id> new=<id>`
-3. If there is a genuine contradiction: use `conflict` op to record it formally
+2. If the new fact supersedes an old one: use `remind apply` with `supersede old=<id> new=<id> by=<who> note="reason"` — this automatically records a resolved conflict for provenance, so the replacement is visible in future recall and the UI conflict history
+3. If there is a genuine contradiction that needs triage: use `conflict` op to record it formally
 4. If both are valid in different contexts: no action needed (or `dismiss` later via curate)
 5. **Don't ignore either list** — cross-cluster related facts are the most likely source of silent contradictions (same subject, different entity type)
 
@@ -168,7 +168,7 @@ Any other string is valid and displays as a badge.
 
 ```
 remember as=<ref> t=<type> e=<entity1>,<entity2> by=<who> ref=<url> "content"
-supersede old=<fact_id> new=<fact_id_or_$ref>
+supersede old=<fact_id> new=<fact_id_or_$ref> [by=<who>] [note="reason"]  # auto-records resolved conflict
 entity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context="optional"
 evidence concept=<id> episode=<id> type=<supports|contradicts|qualifies> strength=<0-1> "note"
 unlink concept=<id> episode=<id>
