@@ -662,19 +662,31 @@ class ApplyEngine:
     def _op_conflict(
         self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
     ) -> OpResult:
-        """Execute a conflict (open) operation."""
-        fact_a = self._resolve_ref(op.get("fact_a", ""), refs)
-        fact_b = self._resolve_ref(op.get("fact_b", ""), refs)
-        concept_id = op.get("concept_id")
-        description = op.get("description", "")
+        """Execute a conflict (open) operation.
+
+        Accepts fact_a/fact_b or the shorter a/b aliases. concept_ids can be
+        passed as a comma-separated string or a list; concept_id (singular) is
+        also accepted for convenience and normalised to a one-element list.
+        """
+        fact_a = self._resolve_ref(op.get("fact_a") or op.get("a", ""), refs)
+        fact_b = self._resolve_ref(op.get("fact_b") or op.get("b", ""), refs)
+        note = op.get("note") or op.get("description", "")
         severity = op.get("severity", "medium")
-        
+
+        raw_cids = op.get("concept_ids") or op.get("concept_id")
+        if isinstance(raw_cids, str):
+            concept_ids = [c.strip() for c in raw_cids.split(",") if c.strip()]
+        elif isinstance(raw_cids, list):
+            concept_ids = raw_cids
+        else:
+            concept_ids = []
+
         conflict = Conflict(
             kind="fact",
             fact_a_id=fact_a,
             fact_b_id=fact_b,
-            concept_id=concept_id,
-            description=description,
+            concept_ids=concept_ids,
+            description=note,
             severity=severity,
             status="open",
         )
@@ -900,14 +912,22 @@ class ApplyEngine:
     def _op_topic(
         self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
     ) -> OpResult:
-        """Execute a topic creation operation."""
+        """Execute a topic upsert operation — creates if absent, updates if present."""
         name = op.get("name", "")
         topic_id = op.get("id") or slugify(name)
         description = op.get("description", "")
-        
-        topic = Topic(id=topic_id, name=name, description=description)
-        self.store.create_topic(topic)
-        
+
+        existing = self.store.get_topic(topic_id)
+        if existing:
+            if name:
+                existing.name = name
+            if description:
+                existing.description = description
+            self.store.update_topic(existing)
+        else:
+            topic = Topic(id=topic_id, name=name, description=description)
+            self.store.create_topic(topic)
+
         return OpResult(
             op_index=index,
             op_type="topic",
