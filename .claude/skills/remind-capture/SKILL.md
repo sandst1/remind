@@ -57,17 +57,24 @@ The output looks like:
 ```
 Remembered as episode ep-abc123
   Type: fact
+  Entities: concept:alice
   Fact ID: f-xyz789
   Cluster: c-12345
-  ⚠ 1 potential collision(s) in same cluster:
-  - f-old456: Cache TTL is 300 seconds...
 
-Related facts — check for conflicts (2):
-  [f-old789] "Alice is a dog" · person:alice · user · 2026-07-03
-  [f-old012] "Alice was really a horse" · concept:alice · user · 2026-07-03
+⚠ Entity type coercion (existing entity reused — verify this is correct):
+  concept:alice → person:alice
+
+⚠ 2 potential collision(s) in same cluster:
+  - f-old456: Cache TTL is 300 seconds...
+  - f-old789: Alice is a dog
+
+Related facts — check for conflicts (1):
+  [f-old012] "Alice was really a horse" · project:alice · user · 2026-07-03
 ```
 
-When you see either list:
+**Entity type coercion** means an existing entity with the same name was found and reused, ignoring the type you specified. This is usually correct (normalizing `concept:alice` → `person:alice` when they mean the same thing), but if the types are genuinely different entities, you should use a more specific name to distinguish them (e.g. `concept:alice-in-wonderland` vs `person:alice-smith`).
+
+When you see collision/related lists:
 1. Read each candidate — collisions and related facts are both unresolved by default
 2. If the new fact supersedes an old one: use `remind apply` with `supersede old=<id> new=<id>`
 3. If there is a genuine contradiction: use `conflict` op to record it formally

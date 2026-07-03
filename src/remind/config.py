@@ -114,6 +114,9 @@ class RemindConfig:
     fact_related_similarity_threshold: float = 0.6
     fact_related_max_results: int = 10
 
+    # Same-cluster collision cap (ranked by embedding similarity)
+    fact_collision_max_results: int = 5
+
     # Logging
     logging_enabled: bool = False
 
@@ -205,6 +208,8 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         config.fact_related_similarity_threshold = float(file_config["fact_related_similarity_threshold"])
     if "fact_related_max_results" in file_config:
         config.fact_related_max_results = int(file_config["fact_related_max_results"])
+    if "fact_collision_max_results" in file_config:
+        config.fact_collision_max_results = int(file_config["fact_collision_max_results"])
 
     # Logging
     if "logging_enabled" in file_config:

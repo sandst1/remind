@@ -149,7 +149,13 @@ async def tool_remember(
         lines.append(f"  Asserted by: {asserted_by}")
     if source_ref:
         lines.append(f"  Source ref: {source_ref}")
-    
+
+    if result.has_entity_resolutions():
+        lines.append("")
+        lines.append("⚠ Entity type coercion (existing entity reused — verify this is correct):")
+        for res in result.entity_resolutions:
+            lines.append(f"  {res}")
+
     # For facts, show cluster and collision info
     if result.fact_id:
         lines.append(f"  Fact ID: {result.fact_id}")

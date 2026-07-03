@@ -135,51 +135,61 @@ def detect_collisions(
     entity_ids: list[str],
     embedding: Optional[list[float]] = None,
     similarity_threshold: float = 0.7,
+    max_collisions: int = 5,
 ) -> list[Fact]:
     """Find active facts in the cluster that may conflict with a new fact.
     
     Uses two heuristics:
     1. Entity overlap: facts sharing entities with the new fact
     2. Embedding similarity: facts with high semantic similarity (cosine > threshold)
-    
+
+    When an embedding is available, candidates from both heuristics are ranked
+    by cosine similarity before capping at *max_collisions*, so the most
+    semantically relevant collisions appear first.
+
     Returns list of potentially conflicting facts for the agent to review.
     """
     seen_ids: set[str] = {new_fact.id}
-    collisions: list[Fact] = []
-    
+    candidates: list[Fact] = []
+    embedding_scores: dict[str, float] = {}
+
     # 1. Entity overlap detection
     active_facts = store.get_facts(cluster_id=cluster_id, active_only=True)
     new_entity_set = set(entity_ids)
-    
+
     for fact in active_facts:
         if fact.id in seen_ids:
             continue
-        
         fact_entities = set(fact.entity_ids or [])
         if new_entity_set & fact_entities:
-            collisions.append(fact)
+            candidates.append(fact)
             seen_ids.add(fact.id)
-    
-    # 2. Embedding similarity detection
+
+    # 2. Embedding similarity detection — also scores entity-overlap candidates
     if embedding:
         similar_facts = store.find_facts_by_embedding(
             embedding,
-            k=10,
+            k=max_collisions * 3,
             cluster_id=cluster_id,
             active_only=True,
         )
         for fact, similarity in similar_facts:
+            embedding_scores[fact.id] = similarity
             if fact.id in seen_ids:
                 continue
             if similarity >= similarity_threshold:
-                collisions.append(fact)
+                candidates.append(fact)
                 seen_ids.add(fact.id)
                 logger.debug(
                     f"Semantic collision: {new_fact.id} <-> {fact.id} "
                     f"(cosine={similarity:.3f})"
                 )
-    
-    return collisions
+
+    # Rank by embedding similarity when available, then cap
+    if embedding_scores:
+        candidates.sort(key=lambda f: embedding_scores.get(f.id, 0.0), reverse=True)
+
+    return candidates[:max_collisions]
 
 
 def find_related_facts(
@@ -252,6 +262,7 @@ def create_fact_from_episode(
     jaccard_threshold: float = 0.5,
     related_similarity_threshold: float = 0.6,
     related_max_results: int = 10,
+    collision_max_results: int = 5,
 ) -> FactResult:
     """Create a Fact from a fact-type episode with cluster assignment.
     
@@ -300,7 +311,8 @@ def create_fact_from_episode(
     
     # Detect collisions (same cluster, exact entity match + embedding similarity)
     collisions = detect_collisions(
-        store, cluster.id, fact, entity_ids, embedding
+        store, cluster.id, fact, entity_ids, embedding,
+        max_collisions=collision_max_results,
     )
 
     # Find related facts in other clusters (cross-cluster conflict candidates)

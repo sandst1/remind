@@ -39,12 +39,16 @@ class RememberResult:
     cluster_created: bool = False
     collisions: list[Fact] = field(default_factory=list)
     related_facts: list[Fact] = field(default_factory=list)
-    
+    entity_resolutions: list[str] = field(default_factory=list)
+
     def has_collisions(self) -> bool:
         return len(self.collisions) > 0
 
     def has_related(self) -> bool:
         return len(self.related_facts) > 0
+
+    def has_entity_resolutions(self) -> bool:
+        return len(self.entity_resolutions) > 0
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +101,8 @@ class MemoryInterface:
         # Cross-cluster related facts
         fact_related_similarity_threshold: float = 0.6,
         fact_related_max_results: int = 10,
+        # Same-cluster collision cap
+        fact_collision_max_results: int = 5,
     ):
         self.embedding = embedding
         if store:
@@ -124,6 +130,7 @@ class MemoryInterface:
         self.fact_cluster_jaccard_threshold = fact_cluster_jaccard_threshold
         self.fact_related_similarity_threshold = fact_related_similarity_threshold
         self.fact_related_max_results = fact_related_max_results
+        self.fact_collision_max_results = fact_collision_max_results
         
         # Settings
         self.default_recall_k = default_recall_k
@@ -221,10 +228,17 @@ class MemoryInterface:
         self._episode_buffer.append(episode_id)
         
         # Resolve and store explicitly provided entities
+        entity_resolutions: list[str] = []
         if entities:
             resolved_ids = []
             for raw_id in entities:
                 canonical_id = self._resolve_entity_id(raw_id)
+                # Warn when type prefix changed (entity dedup fired across types)
+                raw_type = raw_id.split(":", 1)[0] if ":" in raw_id else ""
+                canonical_type = canonical_id.split(":", 1)[0] if ":" in canonical_id else ""
+                if raw_type and canonical_type and raw_type != canonical_type:
+                    entity_resolutions.append(f"{raw_id} → {canonical_id}")
+                    logger.debug(f"Entity type coercion: {raw_id} → {canonical_id}")
                 resolved_ids.append(canonical_id)
                 self.store.add_mention(episode_id, canonical_id)
                 # Also embed the entity
@@ -252,6 +266,7 @@ class MemoryInterface:
                 jaccard_threshold=self.fact_cluster_jaccard_threshold,
                 related_similarity_threshold=self.fact_related_similarity_threshold,
                 related_max_results=self.fact_related_max_results,
+                collision_max_results=self.fact_collision_max_results,
             )
             return RememberResult(
                 episode_id=episode_id,
@@ -260,9 +275,10 @@ class MemoryInterface:
                 cluster_created=fact_result.cluster_created,
                 collisions=fact_result.collisions,
                 related_facts=fact_result.related_facts,
+                entity_resolutions=entity_resolutions,
             )
-        
-        return RememberResult(episode_id=episode_id)
+
+        return RememberResult(episode_id=episode_id, entity_resolutions=entity_resolutions)
     
     async def remember_batch(
         self,
@@ -1000,6 +1016,8 @@ def create_memory(
         kwargs["fact_related_similarity_threshold"] = config.fact_related_similarity_threshold
     if "fact_related_max_results" not in kwargs:
         kwargs["fact_related_max_results"] = config.fact_related_max_results
+    if "fact_collision_max_results" not in kwargs:
+        kwargs["fact_collision_max_results"] = config.fact_collision_max_results
 
     # Create embedding provider with config values
     if embedding_provider == "local":
