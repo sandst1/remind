@@ -925,7 +925,7 @@ async def api_get_topics(request: Request) -> JSONResponse:
         return error
     try:
         topics = memory.list_topics()
-        return JSONResponse({"topics": topics, "total": len(topics)})
+        return JSONResponse({"topics": [t.to_dict() for t in topics], "total": len(topics)})
     except Exception as e:
         logger.exception("Failed to get topics")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -961,7 +961,7 @@ async def api_get_topic_detail(request: Request) -> JSONResponse:
         topic = memory.get_topic(topic_id)
         if not topic:
             return JSONResponse({"error": "Topic not found"}, status_code=404)
-        stats = memory.list_topics()
+        stats = memory.store.get_topic_stats()
         topic_stat = next((t for t in stats if t["id"] == topic_id), None)
         result = topic.to_dict()
         if topic_stat:
