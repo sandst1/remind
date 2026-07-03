@@ -202,7 +202,8 @@ class SnapshotEngine:
             if scope.scope_type == "pending":
                 result["pending"] = self._scope_pending()
             elif scope.scope_type == "conflicts":
-                result["conflicts"] = self._scope_conflicts()
+                status = scope.value if scope.value else "open"
+                result["conflicts"] = self._scope_conflicts(status=status)
             elif scope.scope_type == "entity":
                 key = f"entity:{scope.value}"
                 result[key] = self._scope_entity(scope.value)
@@ -246,12 +247,17 @@ class SnapshotEngine:
             "entities": entities,
         }
     
-    def _scope_conflicts(self) -> dict[str, Any]:
-        """Get open conflicts with full fact details."""
-        conflicts = self.store.get_conflicts(status="open")
-        
+    def _scope_conflicts(self, status: str = "open") -> dict[str, Any]:
+        """Get conflicts filtered by status.
+
+        status: "open" (default), "resolved", "dismissed", or "all" (no filter).
+        """
+        store_status = None if status == "all" else status
+        conflicts = self.store.get_conflicts(status=store_status)
+
         return {
             "count": len(conflicts),
+            "status_filter": status,
             "conflicts": [_conflict_to_dict(c, self.store) for c in conflicts],
         }
     

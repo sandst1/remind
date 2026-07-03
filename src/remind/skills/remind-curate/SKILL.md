@@ -104,11 +104,30 @@ processed ids=<ep1>,<ep2>
 
 **Don't over-generalize**: If episodes don't clearly form a pattern, leave them as unprocessed episodes rather than forcing a weak concept.
 
+## Inspecting conflicts
+
+Use either the CLI command or snapshot scope — they return the same data:
+
+```bash
+# CLI (human-readable table; add --json for machine output)
+remind conflicts list                    # open only (default)
+remind conflicts list --status resolved  # winner was picked or supersede was used
+remind conflicts list --status dismissed # both claims kept (different contexts)
+remind conflicts list --status all       # everything
+
+# Snapshot scope (JSON, combinable with other scopes)
+remind snapshot conflicts                # open only
+remind snapshot conflicts:resolved       # resolved only
+remind snapshot conflicts:dismissed      # dismissed only
+remind snapshot conflicts:all            # all statuses
+remind snapshot conflicts:resolved pending   # combine scopes
+```
+
+**After bulk ingestion, always check resolved conflicts too** — `supersede` ops create resolved conflict records automatically, so `remind conflicts list --status resolved` shows the full supersession history even if you never ran a formal `conflict → resolve` workflow.
+
 ## Handling conflicts
 
 When `snapshot` shows conflicts, or `recall` warns about contested information:
-
-**Note**: direct `supersede` ops also automatically create a resolved conflict row, so the full replacement chain (dog → fish → cow) appears in conflict history and recall output even without a formal `conflict` → `resolve` workflow. Use `snapshot conflicts` with `status=resolved` to review those too.
 
 ### Resolve: One claim is correct
 
