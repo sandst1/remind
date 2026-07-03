@@ -1,6 +1,6 @@
 ---
 name: remind-curate
-description: Maintain Remind memory quality. Use when recall output shows an OPEN CONFLICTS warning, the user corrects previously stored information, stored memories are outdated or misfiled, topics need reorganizing, or a work session is wrapping up. This is also the consolidation procedure — run at session end to process pending episodes.
+description: Maintain Remind memory quality. Use when recall output shows an OPEN CONFLICTS warning, the user corrects previously stored information, stored memories are outdated or misfiled, topics need reorganizing, a work session is wrapping up, or after ingesting multiple documents from different sources or time periods. This is also the consolidation procedure — run at session end to process pending episodes.
 ---
 
 # Remind - Curating Memory
@@ -8,6 +8,13 @@ description: Maintain Remind memory quality. Use when recall output shows an OPE
 Keep the memory layer trustworthy: process pending episodes into concepts, triage contradictions, correct or retire stale items, and keep topics organized.
 
 **Curation is where your reasoning turns raw episodes into lasting knowledge.** Remind stores facts deterministically but relies on you to form patterns, identify relationships, and resolve conflicts.
+
+## When to curate
+
+- Session end — process what accumulated during the session
+- After bulk document ingestion — **always run curation after reading multiple documents from different sources or time periods**; this is when silent contradictions are most likely
+- When `recall` or `snapshot conflicts` shows open conflicts
+- When the user corrects something already stored
 
 ## The curation loop
 
@@ -23,13 +30,43 @@ This returns JSON with:
 - **pending.episodes**: Unprocessed episodes with their entities
 - **conflicts.conflicts**: Open conflicts with full fact details
 
-### 2. Analyze and form patterns
+### 2. Find contradictions before forming concepts
 
-Look at the pending episodes. Ask:
+**This step is mandatory after bulk document ingestion.** For each major topic area in the pending episodes, run a recall query to surface what is already in the store:
+
+```bash
+remind recall "structural system framing" -k 8
+remind recall "heating mechanical system" -k 8
+remind recall "budget cost schedule" -k 8
+```
+
+Compare the recall output against the pending episodes. Look for:
+- The same attribute stated with different values (e.g., two roof pitches, two budgets)
+- A pending episode that explicitly supersedes an earlier document's claim
+- Nearby episode IDs that were flagged during ingestion (shown in `remember` output as "Nearby — review for conflicts")
+
+**When you find a contradiction, record it immediately** — do not defer to later:
+
+```bash
+remind apply << 'EOF'
+conflict a=ep:<older_id> b=ep:<newer_id> note="doc A says timber frame, doc B says steel moment frame — needs triage"
+EOF
+```
+
+If you already know which is correct, use `supersede` instead (facts only):
+
+```bash
+remind apply << 'EOF'
+supersede old=<old_fact_id> new=<new_fact_id> by="source doc" note="March 2026 structural report supersedes February overview"
+EOF
+```
+
+### 3. Analyze and form concepts
+
+Look at the pending episodes (with contradictions now flagged). Ask:
 - What patterns emerge across these episodes?
 - Are there recurring themes, entities, or decisions?
 - Do any episodes together support a generalized concept?
-- Are there any implicit contradictions between episodes?
 - What relationships exist between entities mentioned? (e.g., "X owns Y", "A depends on B")
 
 ### 3. Write a changeset
