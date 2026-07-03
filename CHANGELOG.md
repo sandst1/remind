@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-07-03
+
+### Fixed
+
+- **`remind apply` crash** — Fixed `AttributeError: 'MemoryInterface' object has no attribute 'config'` that blocked all batch changesets.
+- **CLI hangs in non-interactive mode** — Commands with confirmation prompts (`delete-episode`, `purge-episode`, `delete-concept`, `purge-concept`, `empty-trash`, `re-embed`) now detect non-TTY stdin and exit with a clear error message instead of hanging indefinitely. Use `-y`/`--yes` for automation.
+
 ## [0.11.0] - 2026-07-03
 
 ### BREAKING CHANGES

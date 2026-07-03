@@ -2,6 +2,13 @@
 
 All notable changes to Remind.
 
+## [0.11.1] - 2026-07-03
+
+### Fixed
+
+- **`remind apply` crash** — Fixed `AttributeError` that blocked all batch changesets.
+- **CLI hangs in non-interactive mode** — Commands with confirmation prompts now detect non-TTY stdin and exit with a clear error. Use `-y`/`--yes` for automation.
+
 ## [0.11.0] - 2026-07-03
 
 ### BREAKING CHANGES
