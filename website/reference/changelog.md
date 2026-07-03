@@ -2,6 +2,23 @@
 
 All notable changes to Remind.
 
+## [0.12.2] - 2026-07-04
+
+### Added
+
+- **Nearest-neighbor surfacing on `remember()`** — `RememberResult` now includes
+  `nearby_episodes` and `nearby_concepts` for agent conflict triage.
+  Configurable via `remember_nearby_k` (default `5`; set to `0` to disable).
+
+### Fixed
+
+- **`remind apply` transaction crash** — Fixed closed-transaction errors when
+  batch apply initializes vector dimensions or upserts entities and mentions.
+
+### Changed
+
+- **Web UI** — Removed the Conflicts sidebar nav item and open-count badge.
+
 ## [0.12.1] - 2026-07-03
 
 ### Added

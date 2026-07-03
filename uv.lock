@@ -2565,7 +2565,7 @@ wheels = [
 
 [[package]]
 name = "remind-mcp"
-version = "0.12.1"
+version = "0.12.2"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

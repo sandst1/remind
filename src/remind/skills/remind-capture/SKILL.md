@@ -81,6 +81,37 @@ When you see collision/related lists:
 4. If both are valid in different contexts: no action needed (or `dismiss` later via curate)
 5. **Don't ignore either list** — cross-cluster related facts are the most likely source of silent contradictions (same subject, different entity type)
 
+### Nearby episodes and concepts (all episode types)
+
+For **every** `remember` call (not just facts), the output also includes the top-5 most semantically similar episodes and concepts already in the store:
+
+```
+Nearby (2 episodes, 1 concepts) — review for conflicts:
+  [ep:a1b2c3d4] (0.91) The primary structure is timber frame...
+  [ep:e5f6g7h8] (0.84) Budget approved at $480,000 contingency $48,000
+  [concept:c-abc123] (0.88) Structural system specification
+```
+
+The similarity score (0.0–1.0) is how close the embedding is — it is **not** a conflict signal by itself. You decide whether the content contradicts what you just stored.
+
+**Act on nearby items when you store any episode type:**
+
+1. **Contradiction found** — issue a `conflict` op so it shows up in `snapshot conflicts` for triage:
+   ```bash
+   remind apply << 'EOF'
+   conflict a=ep:a1b2c3d4 b=<current_episode_id> note="doc says timber frame, new info says steel moment frame"
+   EOF
+   ```
+2. **You already know the winner** — use `supersede` (facts only; records a resolved conflict automatically):
+   ```bash
+   remind apply << 'EOF'
+   supersede old=<old_fact_id> new=<new_fact_id> by=<source> note="March 2026 structural report supersedes February overview"
+   EOF
+   ```
+3. **Complementary or unrelated** — ignore and continue.
+
+**Do not silently discard nearby items.** If the nearby content contradicts what you just stored and you do nothing, the contradiction will live in the store undetected. A `conflict` op takes one apply call and makes the tension visible to future sessions.
+
 ## Batch capture: apply
 
 For multiple related captures (e.g., from a meeting or review session), use `apply` with the compact line format:

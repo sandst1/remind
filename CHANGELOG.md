@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-07-04
+
+### Added
+
+- **Nearest-neighbor surfacing on `remember()`** — `RememberResult` now includes
+  `nearby_episodes` and `nearby_concepts`: the top-k semantically similar
+  episodes and concepts (excluding the new episode). CLI and MCP tools render
+  these for agent conflict triage. Configurable via `remember_nearby_k`
+  (default `5`; set to `0` to disable).
+
+### Fixed
+
+- **`remind apply` transaction crash** — Fixed "Can't operate on closed
+  transaction inside context manager" when batch apply initializes vector
+  dimensions or upserts entities and mentions. Vector DDL now runs before the
+  transaction opens; upserts use SELECT-first instead of IntegrityError +
+  rollback mid-transaction.
+
+### Changed
+
+- **Web UI** — Removed the Conflicts sidebar nav item and open-count badge.
+
 ## [0.12.1] - 2026-07-03
 
 ### Added
