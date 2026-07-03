@@ -3379,6 +3379,24 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 updated_at=row.updated_at if isinstance(row.updated_at, datetime) else datetime.now(),
             )
 
+    def get_topic_by_name(self, name: str) -> Optional[Topic]:
+        """Look up a topic by its display name (case-insensitive)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                select(topics_table).where(
+                    func.lower(topics_table.c.name) == name.lower()
+                )
+            ).fetchone()
+            if not row:
+                return None
+            return Topic(
+                id=row.id,
+                name=row.name,
+                description=row.description or "",
+                created_at=row.created_at if isinstance(row.created_at, datetime) else datetime.now(),
+                updated_at=row.updated_at if isinstance(row.updated_at, datetime) else datetime.now(),
+            )
+
     def get_all_topics(self) -> list[Topic]:
         with self._connect() as conn:
             rows = conn.execute(
