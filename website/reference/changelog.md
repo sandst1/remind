@@ -2,6 +2,12 @@
 
 All notable changes to Remind.
 
+## [0.11.2] - 2026-07-03
+
+### Fixed
+
+- **`recall --topic` crash** — Fixed `AttributeError` when looking up topics by display name.
+
 ## [0.11.1] - 2026-07-03
 
 ### Fixed
