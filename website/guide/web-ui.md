@@ -46,10 +46,15 @@ Concepts display a type badge indicating their category:
 - No badge — Legacy concepts created before dual-track
 
 For fact clusters, the detail view shows:
-- Bulleted list of specific facts (instead of summary)
+- Active facts with provenance (who asserted, since when)
+- A collapsible history of superseded facts with their validity windows
 - Conflict warnings if contradictory facts are detected
 
 ![Concepts view](/ui-concepts.png)
+
+### Conflicts
+
+An inbox for triaging detected contradictions, with an open-count badge in the sidebar. Fact conflicts show both competing statements side by side with provenance — "Keep this" resolves the conflict, structurally superseding the losing fact. Concept conflicts link to the involved concepts. Optional resolution note and "decided by" fields; resolved and dismissed history in separate tabs. See [Facts & Conflicts](/concepts/facts-and-conflicts#conflict-lifecycle).
 
 ### Entities
 

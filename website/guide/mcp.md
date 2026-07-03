@@ -49,42 +49,49 @@ Summary:
 
 | Tool | Purpose |
 |------|---------|
-| `remember` | Store an episode (optional `episode_type`, `entities`, `topic`, `source_type`, `metadata`) |
-| `recall` | Spreading activation (+ optional `entity`, `episode_k`, `topic`) |
-| `ingest` | Buffer raw text; **triage LLM** extracts episodes. Optional density score is **diagnostic only**, not a gate |
-| `flush_ingest` | Flush buffer (optional `topic`, `instructions`) |
+| `remember` | Store an episode (returns collision info for facts) |
+| `recall` | Spreading activation (+ optional `entity`, `topic`, `as_of`) |
+| `snapshot` | Batch read (pending episodes, conflicts, entities, topics, concepts) |
+| `apply` | Batch write (create concepts, supersede facts, resolve conflicts) |
+| `stats` | Memory statistics |
 | `list_topics` | List topics with counts |
 | `create_topic` / `update_topic` / `delete_topic` | Manage topics |
-| `topic_overview` | Top concepts for a topic (`topic_id`) |
-| `consolidate` | Run consolidation (`force`) |
-| `inspect` | Concepts or episodes (`show_episodes`, date filters, `limit`) |
-| `stats` | Memory statistics |
-| `episode_types` | Show configured episode types |
-| `entities` / `inspect_entity` | Entity graph |
-| `update_episode` / `delete_episode` / `restore_episode` | Episode maintenance (`topic` clears with `""`) |
-| `update_concept` / `delete_concept` / `restore_concept` | Concept maintenance |
-| `list_deleted` | Soft-deleted items (`item_type`: `episodes`, `concepts`, `all`) |
+| `topic_overview` | Top concepts for a topic |
 
 ## Agent instructions
 
-Copy [docs/AGENTS.md](https://github.com/sandst1/remind/blob/main/docs/AGENTS.md) into your project to instruct AI agents how to use Remind's MCP tools. This covers the workflow (recall at session start, remember during work, consolidate at end) and best practices.
+Copy [docs/AGENTS.md](https://github.com/sandst1/remind/blob/main/docs/AGENTS.md) into your project to instruct AI agents how to use Remind's MCP tools. This covers:
+
+- **Capture** — When and how to use `remember` (including fact collisions)
+- **Recall** — Semantic, entity, and topic-scoped queries with time-travel
+- **Curation** — Using `snapshot` and `apply` for batch memory management
 
 ## Docker
 
 Run Remind as a persistent background service:
 
 ```bash
-cp .env.example .env   # Edit with your API keys
 docker compose up -d
 ```
 
 The container:
 - Mounts `~/.remind` from your host for database persistence
-- Reads API keys from `.env`
 - Exposes port 8765 for MCP SSE, Web UI, and REST API
+- Uses local embeddings by default (no API keys needed)
 - Restarts automatically on crash/reboot
 
 Access endpoints:
 - **MCP SSE**: `http://localhost:8765/sse?db=my-project`
 - **Web UI**: `http://localhost:8765/ui/?db=my-project`
 - **REST API**: `http://localhost:8765/api/v1/...`
+
+## Optional: Remote embeddings
+
+To use OpenAI embeddings instead of local:
+
+```bash
+cp .env.example .env   # Edit with OPENAI_API_KEY
+docker compose up -d
+```
+
+Or set environment variables when running the server directly.

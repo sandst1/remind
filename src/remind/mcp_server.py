@@ -71,11 +71,8 @@ async def get_memory_for_db(db_path: str) -> MemoryInterface:
             config = load_config()
             logger.info(f"Creating MemoryInterface for database: {db_path}")
             _memory_instances[db_path] = create_memory(
-                llm_provider=config.llm_provider,
                 embedding_provider=config.embedding_provider,
                 db_url=db_path,
-                auto_consolidate=config.auto_consolidate,
-                consolidation_threshold=config.consolidation_threshold,
             )
         return _memory_instances[db_path]
 
@@ -107,16 +104,15 @@ async def tool_remember(
     entities: Optional[str] = None,
     topic: Optional[str] = None,
     source_type: Optional[str] = None,
+    asserted_by: Optional[str] = None,
+    source_ref: Optional[str] = None,
 ) -> str:
     """Store an experience or observation in memory.
     
-    This is a fast operation - no LLM calls. Entity extraction and
-    type classification happen during consolidation.
-    
-    Auto-consolidation triggers when episode threshold (default: 5) is reached.
+    This is a fast operation - no LLM calls. For fact-type episodes,
+    creates a Fact row with deterministic cluster assignment and
+    reports any potential collisions.
     """
-    from remind.models import EpisodeType
-    
     memory = await get_memory()
     
     meta = json.loads(metadata) if metadata else None
@@ -128,42 +124,42 @@ async def tool_remember(
     if entities:
         entity_list = [e.strip() for e in entities.split(",") if e.strip()]
     
-    episode_id = await memory.remember(
+    result = await memory.remember(
         content, 
         metadata=meta,
         episode_type=ep_type,
         entities=entity_list,
         topic=topic,
         source_type=source_type,
+        asserted_by=asserted_by,
+        source_ref=source_ref,
     )
     
-    lines = [f"Remembered as episode {episode_id}"]
+    lines = [f"Remembered as episode {result.episode_id}"]
     
     if ep_type:
-        lines.append(f"  Type: {ep_type.value}")
+        lines.append(f"  Type: {ep_type}")
     if entity_list:
         lines.append(f"  Entities: {', '.join(entity_list)}")
     if topic:
         lines.append(f"  Topic: {topic}")
     if source_type:
         lines.append(f"  Source: {source_type}")
+    if asserted_by:
+        lines.append(f"  Asserted by: {asserted_by}")
+    if source_ref:
+        lines.append(f"  Source ref: {source_ref}")
     
-    # Auto-consolidate if threshold reached and auto_consolidate is enabled
-    if memory.auto_consolidate and memory.should_consolidate:
-        result = await memory.consolidate()
-        lines.append("")
-        lines.append("Auto-consolidation triggered:")
-        lines.append(f"  Episodes processed: {result.episodes_processed}")
-        lines.append(f"  Concepts created: {result.concepts_created}")
-        lines.append(f"  Concepts updated: {result.concepts_updated}")
-        if result.contradictions_found:
-            lines.append(f"  Contradictions found: {result.contradictions_found}")
-    else:
-        # Show pending count if not consolidating
-        stats = memory.get_stats()
-        pending = stats.get("unconsolidated_episodes", 0)
-        if pending >= 5:
-            lines.append(f"\n({pending} episodes pending consolidation)")
+    # For facts, show cluster and collision info
+    if result.fact_id:
+        lines.append(f"  Fact ID: {result.fact_id}")
+        lines.append(f"  Cluster: {result.cluster_id}" + (" (new)" if result.cluster_created else ""))
+        
+        if result.has_collisions():
+            lines.append("")
+            lines.append(f"⚠ {len(result.collisions)} potential collision(s):")
+            for collision in result.collisions:
+                lines.append(f"  - {collision.id}: {collision.statement[:80]}...")
     
     return "\n".join(lines)
 
@@ -175,10 +171,54 @@ async def tool_recall(
     entity: Optional[str] = None,
     episode_k: Optional[int] = None,
     topic: Optional[str] = None,
+    as_of: Optional[str] = None,
 ) -> str:
     """Retrieve relevant memories for a query."""
     memory = await get_memory()
-    return await memory.recall(query=query, k=k, context=context, entity=entity, episode_k=episode_k, topic=topic)
+    return await memory.recall(
+        query=query, k=k, context=context, entity=entity,
+        episode_k=episode_k, topic=topic, as_of=as_of,
+    )
+
+
+async def tool_apply(
+    changeset: str,
+    dry_run: bool = False,
+) -> str:
+    """Apply a batch changeset to memory."""
+    from remind.apply import ApplyEngine
+    
+    memory = await get_memory()
+    config = load_config()
+    
+    engine = ApplyEngine(
+        store=memory.store,
+        embedding=memory.embedding,
+        fact_cluster_jaccard_threshold=config.fact_cluster_jaccard_threshold,
+    )
+    
+    result = await engine.apply(changeset, dry_run=dry_run)
+    return json.dumps(result.to_dict(), indent=2)
+
+
+async def tool_snapshot(scopes: str) -> str:
+    """Read a snapshot of memory state."""
+    from remind.snapshot import SnapshotEngine
+    
+    memory = await get_memory()
+    
+    engine = SnapshotEngine(
+        store=memory.store,
+        embedding=memory.embedding,
+    )
+    
+    # Parse comma or space separated scopes
+    scope_list = [s.strip() for s in scopes.replace(",", " ").split() if s.strip()]
+    if not scope_list:
+        scope_list = ["stats"]
+    
+    result = await engine.snapshot(scope_list)
+    return json.dumps(result, indent=2, default=str)
 
 
 async def tool_list_topics() -> str:
@@ -199,6 +239,77 @@ async def tool_list_topics() -> str:
             f"latest: {t.get('latest_activity', '')}"
         )
     return "\n".join(lines)
+
+
+def _format_conflict_lines(memory, conflicts) -> list[str]:
+    """Format conflicts with their facts for terminal/MCP display."""
+    lines = []
+    for c in conflicts:
+        lines.append(f"[{c.id}] ({c.kind}, {c.severity}, {c.created_at.strftime('%Y-%m-%d')})")
+        lines.append(f"  {c.description}")
+        if c.kind == "fact":
+            for label, fact_id in (("A", c.fact_a_id), ("B", c.fact_b_id)):
+                if not fact_id:
+                    continue
+                fact = memory.store.get_fact(fact_id)
+                if fact:
+                    prov = f" (by {fact.asserted_by})" if fact.asserted_by else ""
+                    lines.append(f"  {label} [{fact.id}]: {fact.statement}{prov}")
+        lines.append("")
+    return lines
+
+
+async def tool_list_conflicts(status: str = "open", kind: Optional[str] = None) -> str:
+    """List conflicts (open by default)."""
+    memory = await get_memory()
+    conflicts = memory.list_conflicts(
+        status=None if status == "all" else status,
+        kind=kind,
+    )
+    if not conflicts:
+        return f"No {status} conflicts."
+
+    lines = [f"CONFLICTS ({status}): {len(conflicts)}\n"]
+    lines.extend(_format_conflict_lines(memory, conflicts))
+    lines.append("Use resolve_conflict(id, winning_fact_id) or dismiss_conflict(id, note).")
+    return "\n".join(lines)
+
+
+async def tool_resolve_conflict(
+    conflict_id: str,
+    winning_fact_id: Optional[str] = None,
+    note: Optional[str] = None,
+    resolved_by: Optional[str] = None,
+) -> str:
+    """Resolve a conflict by picking a winning fact."""
+    memory = await get_memory()
+    try:
+        conflict = await memory.resolve_conflict(
+            conflict_id,
+            winning_fact_id=winning_fact_id,
+            note=note,
+            resolved_by=resolved_by,
+        )
+    except ValueError as e:
+        return f"Error: {e}"
+    msg = f"Conflict {conflict.id} resolved."
+    if winning_fact_id:
+        msg += f" Winning fact: {winning_fact_id} (loser superseded)."
+    return msg
+
+
+async def tool_dismiss_conflict(
+    conflict_id: str,
+    note: Optional[str] = None,
+    resolved_by: Optional[str] = None,
+) -> str:
+    """Dismiss a conflict as not a real contradiction."""
+    memory = await get_memory()
+    try:
+        conflict = await memory.dismiss_conflict(conflict_id, note=note, resolved_by=resolved_by)
+    except ValueError as e:
+        return f"Error: {e}"
+    return f"Conflict {conflict.id} dismissed. Both facts remain active."
 
 
 async def tool_create_topic(name: str, description: str = "") -> str:
@@ -255,31 +366,6 @@ async def tool_topic_overview(topic_id: str, k: int = 5) -> str:
         if c.conditions:
             lines.append(f"    → Applies when: {c.conditions}")
         lines.append("")
-    return "\n".join(lines)
-
-
-async def tool_consolidate(force: bool = False) -> str:
-    """Process pending episodes into generalized concepts."""
-    memory = await get_memory()
-    
-    stats = memory.get_stats()
-    pending = stats.get("unconsolidated_episodes", 0)
-    
-    if pending == 0:
-        return "No episodes pending consolidation."
-    
-    result = await memory.consolidate(force=force)
-    
-    lines = ["Consolidation complete:"]
-    lines.append(f"  Episodes processed: {result.episodes_processed}")
-    lines.append(f"  Concepts created: {result.concepts_created}")
-    lines.append(f"  Concepts updated: {result.concepts_updated}")
-    
-    if result.contradictions_found:
-        lines.append(f"  Contradictions found: {result.contradictions_found}")
-        for detail in result.contradiction_details[:3]:
-            lines.append(f"    - {detail}")
-    
     return "\n".join(lines)
 
 
@@ -764,61 +850,6 @@ async def tool_restore_concept(concept_id: str) -> str:
         return f"Concept {concept_id} not found or not deleted."
 
 
-async def tool_ingest(
-    content: str,
-    source: str = "conversation",
-    topic: Optional[str] = None,
-    instructions: Optional[str] = None,
-) -> str:
-    """Ingest raw text for automatic memory curation."""
-    memory = await get_memory()
-
-    buf_size_before = memory.ingest_buffer_size
-    episode_ids = await memory.ingest(content, source=source, topic=topic, instructions=instructions)
-
-    if episode_ids:
-        lines = [f"Ingested and created {len(episode_ids)} episode(s):"]
-        for eid in episode_ids:
-            lines.append(f"  {eid}")
-        lines.append("Consolidation completed.")
-        return "\n".join(lines)
-
-    buf_size = memory.ingest_buffer_size
-    if buf_size > 0:
-        threshold = memory._ingest_buffer.threshold
-        return f"Buffered ({buf_size}/{threshold} chars). Will process when threshold reached."
-
-    if buf_size_before > 0 and buf_size == 0:
-        return "Ingested. Triage and consolidation running in background."
-
-    return "Ingested but triage found nothing memory-worthy (low density)."
-
-
-async def tool_flush_ingest(
-    topic: Optional[str] = None, instructions: Optional[str] = None,
-) -> str:
-    """Force-flush the ingestion buffer and process contents."""
-    memory = await get_memory()
-
-    buf_size = memory.ingest_buffer_size
-    if buf_size == 0:
-        return "Ingestion buffer is empty, nothing to flush."
-
-    episode_ids = await memory.flush_ingest(topic=topic, instructions=instructions)
-
-    if episode_ids:
-        lines = [f"Flushed buffer ({buf_size} chars) and created {len(episode_ids)} episode(s):"]
-        for eid in episode_ids:
-            lines.append(f"  {eid}")
-        lines.append("Consolidation completed.")
-        return "\n".join(lines)
-
-    if memory._ingest_background:
-        return f"Flushed buffer ({buf_size} chars). Triage and consolidation running in background."
-
-    return f"Flushed buffer ({buf_size} chars) but triage found nothing memory-worthy."
-
-
 async def tool_list_deleted(
     item_type: Optional[str] = None,
     limit: int = 20,
@@ -870,8 +901,12 @@ def create_mcp_server(config=None):
     
     mcp = FastMCP(
         "Remind",
-        instructions="Generalization-capable memory layer for LLMs with episodic buffers, "
-                     "semantic concept graphs, and spreading activation retrieval.",
+        instructions="External memory that persists across sessions. "
+                     "Recall at session start and before answering questions about prior "
+                     "decisions, preferences, or project history. Remember decisions (with "
+                     "rationale), outcomes of attempts, user preferences and corrections, "
+                     "concrete facts, and open questions as they happen. Triage conflicts "
+                     "when recall output warns about them.",
     )
     
     @mcp.tool()
@@ -882,36 +917,51 @@ def create_mcp_server(config=None):
         entities: Optional[str] = None,
         topic: Optional[str] = None,
         source_type: Optional[str] = None,
+        asserted_by: Optional[str] = None,
+        source_ref: Optional[str] = None,
     ) -> str:
-        """Store an experience or observation in memory.
-        
-        This is a fast operation - no LLM calls. Entity extraction and type
-        classification happen during consolidation.
-        
+        """Store an experience or observation in memory (fast, no LLM calls).
+
+        Use when any of these happen:
+        - A decision is made — capture the *why*, not just the choice (type: decision)
+        - An approach succeeds or fails — outcomes are the highest-value memories (type: outcome)
+        - The user states a preference or corrects you (type: preference)
+        - A concrete fact surfaces: config value, owner, name, date (type: fact)
+        - An open question or uncertainty is raised (type: question)
+
+        Write a clear standalone statement ("User prefers tabs", not "tabs") — it
+        will be read without the conversation that produced it. Set episode_type
+        explicitly when you know it. Skip trivial or already-captured info; for
+        raw conversation logs use ingest() instead.
+
         Auto-consolidation: When the episode threshold (default: 5, configurable) is reached,
         consolidation runs automatically after this call.
-        
-        Use this to log important information that should be remembered across sessions:
-        - User preferences and opinions
-        - Technical context about projects
-        - Corrections or clarifications
-        - Patterns and decisions
-        
+
         Args:
             content: The experience/observation to remember (clear, standalone statement)
             metadata: Optional JSON string with additional metadata
             episode_type: Optional explicit type (e.g., observation, decision, question, meta, preference, outcome, fact).
-                          Custom types are also accepted if configured. Auto-detected during consolidation if not provided.
+                          Custom types are also accepted if configured. Auto-detected during consolidation if not provided,
+                          but prefer setting it explicitly.
             entities: Optional comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
-                      (auto-detected during consolidation if not provided)
+                      (auto-detected during consolidation if not provided). Entity links power
+                      targeted recall later — tag the concrete things the memory is about.
             topic: Primary knowledge area this memory belongs to (e.g., "architecture", "product", "infra").
                    Used to group related memories and scope retrieval.
             source_type: Origin of this memory (e.g., "agent", "slack", "github", "manual").
-        
+            asserted_by: Who asserted this information (e.g., "alice", "agent:cursor").
+                         Set it whenever the information came from someone specific —
+                         provenance is what makes later conflict resolution possible.
+            source_ref: Link back to the original artifact (URL/permalink, e.g.
+                        Slack message, PR, doc).
+
         Returns:
             Confirmation with episode ID
         """
-        return await tool_remember(content, metadata, episode_type, entities, topic, source_type)
+        return await tool_remember(
+            content, metadata, episode_type, entities, topic, source_type,
+            asserted_by=asserted_by, source_ref=source_ref,
+        )
     
     @mcp.tool()
     async def recall(
@@ -921,8 +971,14 @@ def create_mcp_server(config=None):
         entity: Optional[str] = None,
         episode_k: Optional[int] = None,
         topic: Optional[str] = None,
+        as_of: Optional[str] = None,
     ) -> str:
         """Retrieve relevant memories for a query.
+
+        Use at session start, before answering questions about prior decisions,
+        preferences, or project history, and when starting work on a familiar
+        file or area (entity mode). Past sessions have already recorded
+        outcomes and decisions — check before relying on assumptions.
 
         Two modes:
         1. Semantic search (default): Uses embeddings with spreading activation
@@ -930,6 +986,10 @@ def create_mcp_server(config=None):
 
         Provide query for semantic search, or entity for entity-based lookup.
         At least one of query or entity must be provided.
+
+        If the output shows an OPEN CONFLICTS warning, memory holds contradicting
+        claims about what was retrieved — don't silently pick one; surface it or
+        triage with list_conflicts/resolve_conflict.
 
         Args:
             query: What to search for in memory (required for semantic search)
@@ -939,11 +999,87 @@ def create_mcp_server(config=None):
             episode_k: Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable.
             topic: Restrict recall to this topic. Cross-topic results are penalized
                    but not excluded. Use list_topics to see available topics.
+            as_of: ISO date/datetime (e.g. "2026-01-15"). Fact clusters show the
+                   facts that were valid at that point in time instead of the
+                   current ones. Useful for "what did we believe then" questions.
         
         Returns:
             Formatted memory context for injection into prompts
         """
-        return await tool_recall(query, k, context, entity, episode_k=episode_k, topic=topic)
+        return await tool_recall(query, k, context, entity, episode_k=episode_k, topic=topic, as_of=as_of)
+    
+    @mcp.tool()
+    async def apply(
+        changeset: str,
+        dry_run: bool = False,
+    ) -> str:
+        """Apply a batch changeset to memory.
+        
+        All operations execute in a single transaction (all-or-nothing).
+        Returns per-operation results including new IDs and any collisions.
+        
+        Input format (compact line format, one op per line):
+            remember as=f1 t=fact e=concept:caching "Cache TTL is 600 seconds"
+            supersede old=fact:a91c2 new=$f1
+            concept as=c1 from=ep:11,ep:12 title="Pattern title" "Summary text"
+            resolve id=conflict:7 winner=fact:b3d01 "confirmed by bob"
+            processed ids=ep:11,ep:12
+        
+        Operations:
+            remember: Store episode (as=ref, t=type, e=entities, by=asserted_by, content)
+            supersede: Mark old fact as superseded by new (old=id, new=id/$ref)
+            conflict: Open a conflict (fact_a=id, fact_b=id, description)
+            resolve: Resolve conflict with winner (id=conflict_id, winner=fact_id, note)
+            dismiss: Dismiss conflict as not actionable (id=conflict_id, note)
+            concept: Create concept from episodes (as=ref, from=ep_ids, title, content=summary)
+            update: Update episode/concept fields (id, content/title/summary)
+            link: Add concept relation (from=concept_id, to=concept_id, type=relation_type)
+            topic: Create topic (name, description)
+            set_topic: Assign topic to episode/concept (id, topic=topic_id)
+            delete: Soft-delete episode/concept (id)
+            restore: Restore soft-deleted item (id)
+            processed: Mark episodes as reviewed (ids=ep1,ep2,...)
+        
+        Local refs: Use `as=name` to declare, `$name` to reference within same changeset.
+        
+        Args:
+            changeset: Operations in compact line format or JSON array
+            dry_run: If True, validate only without executing
+        
+        Returns:
+            JSON with success status, executed ops count, results with IDs, and any errors
+        """
+        return await tool_apply(changeset, dry_run)
+    
+    @mcp.tool()
+    async def snapshot(scopes: str) -> str:
+        """Read a snapshot of memory state as JSON.
+        
+        Combines one or more scopes into a single JSON document.
+        Use to inspect memory before curating with apply.
+        
+        Scopes (space or comma separated):
+            pending      - Unprocessed episodes with their entities
+            conflicts    - Open conflicts with full fact details
+            entity:<id>  - Episodes and concepts for an entity
+            topic:<id>   - Episodes and concepts for a topic
+            concept:<id> - Concept detail with facts and supersession history
+            recent:<n>   - N most recent episodes (default: 10)
+            stats        - Memory statistics
+            query:<text> - Semantic search results
+        
+        Examples:
+            "pending conflicts" - Get pending episodes and open conflicts
+            "entity:concept:caching" - Get all data for an entity
+            "recent:20 stats" - Recent episodes plus stats
+        
+        Args:
+            scopes: Space or comma separated scope specifications
+        
+        Returns:
+            JSON document with all requested scopes combined
+        """
+        return await tool_snapshot(scopes)
     
     @mcp.tool()
     async def list_topics() -> str:
@@ -1013,30 +1149,67 @@ def create_mcp_server(config=None):
         return await tool_topic_overview(topic_id, k)
 
     @mcp.tool()
-    async def consolidate(force: bool = False) -> str:
-        """Process pending episodes into generalized concepts.
-        
-        Consolidation runs in two phases:
-        
-        Phase 1 - Extraction:
-        - Classifies episode types (observation, decision, question, etc.)
-        - Extracts entity mentions (files, people, tools, concepts)
-        
-        Phase 2 - Generalization:
-        - Identifies patterns across episodes
-        - Creates new generalized concepts
-        - Updates existing concepts with new evidence
-        - Establishes relations between concepts
-        - Flags contradictions
-        
+    async def list_conflicts(status: str = "open", kind: Optional[str] = None) -> str:
+        """List detected memory conflicts (contradictions) awaiting triage.
+
+        Conflicts are opened automatically during consolidation when
+        incompatible facts or contradicting concepts are found. Check this
+        when the user asks about inconsistencies, or when recall output
+        shows an "OPEN CONFLICTS" warning.
+
         Args:
-            force: If True, consolidate even with few pending episodes
-        
+            status: "open" (default), "resolved", "dismissed", or "all"
+            kind: Optionally filter by "fact" or "concept"
+
         Returns:
-            Summary of consolidation results
+            Conflicts with their IDs, descriptions, and the conflicting facts
         """
-        return await tool_consolidate(force)
-    
+        return await tool_list_conflicts(status, kind)
+
+    @mcp.tool()
+    async def resolve_conflict(
+        conflict_id: str,
+        winning_fact_id: Optional[str] = None,
+        note: Optional[str] = None,
+        resolved_by: Optional[str] = None,
+    ) -> str:
+        """Resolve a conflict by declaring which fact is correct.
+
+        The losing fact is structurally superseded (kept as history, hidden
+        from recall) and the resolution is recorded as a decision episode.
+        For concept conflicts, omit winning_fact_id and provide a note.
+
+        Args:
+            conflict_id: The conflict to resolve (from list_conflicts)
+            winning_fact_id: The correct fact's ID (required for fact conflicts)
+            note: Why this resolution is correct
+            resolved_by: Who decided (e.g. "alice", "agent:cursor")
+
+        Returns:
+            Confirmation or error
+        """
+        return await tool_resolve_conflict(conflict_id, winning_fact_id, note, resolved_by)
+
+    @mcp.tool()
+    async def dismiss_conflict(
+        conflict_id: str,
+        note: Optional[str] = None,
+        resolved_by: Optional[str] = None,
+    ) -> str:
+        """Dismiss a conflict: both claims are valid (e.g. different contexts).
+
+        Both facts stay active and the warning is cleared.
+
+        Args:
+            conflict_id: The conflict to dismiss (from list_conflicts)
+            note: Why this isn't a real contradiction
+            resolved_by: Who decided
+
+        Returns:
+            Confirmation or error
+        """
+        return await tool_dismiss_conflict(conflict_id, note, resolved_by)
+
     @mcp.tool()
     async def inspect(
         concept_id: Optional[str] = None,
@@ -1293,64 +1466,6 @@ def create_mcp_server(config=None):
             List of deleted items with their IDs and deletion timestamps
         """
         return await tool_list_deleted(item_type, limit)
-
-    @mcp.tool()
-    async def ingest(
-        content: str,
-        source: str = "conversation",
-        topic: Optional[str] = None,
-        instructions: Optional[str] = None,
-    ) -> str:
-        """Ingest raw text for automatic memory curation.
-
-        Streams raw conversation text into Remind's auto-ingest pipeline.
-        Text accumulates in an internal buffer until the threshold (~4000
-        chars) is reached, then the triage LLM extracts memory-worthy episodes.
-        An optional density score may be recorded for diagnostics only; it does not gate extraction.
-
-        Use this instead of remember() when you want Remind to decide
-        what's worth remembering. remember() stores everything as-is;
-        ingest() filters and distills.
-
-        Args:
-            content: Raw text to ingest (conversation fragments, tool output, etc.)
-            source: Source label for metadata tracking (default: "conversation")
-            topic: Optional topic ID or name. When set, all extracted episodes
-                are assigned to this topic. When omitted, the triage LLM
-                infers per-episode topics automatically.
-            instructions: Optional natural-language instructions to steer what
-                the triage LLM extracts. For example, "focus on architectural
-                decisions" or "extract all config values and version numbers".
-                When set, these are appended to the triage system prompt and
-                take priority over default extraction behavior.
-
-        Returns:
-            Status message (buffered, episodes created, or dropped)
-        """
-        return await tool_ingest(content, source, topic=topic, instructions=instructions)
-
-    @mcp.tool()
-    async def flush_ingest(
-        topic: Optional[str] = None,
-        instructions: Optional[str] = None,
-    ) -> str:
-        """Force-flush the ingestion buffer.
-
-        Processes whatever text is in the buffer immediately, regardless
-        of whether the character threshold has been reached. Use at
-        session end or when you want to ensure all ingested text is processed.
-
-        Args:
-            topic: Optional topic ID or name for extracted episodes.
-                When set, all episodes are assigned to this topic.
-                When omitted, topics are inferred automatically.
-            instructions: Optional natural-language instructions to steer
-                extraction. Same as ingest() instructions parameter.
-
-        Returns:
-            Status message with results
-        """
-        return await tool_flush_ingest(topic=topic, instructions=instructions)
 
     return mcp
 

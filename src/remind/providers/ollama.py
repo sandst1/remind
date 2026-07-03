@@ -1,104 +1,9 @@
-"""Ollama provider implementation for local LLMs."""
+"""Ollama embedding provider implementation for local models."""
 
-import json
 import os
-import re
 from typing import Optional
 
-import httpx
-
-from remind.providers.base import LLMProvider, EmbeddingProvider
-
-
-class OllamaLLM(LLMProvider):
-    """
-    Ollama LLM provider for local models.
-    
-    Requires Ollama to be running locally (default: http://localhost:11434).
-    """
-    
-    def __init__(
-        self,
-        model: str | None = None,
-        base_url: str | None = None,
-        timeout: float = 120.0,
-    ):
-        self.model = model or os.environ.get("OLLAMA_LLM_MODEL", "llama3.2")
-        self.base_url = (base_url or os.environ.get("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
-        self.timeout = timeout
-    
-    async def complete(
-        self,
-        prompt: str,
-        system: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 4096,
-    ) -> str:
-        """Generate a completion using Ollama."""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            payload = {
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            }
-            
-            if system:
-                payload["system"] = system
-            
-            response = await client.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-            )
-            response.raise_for_status()
-            
-            return response.json()["response"]
-    
-    async def complete_json(
-        self,
-        prompt: str,
-        system: Optional[str] = None,
-        temperature: float = 0.3,
-        max_tokens: int = 4096,
-    ) -> dict:
-        """Generate a JSON completion using Ollama."""
-        # Add JSON instruction to system prompt
-        json_system = (system or "") + "\n\nYou must respond with valid JSON only. No markdown, no explanation, just the JSON object."
-        
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            payload = {
-                "model": self.model,
-                "prompt": prompt,
-                "system": json_system.strip(),
-                "stream": False,
-                "format": "json",  # Ollama's JSON mode
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            }
-            
-            response = await client.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-            )
-            response.raise_for_status()
-            
-            text = response.json()["response"].strip()
-            
-            # Remove markdown code blocks if present
-            if text.startswith("```"):
-                text = re.sub(r'^```(?:json)?\s*', '', text)
-                text = re.sub(r'\s*```$', '', text)
-            
-            return json.loads(text)
-    
-    @property
-    def name(self) -> str:
-        return f"ollama/{self.model}"
+from remind.providers.base import EmbeddingProvider
 
 
 class OllamaEmbedding(EmbeddingProvider):
@@ -131,6 +36,12 @@ class OllamaEmbedding(EmbeddingProvider):
     
     async def embed(self, text: str) -> list[float]:
         """Generate an embedding for a single text."""
+        try:
+            import httpx
+        except ImportError:
+            raise ImportError(
+                'httpx package is required for Ollama. Install with: pip install "remind-mcp[ollama]"'
+            )
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 f"{self.base_url}/api/embeddings",
@@ -153,6 +64,13 @@ class OllamaEmbedding(EmbeddingProvider):
         """Generate embeddings for multiple texts."""
         if not texts:
             return []
+        
+        try:
+            import httpx
+        except ImportError:
+            raise ImportError(
+                'httpx package is required for Ollama. Install with: pip install "remind-mcp[ollama]"'
+            )
         
         # Ollama doesn't have native batch embedding, so we do it sequentially
         # Could be parallelized with asyncio.gather for better performance

@@ -26,8 +26,52 @@ export type ConceptType = 'legacy' | 'pattern' | 'fact_cluster';
 export interface ConflictInfo {
   fact_a: string;
   fact_b: string;
+  fact_a_id?: string;
+  fact_b_id?: string;
   detected_at: string;
   entity_id?: string;
+}
+
+export interface Fact {
+  id: string;
+  cluster_id: string | null;
+  statement: string;
+  attribute: string | null;
+  entity_ids: string[];
+  valid_from: string;
+  valid_to: string | null;
+  superseded_by: string | null;
+  asserted_by: string | null;
+  source_ref: string | null;
+  source_episode_id: string | null;
+  created_at: string;
+}
+
+export type ConflictStatus = 'open' | 'resolved' | 'dismissed';
+
+export interface Conflict {
+  id: string;
+  kind: 'fact' | 'concept';
+  fact_a_id: string | null;
+  fact_b_id: string | null;
+  concept_ids: string[];
+  description: string;
+  severity: 'low' | 'medium' | 'high';
+  status: ConflictStatus;
+  created_at: string;
+  resolved_at: string | null;
+  resolution_note: string | null;
+  resolved_by: string | null;
+  winning_fact_id: string | null;
+  // Enriched context from the API
+  fact_a: Fact | null;
+  fact_b: Fact | null;
+  concepts: Array<{
+    id: string;
+    title: string;
+    summary: string;
+    concept_type: ConceptType;
+  }>;
 }
 
 export type EntityType =
@@ -100,6 +144,8 @@ export interface Concept {
   evidence: string[];
   actionable: boolean;
   conflicts: ConflictInfo[];
+  // Fact rows (only present on fact_cluster concept detail responses)
+  facts?: Fact[];
 }
 
 export interface Episode {
@@ -117,6 +163,9 @@ export interface Episode {
   confidence: number;
   metadata: Record<string, any>;
   topic_id?: string | null;
+  source_type?: string | null;
+  asserted_by?: string | null;
+  source_ref?: string | null;
   deleted_at: string | null;
 }
 
@@ -163,6 +212,10 @@ export interface Stats {
   concepts_with_decay?: number;
   avg_decay_factor?: number;
   min_decay_factor?: number;
+  // Fact / conflict counts
+  facts?: number;
+  active_facts?: number;
+  open_conflicts?: number;
 }
 
 export interface GraphNode {

@@ -8,28 +8,39 @@ It provides a simple interface for:
 """
 
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Optional, Union
 from pathlib import Path
-import asyncio
 import logging
-import json
-import time
+
+from dataclasses import dataclass, field
 
 from remind.models import (
-    Episode, Concept, ConsolidationResult,
+    Episode, Concept, Conflict, Fact,
     Entity, EntityType, EpisodeType, Relation, RelationType,
     Topic, slugify,
     normalize_entity_name,
     canonicalize_entity_name,
     strip_entity_label_prefix,
 )
-from remind.store import MemoryStore, SQLAlchemyMemoryStore, SQLiteMemoryStore
-from remind.providers.base import LLMProvider, EmbeddingProvider
-from remind.consolidation import Consolidator
+from remind.store import MemoryStore, SQLAlchemyMemoryStore
+from remind.providers.base import EmbeddingProvider
 from remind.retrieval import MemoryRetriever, ActivatedConcept
-from remind.extraction import EntityExtractor
 from remind.config import load_config, DecayConfig, RemindConfig, setup_file_logging, DEFAULT_EPISODE_TYPES
-from remind.triage import IngestionBuffer, IngestionTriager, TriageResult, split_text
+from remind.facts import create_fact_from_episode, FactResult
+
+
+@dataclass
+class RememberResult:
+    """Result of a remember() call with optional fact collision info."""
+    
+    episode_id: str
+    fact_id: Optional[str] = None
+    cluster_id: Optional[str] = None
+    cluster_created: bool = False
+    collisions: list[Fact] = field(default_factory=list)
+    
+    def has_collisions(self) -> bool:
+        return len(self.collisions) > 0
 
 logger = logging.getLogger(__name__)
 
@@ -41,27 +52,12 @@ class MemoryInterface:
     Key Design:
     -----------
     - `remember()` is async - stores episodes and embeds them by default
-    - `consolidate()` does all LLM work in two phases:
-      1. Extract entities/types from unextracted episodes
-      2. Generalize episodes into concepts (the "sleep" process)
-    
-    Consolidation Modes:
-    -------------------
-    1. **Automatic (threshold-based)**: Set `auto_consolidate=True` (default).
-       Consolidation runs automatically after `consolidation_threshold` episodes.
-    
-    2. **Manual/Hook-based**: Set `auto_consolidate=False`.
-       Call `consolidate()` or `end_session()` explicitly from your agent hooks.
-    
-    3. **Hybrid**: Keep `auto_consolidate=True` as a safety net, but also call
-       `end_session()` at natural boundaries (end of conversation, task completion).
+    - `recall()` retrieves relevant concepts using spreading activation
+    - All judgment/curation is done by the calling agent via snapshot/apply tools
     
     Usage:
         memory = MemoryInterface(
-            llm=AnthropicLLM(),
-            embedding=OpenAIEmbedding(),
-            auto_consolidate=True,       # Automatic after threshold
-            consolidation_threshold=10,  # Episodes before auto-consolidate
+            embedding=LocalEmbedding(),
         )
         
         # Log experiences (fast, no LLM call)
@@ -70,44 +66,20 @@ class MemoryInterface:
         
         # Retrieve relevant context
         context = await memory.recall("What programming languages does the user like?")
-        
-        # Hook: Call at end of conversation/task for explicit consolidation
-        await memory.end_session()
-        
-        # Or manually consolidate anytime (this is where LLM work happens)
-        await memory.consolidate(force=True)
     """
     
     def __init__(
         self,
-        llm: LLMProvider,
         embedding: EmbeddingProvider,
         store: Optional[MemoryStore] = None,
         db_url: Optional[str] = None,
         db_path: str = "memory.db",
-        # Consolidation settings
-        consolidation_threshold: int = 5,  # episodes before auto-consolidation
-        concepts_per_pass: int = 64,
-        auto_consolidate: bool = True,
-        extraction_batch_size: int = 50,
-        extraction_llm_batch_size: int = 10,
-        consolidation_batch_size: int = 25,
-        llm_concurrency: int = 3,
-        fact_cluster_jaccard_threshold: float = 0.5,
-        # Legacy aliases (kept for backward compatibility)
-        consolidation_concepts_per_pass: Optional[int] = None,
-        entity_extraction_batch_size: Optional[int] = None,
-        consolidation_llm_concurrency: Optional[int] = None,
         # Retrieval settings
         default_recall_k: int = 3,
         default_episode_k: int = 5,
         spread_hops: int = 2,
         # Decay settings
-        decay_config=None,
-        # Auto-ingest settings
-        ingest_buffer_size: int = 4000,
-        triage_llm: Optional[LLMProvider] = None,
-        ingest_background: bool = True,
+        decay_config: Optional[DecayConfig] = None,
         # Configurable episode types
         episode_types: Optional[list[str]] = None,
         # Retrieval tuning
@@ -116,8 +88,9 @@ class MemoryInterface:
         # Reranking
         reranking_enabled: bool = False,
         reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        # Fact clustering
+        fact_cluster_jaccard_threshold: float = 0.5,
     ):
-        self.llm = llm
         self.embedding = embedding
         if store:
             self.store = store
@@ -125,28 +98,6 @@ class MemoryInterface:
             self.store = SQLAlchemyMemoryStore(db_url)
         else:
             self.store = SQLAlchemyMemoryStore(db_path)
-        
-        # Legacy aliases override defaults when explicitly provided.
-        if consolidation_concepts_per_pass is not None:
-            concepts_per_pass = consolidation_concepts_per_pass
-        if entity_extraction_batch_size is not None:
-            extraction_llm_batch_size = entity_extraction_batch_size
-        if consolidation_llm_concurrency is not None:
-            llm_concurrency = consolidation_llm_concurrency
-
-        # Initialize components
-        self.consolidator = Consolidator(
-            llm=llm,
-            embedding=embedding,
-            store=self.store,
-            concepts_per_pass=concepts_per_pass,
-            consolidation_batch_size=consolidation_batch_size,
-            extraction_batch_size=extraction_batch_size,
-            extraction_llm_batch_size=extraction_llm_batch_size,
-            llm_concurrency=llm_concurrency,
-            valid_types=episode_types,
-            fact_cluster_jaccard_threshold=fact_cluster_jaccard_threshold,
-        )
         
         reranker = None
         if reranking_enabled:
@@ -163,29 +114,11 @@ class MemoryInterface:
         )
         
         self.episode_types: list[str] = episode_types or list(DEFAULT_EPISODE_TYPES)
-        
-        self.extractor = EntityExtractor(
-            llm=llm,
-            store=self.store,
-            valid_types=episode_types,
-        )
-        
-        # Auto-ingest components
-        self._ingest_buffer = IngestionBuffer(threshold=ingest_buffer_size)
-        self._triager = IngestionTriager(
-            llm=triage_llm or llm,
-            valid_types=episode_types,
-        )
-        self._ingest_background = ingest_background
-        self._background_tasks: set[asyncio.Task] = set()
-        self._ingest_semaphore = asyncio.Semaphore(2)
+        self.fact_cluster_jaccard_threshold = fact_cluster_jaccard_threshold
         
         # Settings
-        self.consolidation_threshold = consolidation_threshold
-        self.auto_consolidate = auto_consolidate
         self.default_recall_k = default_recall_k
         self.default_episode_k = default_episode_k
-        self._llm_concurrency = llm_concurrency
         
         # Decay settings
         self.decay_config = decay_config or DecayConfig()
@@ -195,19 +128,9 @@ class MemoryInterface:
         
         # Episode buffer for tracking (this session only)
         self._episode_buffer: list[str] = []
-        self._last_consolidation: Optional[datetime] = None
 
     def _resolve_entity_id(self, raw_entity_id: str) -> str:
-        """Resolve a raw entity ID to a canonical one, deduplicating by name.
-
-        If an entity with the same display name already exists (regardless of
-        type prefix), returns the existing entity's ID so that mentions
-        accumulate on a single entity rather than creating duplicates like
-        ``family:Capulet`` and ``character:Capulet``.
-
-        If no match is found, creates a new entity and returns its ID.
-        Entity IDs are always normalized to lowercase.
-        """
+        """Resolve a raw entity ID to a canonical one, deduplicating by name."""
         type_str, name = Entity.parse_id(raw_entity_id)
         canonical_name = canonicalize_entity_name(name)
         existing = self.store.find_entity_by_name(canonical_name)
@@ -235,31 +158,30 @@ class MemoryInterface:
         embed: bool = True,
         topic: Optional[str] = None,
         source_type: Optional[str] = None,
-    ) -> str:
+        asserted_by: Optional[str] = None,
+        source_ref: Optional[str] = None,
+    ) -> RememberResult:
         """
-        Log an experience/interaction to be consolidated later.
+        Log an experience/interaction.
 
         Embeds the episode content by default for vector search during recall.
-        Entity extraction and type classification happen during consolidate().
+        For fact-type episodes, also creates a Fact row with cluster assignment
+        and reports any potential collisions.
 
         Args:
             content: The interaction or experience to remember
             metadata: Optional metadata about the episode
-            episode_type: Optional explicit type (observation, decision, question, meta, preference).
-                          If not provided, will be auto-detected during consolidation.
+            episode_type: Optional explicit type (observation, decision, question, fact, etc.)
             entities: Optional entity ID hints (e.g., ["file:src/auth.ts", "person:alice"]).
-                      Stored as mentions immediately. Full LLM extraction still runs
-                      during consolidate(), merging any additional entities it finds.
             confidence: How certain this information is (0.0-1.0, default 1.0).
-                        Lower values indicate uncertainty or weak signals.
             embed: Whether to generate an embedding for the episode (default True).
-                   Set to False when batch-importing and planning to backfill later.
-            topic: Topic ID or name. Resolved to an existing topic; if no match,
-                   falls back to the default topic.
+            topic: Topic ID or name.
             source_type: Origin of this episode (e.g. "agent", "slack", "github", "manual").
+            asserted_by: Who asserted this information (e.g. "alice", "agent:cursor").
+            source_ref: Link back to the original artifact (URL/permalink).
 
         Returns:
-            The episode ID
+            RememberResult with episode_id and (for facts) collision info
         """
         topic_id = self._resolve_topic_id(topic)
 
@@ -269,16 +191,19 @@ class MemoryInterface:
             confidence=max(0.0, min(1.0, confidence)),
             topic_id=topic_id,
             source_type=source_type.lower().strip() if source_type else None,
+            asserted_by=asserted_by.strip() if asserted_by else None,
+            source_ref=source_ref.strip() if source_ref else None,
         )
         
-        # Apply explicit type/entities if provided
         if episode_type:
             episode.episode_type = episode_type.value if isinstance(episode_type, EpisodeType) else str(episode_type)
         
         # Embed the episode content
+        embedding = None
         if embed and self.embedding:
             try:
-                episode.embedding = await self.embedding.embed(content)
+                embedding = await self.embedding.embed(content)
+                episode.embedding = embedding
             except Exception as e:
                 logger.warning(f"Failed to embed episode: {e}")
         
@@ -286,19 +211,46 @@ class MemoryInterface:
         episode_id = self.store.add_episode(episode)
         self._episode_buffer.append(episode_id)
         
-        # Resolve and store explicitly provided entities (dedup by name)
+        # Resolve and store explicitly provided entities
         if entities:
             resolved_ids = []
             for raw_id in entities:
                 canonical_id = self._resolve_entity_id(raw_id)
                 resolved_ids.append(canonical_id)
                 self.store.add_mention(episode_id, canonical_id)
+                # Also embed the entity
+                if embed and self.embedding:
+                    entity = self.store.get_entity(canonical_id)
+                    if entity and not entity.embedding:
+                        try:
+                            entity.embedding = await self.embedding.embed(
+                                f"{entity.type.value}: {entity.display_name}"
+                            )
+                            self.store.update_entity(entity)
+                        except Exception as e:
+                            logger.warning(f"Failed to embed entity: {e}")
             episode.entity_ids = resolved_ids
             self.store.update_episode(episode)
         
         logger.debug(f"Remembered episode {episode_id}: {content[:50]}...")
         
-        return episode_id
+        # For fact-type episodes, create Fact row with cluster assignment
+        if episode.episode_type == "fact":
+            fact_result = create_fact_from_episode(
+                self.store,
+                episode,
+                embedding=embedding,
+                jaccard_threshold=self.fact_cluster_jaccard_threshold,
+            )
+            return RememberResult(
+                episode_id=episode_id,
+                fact_id=fact_result.fact_id,
+                cluster_id=fact_result.cluster_id,
+                cluster_created=fact_result.cluster_created,
+                collisions=fact_result.collisions,
+            )
+        
+        return RememberResult(episode_id=episode_id)
     
     async def remember_batch(
         self,
@@ -311,30 +263,22 @@ class MemoryInterface:
 
         Creates all episodes, embeds them in batches via the provider's
         embed_batch() API, and writes them in a single DB transaction.
-        Much faster than calling remember() in a loop.
-
-        Args:
-            items: List of dicts, each with:
-                - content (str, required)
-                - metadata (dict, optional)
-                - episode_type (EpisodeType, optional)
-                - entities (list[str], optional)
-                - confidence (float, optional, default 1.0)
-            embed: Whether to generate embeddings (default True).
-            embed_batch_size: Max texts per embedding API call (default 100).
-
-        Returns:
-            List of episode IDs in the same order as items.
         """
         if not items:
             return []
 
         episodes = []
         for item in items:
+            source_type = item.get("source_type")
+            asserted_by = item.get("asserted_by")
+            source_ref = item.get("source_ref")
             episode = Episode(
                 content=item["content"],
                 metadata=item.get("metadata") or {},
                 confidence=max(0.0, min(1.0, item.get("confidence", 1.0))),
+                source_type=source_type.lower().strip() if source_type else None,
+                asserted_by=asserted_by.strip() if asserted_by else None,
+                source_ref=source_ref.strip() if source_ref else None,
             )
             if item.get("episode_type"):
                 et = item["episode_type"]
@@ -380,200 +324,98 @@ class MemoryInterface:
         raw: bool = False,
         episode_k: Optional[int] = None,
         topic: Optional[str] = None,
+        as_of: Optional[Union[datetime, str]] = None,
     ) -> str | list[ActivatedConcept] | list[Episode]:
         """
-        Retrieve relevant memory for a query.
-        
-        Args:
-            query: What to search for (required for semantic search, ignored for entity recall)
-            k: Number of concepts to return
-            context: Additional context for the search
-            entity: If provided, retrieve by entity instead of semantic search
-            raw: If True, return raw objects instead of formatted string
-            episode_k: Number of episodes to retrieve via direct vector search.
-                       Defaults to self.default_episode_k (5). Set to 0 to disable.
-            topic: If set, restrict recall to this topic ID (cross-topic results
-                   are penalized but not excluded). When None and not entity-mode,
-                   results are grouped by topic in the formatted output.
-            
-        Returns:
-            Formatted memory string for LLM injection, or raw objects if raw=True.
-            When raw=True: list[ActivatedConcept] for concept-based,
-            list[Episode] for entity-based.
+        Retrieve relevant memory context for a query.
+
+        Uses spreading activation to find conceptually relevant memories,
+        optionally enhanced with direct episode vector search.
         """
-        if not entity and query is None:
-            raise ValueError("Either query or entity must be provided")
-        t_total_start = time.perf_counter()
-        
         k = k or self.default_recall_k
         episode_k = episode_k if episode_k is not None else self.default_episode_k
-        
-        self._recall_count += 1
-        if self.decay_config.enabled:
-            self._save_recall_count()
-        
-        # Entity-based retrieval
+        topic_id = self._resolve_topic_id(topic) if topic else None
+
+        as_of_dt = None
+        if as_of is not None:
+            if isinstance(as_of, str):
+                as_of_dt = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+            else:
+                as_of_dt = as_of
+
+        # Entity-based recall mode
         if entity:
-            t_entity_normalize_start = time.perf_counter()
-            type_str, name = Entity.parse_id(entity)
-            entity = Entity.make_id(type_str, normalize_entity_name(name))
-            t_entity_normalize_ms = (time.perf_counter() - t_entity_normalize_start) * 1000.0
-
-            t_entity_retrieve_start = time.perf_counter()
-            episodes = await self.retriever.retrieve_by_entity(entity, limit=k * 4)
-            t_entity_retrieve_ms = (time.perf_counter() - t_entity_retrieve_start) * 1000.0
-
-            t_decay_ms = 0.0
-            if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
-                t_decay_start = time.perf_counter()
-                self._trigger_decay()
-                t_decay_ms = (time.perf_counter() - t_decay_start) * 1000.0
-
+            canonical = self._resolve_entity_id(entity)
+            episodes = self.store.get_episodes_mentioning(canonical, limit=k)
+            
             if raw:
-                t_total_ms = (time.perf_counter() - t_total_start) * 1000.0
-                logger.debug(
-                    "Recall timing (interface): mode=entity raw=True normalize=%.1fms "
-                    "retrieve=%.1fms decay=%.1fms total=%.1fms episodes=%d",
-                    t_entity_normalize_ms,
-                    t_entity_retrieve_ms,
-                    t_decay_ms,
-                    t_total_ms,
-                    len(episodes),
-                )
                 return episodes
-            t_format_start = time.perf_counter()
-            formatted = self.retriever.format_entity_context(entity, episodes)
-            t_format_ms = (time.perf_counter() - t_format_start) * 1000.0
-            t_total_ms = (time.perf_counter() - t_total_start) * 1000.0
-            logger.debug(
-                "Recall timing (interface): mode=entity raw=False normalize=%.1fms "
-                "retrieve=%.1fms format=%.1fms decay=%.1fms total=%.1fms episodes=%d",
-                t_entity_normalize_ms,
-                t_entity_retrieve_ms,
-                t_format_ms,
-                t_decay_ms,
-                t_total_ms,
-                len(episodes),
-            )
-            return formatted
+            
+            return self.retriever.format_entity_context(entity, episodes)
         
-        # Combined concept + episode retrieval (single embed, single rerank)
-        t_retrieve_start = time.perf_counter()
-        activated, direct_episodes = await self.retriever.retrieve_all(
-            query=query,
+        if not query:
+            raise ValueError("Either 'query' or 'entity' must be provided")
+        
+        concepts, episodes = await self.retriever.retrieve_all(
+            query,
             k=k,
             episode_k=episode_k,
-            context=context,
-            topic=topic,
+            topic=topic_id,
         )
-        t_retrieve_ms = (time.perf_counter() - t_retrieve_start) * 1000.0
         
-        t_rejuvenate_ms = 0.0
-        if activated and self.decay_config.enabled:
-            t_rejuvenate_start = time.perf_counter()
-            self._rejuvenate_concepts(activated)
-            t_rejuvenate_ms = (time.perf_counter() - t_rejuvenate_start) * 1000.0
+        self._increment_recall_count()
         
-        t_decay_ms = 0.0
-        if self.decay_config.enabled and self._recall_count % self.decay_config.decay_interval == 0:
-            t_decay_start = time.perf_counter()
-            self._trigger_decay()
-            t_decay_ms = (time.perf_counter() - t_decay_start) * 1000.0
+        if self.decay_config.enabled:
+            self._maybe_decay(concepts)
+            # Rejuvenate accessed concepts (update access count/time)
+            if hasattr(self.retriever, 'rejuvenate'):
+                self.retriever.rejuvenate(concepts)
         
         if raw:
-            t_total_ms = (time.perf_counter() - t_total_start) * 1000.0
-            logger.debug(
-                "Recall timing (interface): mode=semantic raw=True retrieve_all=%.1fms "
-                "rejuvenate=%.1fms decay=%.1fms total=%.1fms concepts=%d episodes=%d",
-                t_retrieve_ms,
-                t_rejuvenate_ms,
-                t_decay_ms,
-                t_total_ms,
-                len(activated),
-                len(direct_episodes) if direct_episodes else 0,
-            )
-            return activated
+            return concepts
         
-        # Build topic name map for formatting
-        t_topic_name_start = time.perf_counter()
-        topic_names = self._get_topic_names()
-        t_topic_name_ms = (time.perf_counter() - t_topic_name_start) * 1000.0
-        t_format_start = time.perf_counter()
-        formatted = self.retriever.format_for_llm(
-            activated,
-            direct_episodes=direct_episodes,
-            group_by_topic=topic is None,
-            topic_names=topic_names,
+        return self.retriever.format_for_llm(
+            activated=concepts,
+            direct_episodes=episodes,
+            as_of=as_of_dt,
         )
-        t_format_ms = (time.perf_counter() - t_format_start) * 1000.0
-        t_total_ms = (time.perf_counter() - t_total_start) * 1000.0
-        logger.debug(
-            "Recall timing (interface): mode=semantic raw=False retrieve_all=%.1fms "
-            "topic_names=%.1fms format=%.1fms rejuvenate=%.1fms decay=%.1fms "
-            "total=%.1fms concepts=%d episodes=%d",
-            t_retrieve_ms,
-            t_topic_name_ms,
-            t_format_ms,
-            t_rejuvenate_ms,
-            t_decay_ms,
-            t_total_ms,
-            len(activated),
-            len(direct_episodes) if direct_episodes else 0,
+
+    def _resolve_topic_id(self, topic: Optional[str]) -> Optional[str]:
+        """Resolve a topic name or ID to an ID."""
+        if not topic:
+            return None
+        slug = slugify(topic)
+        if self.store.get_topic(slug):
+            return slug
+        existing = self.store.get_topic_by_name(topic)
+        if existing:
+            return existing.id
+        return None
+
+    def _load_recall_count(self) -> int:
+        raw = self.store.get_metadata("recall_count")
+        return int(raw) if raw else 0
+
+    def _increment_recall_count(self) -> None:
+        self._recall_count += 1
+        self.store.set_metadata("recall_count", str(self._recall_count))
+
+    def _maybe_decay(self, concepts: list[ActivatedConcept]) -> None:
+        if not self.decay_config.enabled:
+            return
+        
+        if self._recall_count % self.decay_config.decay_interval != 0:
+            return
+        
+        decayed = self.store.decay_concepts(
+            decay_rate=self.decay_config.decay_rate,
+            skip_recently_accessed_seconds=60,
         )
-        return formatted
-    
-    async def consolidate(
-        self,
-        force: bool = False,
-        on_batch_complete: Optional[Callable[[int, ConsolidationResult], None]] = None,
-        on_extraction_batch_complete: Optional[Callable[[dict], None]] = None,
-    ) -> ConsolidationResult:
-        """
-        Run memory consolidation manually.
-        
-        Processes unconsolidated episodes into generalized concepts.
-        This is the "sleep" process where raw experiences become knowledge.
-        
-        Use this for:
-        - Manual consolidation triggers
-        - Agent hooks (task completion, scheduled jobs)
-        - Forcing consolidation regardless of episode count
-        
-        Args:
-            force: If True, consolidate even with few episodes (< 3)
-            on_batch_complete: Optional callback(batch_num, batch_result) called
-                after each batch completes, for progress reporting.
-            on_extraction_batch_complete: Optional callback(progress_dict) called
-                after each extraction batch completes, for progress reporting.
-            
-        Returns:
-            ConsolidationResult with statistics
-        """
-        result = await self.consolidator.consolidate(
-            force=force,
-            on_batch_complete=on_batch_complete,
-            on_extraction_batch_complete=on_extraction_batch_complete,
-        )
-        
-        if result.episodes_processed > 0:
-            self._last_consolidation = datetime.now()
-            self._episode_buffer = []  # Clear buffer after successful consolidation
-        
-        return result
-    
+        if decayed > 0:
+            logger.info(f"Decayed {decayed} concepts (recall #{self._recall_count})")
+
     async def embed_episodes(self, batch_size: int = 50) -> int:
-        """
-        Backfill embeddings for episodes that don't have them yet.
-
-        Useful for vectorizing episodes in existing databases that were
-        created before episode embedding was enabled.
-
-        Args:
-            batch_size: Number of episodes to embed per batch.
-
-        Returns:
-            Number of episodes embedded.
-        """
+        """Backfill embeddings for episodes that don't have them yet."""
         if not self.embedding:
             logger.warning("No embedding provider configured, cannot embed episodes")
             return 0
@@ -606,18 +448,17 @@ class MemoryInterface:
         self,
         include_episodes: bool = True,
         include_concepts: bool = True,
+        include_entities: bool = True,
     ) -> dict[str, Optional[int]]:
-        """Inspect what a re-embedding run would do.
-
-        Returns counts plus stored/target embedding dimensions.
-        """
-        if not include_episodes and not include_concepts:
-            raise ValueError("Select at least one target: episodes or concepts.")
+        """Inspect what a re-embedding run would do."""
+        if not include_episodes and not include_concepts and not include_entities:
+            raise ValueError("Select at least one target: episodes, concepts, or entities.")
         if not self.embedding:
             raise RuntimeError("No embedding provider configured.")
 
         episodes = self.store.get_all_episodes() if include_episodes else []
         concepts = self.store.get_all_concepts() if include_concepts else []
+        entities = self.store.get_all_entities() if include_entities else []
 
         stored_dims_raw = self.store.get_metadata("embedding_dimensions")
         stored_dims = int(stored_dims_raw) if stored_dims_raw else None
@@ -627,6 +468,8 @@ class MemoryInterface:
             sample_text = episodes[0].content
         elif include_concepts and concepts:
             sample_text = concepts[0].summary
+        elif include_entities and entities:
+            sample_text = f"{entities[0].type.value}: {entities[0].display_name}"
 
         target_dims = None
         if sample_text:
@@ -637,6 +480,7 @@ class MemoryInterface:
         return {
             "episodes": len(episodes),
             "concepts": len(concepts),
+            "entities": len(entities),
             "stored_dimensions": stored_dims,
             "target_dimensions": target_dims,
         }
@@ -645,12 +489,14 @@ class MemoryInterface:
         self,
         include_episodes: bool = True,
         include_concepts: bool = True,
+        include_entities: bool = True,
         batch_size: int = 50,
     ) -> dict[str, Optional[int]]:
         """Recompute embeddings for selected record types using current provider."""
         plan = await self.get_reembed_plan(
             include_episodes=include_episodes,
             include_concepts=include_concepts,
+            include_entities=include_entities,
         )
         stored_dims = plan["stored_dimensions"]
         target_dims = plan["target_dimensions"]
@@ -659,7 +505,7 @@ class MemoryInterface:
             stored_dims is not None
             and target_dims is not None
             and stored_dims != target_dims
-            and not (include_episodes and include_concepts)
+            and not (include_episodes and include_concepts and include_entities)
         ):
             raise ValueError(
                 "Embedding dimensions are changing. Re-embedding only one type "
@@ -669,10 +515,12 @@ class MemoryInterface:
         clear_stats = self.store.clear_embeddings(
             include_episodes=include_episodes,
             include_concepts=include_concepts,
+            include_entities=include_entities,
         )
 
         concepts_embedded = 0
         episodes_embedded = 0
+        entities_embedded = 0
 
         if include_concepts:
             concepts = self.store.get_all_concepts()
@@ -696,10 +544,22 @@ class MemoryInterface:
                     self.store.update_episode(episode)
                     episodes_embedded += 1
 
+        if include_entities:
+            entities = self.store.get_all_entities()
+            for i in range(0, len(entities), batch_size):
+                batch = entities[i:i + batch_size]
+                texts = [f"{e.type.value}: {e.display_name}" for e in batch]
+                embeddings = await self.embedding.embed_batch(texts)
+                for entity, embedding in zip(batch, embeddings):
+                    entity.embedding = embedding
+                    self.store.update_entity(entity)
+                    entities_embedded += 1
+
         logger.info(
-            "Re-embedded memory (concepts=%s, episodes=%s, dims=%s->%s)",
+            "Re-embedded memory (concepts=%s, episodes=%s, entities=%s, dims=%s->%s)",
             concepts_embedded,
             episodes_embedded,
+            entities_embedded,
             stored_dims,
             target_dims,
         )
@@ -707,800 +567,339 @@ class MemoryInterface:
         return {
             "concepts_embedded": concepts_embedded,
             "episodes_embedded": episodes_embedded,
+            "entities_embedded": entities_embedded,
             "concepts_cleared": clear_stats["concepts_cleared"],
             "episodes_cleared": clear_stats["episodes_cleared"],
+            "entities_cleared": clear_stats["entities_cleared"],
             "stored_dimensions": stored_dims,
             "target_dimensions": target_dims,
         }
 
-    async def end_session(self) -> ConsolidationResult:
-        """
-        Hook for ending a session/conversation.
-        
-        Call this at natural boundaries in your agent:
-        - End of a conversation
-        - Task completion
-        - Before shutting down
-        - Scheduled maintenance
-        
-        This drains any in-flight background ingest tasks, flushes any
-        pending ingestion buffer, and then triggers consolidation if there
-        are pending episodes.
-        
-        Usage in agent hooks:
-            async def on_conversation_end(self):
-                await memory.end_session()
-            
-            async def on_task_complete(self, task):
-                await memory.remember(f"Completed task: {task.summary}")
-                await memory.end_session()
-        
-        Returns:
-            ConsolidationResult with statistics
-        """
-        # Drain in-flight background ingest tasks first
-        if self._background_tasks:
-            logger.info(f"end_session: waiting for {len(self._background_tasks)} background ingest tasks")
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
-            self._background_tasks.clear()
-
-        # Flush ingestion buffer (force foreground so we capture episodes)
-        if not self._ingest_buffer.is_empty:
-            logger.info("end_session: flushing ingestion buffer")
-            was_bg = self._ingest_background
-            self._ingest_background = False
-            try:
-                await self.flush_ingest()
-            finally:
-                self._ingest_background = was_bg
-        
-        pending = self.pending_episodes_count
-        
-        if pending == 0:
-            logger.debug("end_session called but no pending episodes")
-            return ConsolidationResult()
-        
-        logger.info(f"end_session: consolidating {pending} pending episodes")
-        return await self.consolidate(force=True)
-    
-    async def ingest(
-        self, content: str, source: str = "conversation",
-        topic: Optional[str] = None, instructions: Optional[str] = None,
-    ) -> list[str]:
-        """Ingest raw text for automatic memory curation.
-
-        Text accumulates in an internal buffer. When the buffer exceeds
-        the character threshold, it flushes and triggers triage (LLM-based
-        density scoring + episode extraction). Triage and consolidation
-        run in the background by default (controlled by ingest_background).
-
-        This is separate from remember() -- explicit remember() calls bypass
-        triage entirely. Auto-ingest is additive.
-
-        Args:
-            content: Raw text to ingest (conversation fragments, tool output, etc.)
-            source: Source label for metadata (default: "conversation")
-            topic: Optional topic ID or name for extracted episodes.
-                   When set, all episodes are assigned this topic.
-                   When None (default), episodes get topic_id=None.
-            instructions: Optional natural-language instructions that steer
-                   what the triage LLM extracts (e.g. "focus on architectural
-                   decisions", "extract all config values"). Appended to the
-                   triage system prompt.
-
-        Returns:
-            List of episode IDs created (empty if buffer didn't flush,
-            triage dropped everything, or processing is running in background).
-        """
-        chunk = self._ingest_buffer.add(content)
-        if chunk is None:
-            logger.debug(
-                f"Ingested {len(content)} chars, buffer at {self._ingest_buffer.size} "
-                f"(threshold: {self._ingest_buffer.threshold})"
-            )
-            return []
-
-        if self._ingest_background:
-            self._schedule_background_ingest(chunk, source, topic=topic, instructions=instructions)
-            return []
-
-        return await self._process_ingest_chunk(chunk, source, topic=topic, instructions=instructions)
-
-    async def flush_ingest(
-        self, topic: Optional[str] = None, instructions: Optional[str] = None,
-    ) -> list[str]:
-        """Force-flush the ingestion buffer and process whatever is in it.
-
-        Call at session end or when you want to ensure everything is processed.
-
-        Args:
-            topic: Optional topic ID or name for extracted episodes.
-                   When set, all episodes are assigned this topic.
-                   When None (default), episodes get topic_id=None.
-            instructions: Optional natural-language instructions that steer
-                   what the triage LLM extracts. Same as ingest() instructions.
-
-        Returns:
-            List of episode IDs created (empty if buffer was empty,
-            triage dropped everything, or processing is running in background).
-        """
-        chunk = self._ingest_buffer.flush()
-        if chunk is None:
-            return []
-
-        if self._ingest_background:
-            self._schedule_background_ingest(chunk, source="flush", topic=topic, instructions=instructions)
-            return []
-
-        return await self._process_ingest_chunk(chunk, source="flush", topic=topic, instructions=instructions)
-
-    def _schedule_background_ingest(
-        self, chunk: str, source: str,
-        topic: Optional[str] = None, instructions: Optional[str] = None,
-    ) -> None:
-        """Schedule ingest processing as a background async task.
-
-        Concurrency is capped by self._ingest_semaphore (default 2) so
-        at most two chunks process simultaneously in-process.
-        """
-        async def _guarded():
-            async with self._ingest_semaphore:
-                return await self._process_ingest_chunk(chunk, source, topic=topic, instructions=instructions)
-
-        task = asyncio.create_task(
-            _guarded(),
-            name=f"remind-ingest-{len(self._background_tasks)}",
-        )
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
-        logger.info(
-            f"Scheduled background ingest ({len(chunk)} chars, "
-            f"{len(self._background_tasks)} tasks in flight)"
-        )
-
-    async def _process_ingest_chunk(
-        self, chunk: str, source: str,
-        topic: Optional[str] = None, instructions: Optional[str] = None,
-    ) -> list[str]:
-        """Run triage on a chunk and store/consolidate resulting episodes.
-
-        Large chunks are split into sub-chunks of at most
-        ``self._ingest_buffer.threshold`` characters before triage so that
-        each LLM call receives a reasonable amount of text.  Sub-chunks are
-        triaged concurrently (bounded by llm_concurrency).  Consolidation
-        runs once at the end after all sub-chunks have been triaged.
-        """
-        sub_chunks = split_text(chunk, max_size=self._ingest_buffer.threshold)
-        if not sub_chunks:
-            return []
-
-        total = len(sub_chunks)
-
-        if total == 1:
-            all_episode_ids = await self._triage_sub_chunk(
-                sub_chunks[0], source, 0, 1, topic=topic, instructions=instructions,
-            )
-        else:
-            sem = asyncio.Semaphore(self._llm_concurrency)
-
-            async def _bounded_triage(idx: int, sc: str) -> list[str]:
-                async with sem:
-                    return await self._triage_sub_chunk(sc, source, idx, total, topic=topic, instructions=instructions)
-
-            results = await asyncio.gather(
-                *[_bounded_triage(i, sc) for i, sc in enumerate(sub_chunks)],
-                return_exceptions=True,
-            )
-            all_episode_ids: list[str] = []
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.warning(f"Sub-chunk triage failed: {r}")
-                else:
-                    all_episode_ids.extend(r)
-
-        # Single consolidation pass after all sub-chunks are processed
-        if all_episode_ids:
-            try:
-                result = await self.consolidate(force=True)
-                logger.info(
-                    f"Post-ingest consolidation: {result.episodes_processed} episodes, "
-                    f"{result.concepts_created} concepts created"
-                )
-            except Exception as e:
-                logger.warning(f"Post-ingest consolidation failed: {e}")
-
-        return all_episode_ids
-
-    async def _triage_sub_chunk(
-        self, chunk: str, source: str, chunk_index: int, total_chunks: int,
-        topic: Optional[str] = None, instructions: Optional[str] = None,
-    ) -> list[str]:
-        """Triage a single sub-chunk and store extracted episodes.
-
-        Args:
-            topic: When set, all episodes are assigned this topic.
-            instructions: Optional caller-provided instructions for triage.
-        """
-        existing_concepts = ""
-        try:
-            activated = await self.recall(
-                chunk[:500], k=5, raw=True,
-            )
-            if activated:
-                lines = []
-                for item in activated:
-                    concept = item.concept if hasattr(item, 'concept') else item
-                    if hasattr(concept, 'summary'):
-                        lines.append(f"- {concept.summary}")
-                if lines:
-                    existing_concepts = "\n".join(lines)
-        except Exception as e:
-            logger.debug(f"Recall for triage context failed (ok for empty memory): {e}")
-
-        triage_result = await self._triager.triage(
-            chunk, existing_concepts,
-            instructions=instructions,
-        )
-
-        logger.info(
-            f"Triage [{chunk_index + 1}/{total_chunks}]: "
-            f"density={triage_result.density:.2f}, "
-            f"episodes={len(triage_result.episodes)}, "
-            f"reasoning={triage_result.reasoning}"
-        )
-
-        if not triage_result.episodes:
-            return []
-
-        episode_ids: list[str] = []
-        for ep in triage_result.episodes:
-            metadata = ep.metadata.copy() if ep.metadata else {}
-            metadata["source"] = source
-            metadata["triage_density"] = triage_result.density
-
-            episode_id = await self.remember(
-                content=ep.content,
-                metadata=metadata,
-                episode_type=ep.episode_type or "observation",
-                entities=ep.entities if ep.entities else None,
-                topic=topic,
-            )
-            episode_ids.append(episode_id)
-
-        return episode_ids
-
-    @property
-    def ingest_buffer_size(self) -> int:
-        """Current character count in the ingestion buffer."""
-        return self._ingest_buffer.size
-
-    @property
-    def pending_episodes_count(self) -> int:
-        """Number of episodes waiting to be consolidated."""
-        return self.store.get_stats().get("unconsolidated_episodes", 0)
-    
-    @property
-    def should_consolidate(self) -> bool:
-        """
-        Check if consolidation should run based on current state.
-        
-        Useful for agents that want to check before deciding to consolidate:
-            if memory.should_consolidate:
-                await memory.consolidate()
-        """
-        return self.pending_episodes_count >= self.consolidation_threshold
-    
-    def get_pending_episodes(self, limit: int = 50) -> list[Episode]:
-        """
-        Get episodes that are pending consolidation.
-        
-        Useful for:
-        - Human review before consolidation
-        - Debugging what will be consolidated
-        - Custom filtering logic
-        """
-        return self.store.get_unconsolidated_episodes(limit=limit)
-    
-    def _load_recall_count(self) -> int:
-        """Load recall count from persistent metadata storage."""
-        value = self.store.get_metadata("recall_count")
-        if value is None:
-            return 0
-        try:
-            return int(value)
-        except ValueError:
-            logger.warning(f"Invalid recall_count in metadata: {value}, defaulting to 0")
-            return 0
-    
-    def _save_recall_count(self) -> None:
-        """Save recall count to persistent metadata storage."""
-        self.store.set_metadata("recall_count", str(self._recall_count))
-    
-    def _trigger_decay(self) -> None:
-        """
-        Trigger decay process on concepts.
-        
-        Applies linear decay to all concepts and their related concepts.
-        This is called automatically every N recalls (based on decay_interval).
-        """
-        logger.info(
-            f"Triggering decay (recall #{self._recall_count}): "
-            f"decay_rate={self.decay_config.decay_rate}"
-        )
-        
-        decayed_count = self.store.decay_concepts(
-            decay_rate=self.decay_config.decay_rate,
-            skip_recently_accessed_seconds=60,
-        )
-        
-        logger.info(f"Decay complete: {decayed_count} concepts affected")
-
-    def _rejuvenate_concepts(self, activated: list[ActivatedConcept]) -> None:
-        """
-        Apply proportional rejuvenation to recalled concepts.
-        
-        When a concept is recalled, it gets a boost scaled by its activation score.
-        Higher activation = larger boost (max 0.3), lower activation = smaller boost.
-        This prevents barely-above-threshold concepts from getting the same boost as top results.
-        
-        Args:
-            activated: List of ActivatedConcept objects that were just recalled
-        """
-        for ac in activated:
-            concept = ac.concept
-            # Scale boost by activation score (0.0-1.0)
-            # Max boost is 0.3, scaled by how strongly the concept was activated
-            activation_boost = 0.3 * ac.activation
-            concept.decay_factor = min(1.0, concept.decay_factor + activation_boost)
-            concept.access_count += 1
-            concept.last_accessed = datetime.now()
-            concept.updated_at = datetime.now()
-            
-            # Save updated concept back to store
-            self.store.update_concept(concept)
-            
-            logger.debug(f"Rejuvenated concept {concept.id}: activation={ac.activation:.3f}, boost={activation_boost:.3f}, decay_factor={concept.decay_factor:.3f}, access_count={concept.access_count}, last_accessed={concept.last_accessed.isoformat()}")
-    
     # Topic operations
 
-    def _resolve_topic_id(self, topic: Optional[str]) -> Optional[str]:
-        """Resolve a topic argument to a valid topic ID.
-
-        If *topic* matches an existing ID, return it.  Otherwise treat it as
-        a name and try to find a topic with that name.  If still no match,
-        return None (no topic assignment).
-        """
-        if not topic:
-            return None
-        topic = topic.strip()
-        if not topic:
-            return None
-        existing = self.store.get_topic(topic)
-        if existing:
-            return existing.id
-        # Try matching by name (case-insensitive)
-        for t in self.store.get_all_topics():
-            if t.name.lower() == topic.lower():
-                return t.id
-        return None
-
-    def _get_topic_names(self) -> dict[str, str]:
-        """Return {topic_id: topic_name} map."""
-        return {t.id: t.name for t in self.store.get_all_topics()}
-
     def create_topic(self, name: str, description: str = "") -> Topic:
-        """Create a new topic."""
-        topic_id = slugify(name)
-        existing = self.store.get_topic(topic_id)
-        if existing:
-            raise ValueError(f"Topic '{topic_id}' already exists")
-        topic = Topic(id=topic_id, name=name, description=description)
-        return self.store.create_topic(topic)
+        """Create a new topic. ID is auto-generated from name."""
+        topic = Topic(id=slugify(name), name=name, description=description)
+        self.store.create_topic(topic)
+        return topic
 
-    def get_topic(self, topic_id: str) -> Optional[Topic]:
-        """Get a topic by ID."""
-        return self.store.get_topic(topic_id)
+    def get_topic(self, id: str) -> Optional[Topic]:
+        return self.store.get_topic(id)
 
-    def list_topics(self) -> list[dict]:
-        """List all topics with episode/concept counts and latest activity."""
-        return self.store.get_topic_stats()
+    def list_topics(self) -> list[Topic]:
+        return self.store.get_all_topics()
 
     def update_topic(
-        self, topic_id: str, name: Optional[str] = None, description: Optional[str] = None,
+        self,
+        id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> Optional[Topic]:
-        """Update an existing topic's name and/or description."""
-        topic = self.store.get_topic(topic_id)
+        topic = self.store.get_topic(id)
         if not topic:
             return None
         if name is not None:
             topic.name = name
         if description is not None:
             topic.description = description
-        return self.store.update_topic(topic)
+        self.store.update_topic(topic)
+        return topic
 
-    def delete_topic(self, topic_id: str) -> bool:
-        """Delete a topic. Fails if episodes or concepts still reference it."""
-        stats = self.store.get_topic_stats()
-        for t in stats:
-            if t["id"] == topic_id:
-                if t["episode_count"] > 0 or t["concept_count"] > 0:
-                    raise ValueError(
-                        f"Cannot delete topic '{topic_id}': "
-                        f"{t['episode_count']} episodes and {t['concept_count']} concepts still reference it"
-                    )
-                break
-        return self.store.delete_topic(topic_id)
+    def delete_topic(self, id: str) -> bool:
+        topic = self.store.get_topic(id)
+        if not topic:
+            return False
+        self.store.delete_topic(id)
+        return True
 
-    def get_topic_overview(self, topic_id: str, k: int = 5) -> list[Concept]:
-        """Get top-k concepts for a topic, no query needed."""
-        return self.store.get_concepts_by_topic(topic_id)[:k]
+    def get_topic_overview(self, topic_id: str, k: int = 5) -> dict:
+        return self.store.get_topic_overview(topic_id, k=k)
 
-    # Direct access methods
-    
-    def get_concept(self, concept_id: str) -> Optional[Concept]:
-        """Get a concept by ID."""
-        return self.store.get_concept(concept_id)
-    
+    # Conflict operations
+
+    def list_conflicts(
+        self,
+        status: str = "open",
+        kind: Optional[str] = None,
+        concept_id: Optional[str] = None,
+    ) -> list[Conflict]:
+        """List conflicts. Default filters to open conflicts only."""
+        return self.store.get_conflicts(status=status, kind=kind, concept_id=concept_id)
+
+    def get_conflict(self, id: str) -> Optional[Conflict]:
+        return self.store.get_conflict(id)
+
+    async def resolve_conflict(
+        self,
+        conflict_id: str,
+        winning_fact_id: str,
+        note: Optional[str] = None,
+        resolved_by: Optional[str] = None,
+    ) -> Optional[Conflict]:
+        """Resolve a fact conflict by picking a winner."""
+        conflict = self.store.get_conflict(conflict_id)
+        if not conflict:
+            return None
+        if conflict.status != "open":
+            return conflict
+
+        # Validate winning_fact_id is one of the facts in the conflict
+        valid_fact_ids = {conflict.fact_a_id, conflict.fact_b_id}
+        if winning_fact_id not in valid_fact_ids:
+            raise ValueError(f"winning_fact_id must be one of {valid_fact_ids}, got '{winning_fact_id}'")
+
+        losing_fact_id = (
+            conflict.fact_b_id
+            if winning_fact_id == conflict.fact_a_id
+            else conflict.fact_a_id
+        )
+
+        if losing_fact_id:
+            self.store.supersede_fact(losing_fact_id, winning_fact_id)
+
+        conflict.status = "resolved"
+        conflict.resolved_at = datetime.now()
+        conflict.resolved_by = resolved_by
+        conflict.resolution_note = note
+        conflict.winning_fact_id = winning_fact_id
+        self.store.update_conflict(conflict)
+
+        # Record decision as an episode
+        winner = self.store.get_fact(winning_fact_id)
+        loser = self.store.get_fact(losing_fact_id) if losing_fact_id else None
+        decision_content = f"Resolved conflict: chose '{winner.statement if winner else winning_fact_id}'"
+        if loser:
+            decision_content += f" over '{loser.statement}'"
+        if note:
+            decision_content += f" ({note})"
+
+        await self.remember(
+            decision_content,
+            episode_type="decision",
+            asserted_by=resolved_by,
+        )
+
+        # Refresh concept specifics if it's a fact cluster
+        for cid in (conflict.concept_ids or []):
+            concept = self.store.get_concept(cid)
+            if concept and concept.concept_type == "fact_cluster":
+                facts = self.store.get_facts(cluster_id=concept.id, active_only=True)
+                concept.specifics = [f.statement for f in facts]
+                concept.conflicts = []  # Clear conflicts from cluster
+                self.store.update_concept(concept)
+
+        return conflict
+
+    def dismiss_conflict(
+        self,
+        conflict_id: str,
+        note: Optional[str] = None,
+        dismissed_by: Optional[str] = None,
+    ) -> Optional[Conflict]:
+        """Dismiss a conflict (both facts stay active)."""
+        conflict = self.store.get_conflict(conflict_id)
+        if not conflict:
+            return None
+        if conflict.status != "open":
+            return conflict
+
+        conflict.status = "dismissed"
+        conflict.resolved_at = datetime.now()
+        conflict.resolved_by = dismissed_by
+        conflict.resolution_note = note
+        self.store.update_conflict(conflict)
+
+        # Clear conflicts from affected clusters
+        for cid in (conflict.concept_ids or []):
+            concept = self.store.get_concept(cid)
+            if concept and concept.concept_type == "fact_cluster":
+                concept.conflicts = []
+                self.store.update_concept(concept)
+
+        return conflict
+
+    # CRUD operations
+
+    def get_concept(self, id: str) -> Optional[Concept]:
+        return self.store.get_concept(id)
+
     def get_all_concepts(self) -> list[Concept]:
-        """Get all concepts."""
         return self.store.get_all_concepts()
-    
-    def get_recent_episodes(self, limit: int = 10) -> list[Episode]:
-        """Get recent episodes."""
-        return self.store.get_recent_episodes(limit=limit)
-    
-    def get_episodes_by_type(self, episode_type: str, limit: int = 50) -> list[Episode]:
-        """Get episodes of a specific type (decision, question, meta, etc.)."""
-        return self.store.get_episodes_by_type(episode_type, limit=limit)
 
-    # Episode update/delete operations
+    def get_recent_episodes(self, limit: int = 100) -> list[Episode]:
+        return self.store.get_recent_episodes(limit=limit)
+
+    def get_episodes_by_type(self, episode_type: str) -> list[Episode]:
+        return self.store.get_episodes_by_type(episode_type)
+
+    def get_all_episodes(self) -> list[Episode]:
+        return self.store.get_all_episodes()
+
+    def get_episode(self, id: str) -> Optional[Episode]:
+        return self.store.get_episode(id)
 
     def update_episode(
         self,
-        episode_id: str,
+        id: str,
         content: Optional[str] = None,
-        episode_type: Optional[str] = None,
-        entities: Optional[list[str]] = None,
         metadata: Optional[dict] = None,
         topic: Optional[str] = None,
+        clear_topic: bool = False,
     ) -> Optional[Episode]:
-        """
-        Update an existing episode.
-
-        Only provided fields are updated; None values preserve existing data.
-        If content is updated, resets consolidation and extraction flags so the
-        episode will be fully re-processed. Explicit entities are stored as
-        mention hints; LLM extraction still runs and merges additional entities.
-        Metadata is shallow-merged into existing metadata (not replaced).
-
-        Args:
-            episode_id: ID of the episode to update
-            content: New content (if None, preserves existing)
-            episode_type: New type (if None, preserves existing)
-            entities: New entity list (if None, preserves existing)
-            metadata: Metadata keys to merge in (if None, preserves existing)
-            topic: New topic ID (if None, preserves existing)
-
-        Returns:
-            Updated Episode object, or None if not found
-        """
-        episode = self.store.get_episode(episode_id)
+        episode = self.store.get_episode(id)
         if not episode:
             return None
 
-        if content is not None:
+        if content is not None and content != episode.content:
             episode.content = content
-            self.store.delete_entity_relations_from_episode(episode_id)
-            self.store.delete_mentions_for_episode(episode_id)
-            episode.entities_extracted = False
-            episode.relations_extracted = False
-            episode.consolidated = False
-            episode.entity_ids = []
-
-        if episode_type is not None:
-            episode.episode_type = episode_type.value if isinstance(episode_type, EpisodeType) else str(episode_type)
-
-        if entities is not None:
-            if content is None:
-                self.store.delete_mentions_for_episode(episode_id)
-            resolved_ids = []
-            for raw_id in entities:
-                canonical_id = self._resolve_entity_id(raw_id)
-                resolved_ids.append(canonical_id)
-                self.store.add_mention(episode_id, canonical_id)
-            episode.entity_ids = resolved_ids
+            episode.embedding = None  # Clear embedding to re-embed
 
         if metadata is not None:
-            episode.metadata = {**(episode.metadata or {}), **metadata}
+            episode.metadata = metadata
 
-        if topic is not None:
-            episode.topic_id = self._resolve_topic_id(topic) if topic else None
+        if clear_topic:
+            episode.topic_id = None
+        elif topic is not None:
+            episode.topic_id = self._resolve_topic_id(topic)
 
         episode.updated_at = datetime.now()
         self.store.update_episode(episode)
         return episode
 
-    def delete_episode(self, episode_id: str) -> bool:
-        """
-        Soft delete an episode from memory.
+    def delete_episode(self, id: str) -> bool:
+        episode = self.store.get_episode(id)
+        if not episode:
+            return False
+        episode.deleted = True
+        episode.deleted_at = datetime.now()
+        self.store.update_episode(episode)
+        return True
 
-        The episode is marked as deleted but not permanently removed.
-        Use purge_episode() to permanently remove, or restore_episode() to undelete.
+    def restore_episode(self, id: str) -> bool:
+        episode = self.store.get_episode(id, include_deleted=True)
+        if not episode or not episode.deleted:
+            return False
+        episode.deleted = False
+        episode.deleted_at = None
+        self.store.update_episode(episode)
+        return True
 
-        Args:
-            episode_id: ID of the episode to delete
+    def purge_episode(self, id: str) -> bool:
+        episode = self.store.get_episode(id, include_deleted=True)
+        if not episode:
+            return False
+        self.store.delete_episode(id)
+        return True
 
-        Returns:
-            True if deleted, False if not found
-        """
-        return self.store.delete_episode(episode_id)
-
-    def restore_episode(self, episode_id: str) -> bool:
-        """
-        Restore a soft-deleted episode.
-
-        Args:
-            episode_id: ID of the episode to restore
-
-        Returns:
-            True if restored, False if not found or not deleted
-        """
-        return self.store.restore_episode(episode_id)
-
-    def purge_episode(self, episode_id: str) -> bool:
-        """
-        Permanently delete an episode.
-
-        This cannot be undone. Also removes entity mentions and relations
-        derived from this episode.
-
-        Args:
-            episode_id: ID of the episode to purge
-
-        Returns:
-            True if purged, False if not found
-        """
-        return self.store.purge_episode(episode_id)
-
-    def get_deleted_episodes(self, limit: int = 50) -> list[Episode]:
-        """Get soft-deleted episodes."""
+    def get_deleted_episodes(self, limit: int = 100) -> list[Episode]:
         return self.store.get_deleted_episodes(limit=limit)
-
-    # Concept update/delete operations
 
     def update_concept(
         self,
-        concept_id: str,
-        title: Optional[str] = None,
+        id: str,
         summary: Optional[str] = None,
-        confidence: Optional[float] = None,
-        conditions: Optional[str] = None,
-        exceptions: Optional[list[str]] = None,
-        tags: Optional[list[str]] = None,
-        relations: Optional[list[dict]] = None,
+        title: Optional[str] = None,
         topic: Optional[str] = None,
+        clear_topic: bool = False,
     ) -> Optional[Concept]:
-        """
-        Update an existing concept.
-
-        Only provided fields are updated; None values preserve existing data.
-        If summary is updated, clears the embedding (will be regenerated on next recall).
-
-        Args:
-            concept_id: ID of the concept to update
-            title: New title
-            summary: New summary (triggers embedding clear)
-            confidence: New confidence score (0.0-1.0)
-            conditions: New applicability conditions
-            exceptions: New exceptions list
-            tags: New tags list
-            relations: New relations list (replaces existing). Each dict has
-                type, target_id, strength, context.
-            topic: New topic ID or name (same resolution as remember/update_episode);
-                use empty string to clear topic_id.
-
-        Returns:
-            Updated Concept object, or None if not found
-        """
-        concept = self.store.get_concept(concept_id)
+        concept = self.store.get_concept(id)
         if not concept:
             return None
+
+        if summary is not None and summary != concept.summary:
+            concept.summary = summary
+            concept.embedding = None  # Clear embedding to re-embed
 
         if title is not None:
             concept.title = title
 
-        if summary is not None and summary != concept.summary:
-            concept.summary = summary
-            concept.embedding = None
-
-        if confidence is not None:
-            concept.confidence = max(0.0, min(1.0, confidence))
-
-        if conditions is not None:
-            concept.conditions = conditions
-
-        if exceptions is not None:
-            concept.exceptions = exceptions
-
-        if tags is not None:
-            concept.tags = tags
-
-        if relations is not None:
-            concept.relations = [
-                Relation(
-                    type=RelationType(r["type"]),
-                    target_id=r["target_id"],
-                    strength=r.get("strength", 0.5),
-                    context=r.get("context"),
-                )
-                for r in relations
-            ]
-
-        if topic is not None:
-            concept.topic_id = self._resolve_topic_id(topic) if topic else None
+        if clear_topic:
+            concept.topic_id = None
+        elif topic is not None:
+            concept.topic_id = self._resolve_topic_id(topic)
 
         concept.updated_at = datetime.now()
         self.store.update_concept(concept)
         return concept
 
-    def delete_concept(self, concept_id: str) -> bool:
-        """
-        Soft delete a concept from memory.
+    def delete_concept(self, id: str) -> bool:
+        concept = self.store.get_concept(id)
+        if not concept:
+            return False
+        concept.deleted = True
+        concept.deleted_at = datetime.now()
+        self.store.update_concept(concept)
+        return True
 
-        The concept is marked as deleted but not permanently removed.
-        Use purge_concept() to permanently remove, or restore_concept() to undelete.
+    def restore_concept(self, id: str) -> bool:
+        concept = self.store.get_concept(id, include_deleted=True)
+        if not concept or not concept.deleted:
+            return False
+        concept.deleted = False
+        concept.deleted_at = None
+        self.store.update_concept(concept)
+        return True
 
-        Args:
-            concept_id: ID of the concept to delete
+    def purge_concept(self, id: str) -> bool:
+        concept = self.store.get_concept(id, include_deleted=True)
+        if not concept:
+            return False
+        self.store.delete_concept(id)
+        return True
 
-        Returns:
-            True if deleted, False if not found
-        """
-        return self.store.delete_concept(concept_id)
-
-    def restore_concept(self, concept_id: str) -> bool:
-        """
-        Restore a soft-deleted concept.
-
-        Args:
-            concept_id: ID of the concept to restore
-
-        Returns:
-            True if restored, False if not found or not deleted
-        """
-        return self.store.restore_concept(concept_id)
-
-    def purge_concept(self, concept_id: str) -> bool:
-        """
-        Permanently delete a concept.
-
-        This cannot be undone. Also removes all relations pointing to this concept.
-
-        Args:
-            concept_id: ID of the concept to purge
-
-        Returns:
-            True if purged, False if not found
-        """
-        return self.store.purge_concept(concept_id)
-
-    def get_deleted_concepts(self) -> list[Concept]:
-        """Get soft-deleted concepts."""
-        return self.store.get_deleted_concepts()
+    def get_deleted_concepts(self, limit: int = 100) -> list[Concept]:
+        return self.store.get_deleted_concepts(limit=limit)
 
     # Entity operations
-    
-    def _normalize_entity_id(self, entity_id: str) -> str:
-        """Normalize an entity ID to canonical lowercase form."""
-        type_str, name = Entity.parse_id(entity_id)
-        return Entity.make_id(type_str, normalize_entity_name(name))
 
-    def get_entity(self, entity_id: str) -> Optional[Entity]:
-        """Get an entity by ID."""
-        return self.store.get_entity(self._normalize_entity_id(entity_id))
+    def get_entity(self, id: str) -> Optional[Entity]:
+        return self.store.get_entity(id)
 
     def get_all_entities(self) -> list[Entity]:
-        """Get all entities."""
         return self.store.get_all_entities()
 
-    def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
-        """Get all episodes that mention a specific entity."""
-        return self.store.get_episodes_mentioning(self._normalize_entity_id(entity_id), limit=limit)
-    
+    def get_episodes_mentioning(self, entity_id: str, limit: int = 100) -> list[Episode]:
+        return self.store.get_episodes_mentioning(entity_id, limit=limit)
+
     def get_entity_mention_counts(self) -> list[tuple[Entity, int]]:
-        """Get all entities with their mention counts, sorted by most mentioned."""
         return self.store.get_entity_mention_counts()
 
+    # Stats and export
+
     def get_stats(self) -> dict:
-        """Get memory statistics including consolidation state."""
         stats = self.store.get_stats()
-        stats["session_episode_buffer"] = len(self._episode_buffer)
-        stats["consolidation_threshold"] = self.consolidation_threshold
-        stats["auto_consolidate"] = self.auto_consolidate
-        stats["should_consolidate"] = self.should_consolidate
-        stats["configured_episode_types"] = list(self.episode_types)
-        stats["last_consolidation"] = self._last_consolidation.isoformat() if self._last_consolidation else None
-        stats["llm_provider"] = self.llm.name
-        stats["embedding_provider"] = self.embedding.name
-        
-        # Decay stats
         stats["decay_enabled"] = self.decay_config.enabled
         stats["recall_count"] = self._recall_count
-        stats["decay_interval"] = self.decay_config.decay_interval
-        stats["decay_rate"] = self.decay_config.decay_rate
         stats["next_decay_at"] = (
-            ((self._recall_count // self.decay_config.decay_interval) + 1) * 
-            self.decay_config.decay_interval
+            (self._recall_count // self.decay_config.decay_interval + 1)
+            * self.decay_config.decay_interval
+            if self.decay_config.enabled
+            else None
         )
-        stats["recalls_since_last_decay"] = self._recall_count % self.decay_config.decay_interval
-        
         return stats
-    
-    # Import/Export
-    
-    def export_memory(self, path: Optional[str] = None) -> dict:
-        """
-        Export all memory data.
-        
-        Args:
-            path: If provided, save to this file path
-            
-        Returns:
-            The exported data dictionary
-        """
-        data = self.store.export_data()
-        data["exported_at"] = datetime.now().isoformat()
-        data["stats"] = self.get_stats()
-        
-        if path:
-            with open(path, "w") as f:
-                json.dump(data, f, indent=2)
-            logger.info(f"Exported memory to {path}")
-        
-        return data
-    
-    def import_memory(self, path_or_data: str | dict) -> dict:
-        """
-        Import memory data.
-        
-        Args:
-            path_or_data: File path to JSON or data dictionary
-            
-        Returns:
-            Import statistics
-        """
-        if isinstance(path_or_data, str):
-            with open(path_or_data) as f:
-                data = json.load(f)
-        else:
-            data = path_or_data
-        
+
+    def export_memory(self) -> dict:
+        return self.store.export_data()
+
+    def import_memory(self, data: dict) -> dict:
         result = self.store.import_data(data)
         logger.info(f"Imported {result['concepts_imported']} concepts, {result['episodes_imported']} episodes")
         return result
-    
+
     # Context manager support
-    
+
     async def aclose(self) -> None:
-        """Close underlying provider HTTP clients to avoid event-loop-closed errors."""
-        await self.llm.aclose()
+        """Close underlying provider HTTP clients."""
         await self.embedding.aclose()
-        if self._triager and self._triager.llm is not self.llm:
-            await self._triager.llm.aclose()
 
     async def __aenter__(self):
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        # Consolidate pending episodes when exiting context
-        if self.pending_episodes_count > 0:
-            logger.info("Context exit: consolidating pending episodes")
-            await self.end_session()
         await self.aclose()
 
 
 def create_memory(
-    llm_provider: Optional[str] = None,
     embedding_provider: Optional[str] = None,
     db_path: str = "memory",
     db_url: Optional[str] = None,
@@ -1511,11 +910,9 @@ def create_memory(
     Factory function to create a MemoryInterface with sensible defaults.
 
     Args:
-        llm_provider: "anthropic", "openai", "azure_openai", or "ollama"
-        embedding_provider: "openai", "azure_openai", or "ollama"
+        embedding_provider: "local" (default), "openai", "azure_openai", or "ollama"
         db_path: Database name (stored in ~/.remind/). Ignored when db_url is set.
         db_url: Full SQLAlchemy database URL (e.g. "postgresql+psycopg://...").
-                When set, takes precedence over db_path.
         project_dir: Optional project directory for loading project-local config
         **kwargs: Additional arguments passed to MemoryInterface
 
@@ -1526,14 +923,6 @@ def create_memory(
     from remind.config import load_config, resolve_db_url, _is_db_url
 
     config = load_config(project_dir=project_dir)
-
-    # Legacy kwargs aliases for backward compatibility.
-    if "consolidation_concepts_per_pass" in kwargs and "concepts_per_pass" not in kwargs:
-        kwargs["concepts_per_pass"] = kwargs.pop("consolidation_concepts_per_pass")
-    if "entity_extraction_batch_size" in kwargs and "extraction_llm_batch_size" not in kwargs:
-        kwargs["extraction_llm_batch_size"] = kwargs.pop("entity_extraction_batch_size")
-    if "consolidation_llm_concurrency" in kwargs and "llm_concurrency" not in kwargs:
-        kwargs["llm_concurrency"] = kwargs.pop("consolidation_llm_concurrency")
 
     # Resolve database URL: explicit arg > config > resolve from db_path
     if not db_url:
@@ -1550,31 +939,13 @@ def create_memory(
         setup_file_logging(db_url, project_dir=project_dir)
 
     # Use config values if not explicitly provided
-    llm_provider = llm_provider or config.llm_provider
     embedding_provider = embedding_provider or config.embedding_provider
 
     # Apply config defaults for kwargs if not provided
-    if "consolidation_threshold" not in kwargs:
-        kwargs["consolidation_threshold"] = config.consolidation_threshold
-    if "concepts_per_pass" not in kwargs:
-        kwargs["concepts_per_pass"] = config.concepts_per_pass
-    if "auto_consolidate" not in kwargs:
-        kwargs["auto_consolidate"] = config.auto_consolidate
     if "decay_config" not in kwargs:
         kwargs["decay_config"] = config.decay
-    if "ingest_buffer_size" not in kwargs:
-        kwargs["ingest_buffer_size"] = config.ingest_buffer_size
-    kwargs.pop("ingest_min_density", None)
     if "episode_types" not in kwargs:
         kwargs["episode_types"] = config.episode_types
-    if "extraction_batch_size" not in kwargs:
-        kwargs["extraction_batch_size"] = config.extraction_batch_size
-    if "extraction_llm_batch_size" not in kwargs:
-        kwargs["extraction_llm_batch_size"] = config.extraction_llm_batch_size
-    if "consolidation_batch_size" not in kwargs:
-        kwargs["consolidation_batch_size"] = config.consolidation_batch_size
-    if "llm_concurrency" not in kwargs:
-        kwargs["llm_concurrency"] = config.llm_concurrency
     if "hybrid_keyword_weight" not in kwargs:
         kwargs["hybrid_keyword_weight"] = config.hybrid_keyword_weight
     else:
@@ -1588,40 +959,14 @@ def create_memory(
     if "fact_cluster_jaccard_threshold" not in kwargs:
         kwargs["fact_cluster_jaccard_threshold"] = config.fact_cluster_jaccard_threshold
 
-    # Import providers
-    from remind.providers import (
-        AnthropicLLM, OpenAILLM, OllamaLLM, AzureOpenAILLM,
-        OpenAIEmbedding, OllamaEmbedding, AzureOpenAIEmbedding,
-    )
-
-    # Create LLM provider with config values
-    if llm_provider == "anthropic":
-        llm = AnthropicLLM(
-            api_key=config.anthropic.api_key,
-            model=config.anthropic.model,
-        )
-    elif llm_provider == "openai":
-        llm = OpenAILLM(
-            api_key=config.openai.api_key,
-            base_url=config.openai.base_url,
-            model=config.openai.model,
-        )
-    elif llm_provider == "azure_openai":
-        llm = AzureOpenAILLM(
-            api_key=config.azure_openai.api_key,
-            base_url=config.azure_openai.base_url,
-            deployment_name=config.azure_openai.deployment_name,
-        )
-    elif llm_provider == "ollama":
-        llm = OllamaLLM(
-            model=config.ollama.llm_model,
-            base_url=config.ollama.url,
-        )
-    else:
-        raise ValueError(f"Unknown LLM provider: {llm_provider}. Choose from: anthropic, openai, azure_openai, ollama")
-
     # Create embedding provider with config values
-    if embedding_provider == "openai":
+    if embedding_provider == "local":
+        from remind.providers.local import LocalEmbedding
+        embedding = LocalEmbedding(
+            model=config.local.embedding_model,
+        )
+    elif embedding_provider == "openai":
+        from remind.providers.openai import OpenAIEmbedding
         embedding = OpenAIEmbedding(
             model=config.openai.embedding_model,
             api_key=config.openai.api_key,
@@ -1629,6 +974,7 @@ def create_memory(
             dimensions=config.openai.embedding_size,
         )
     elif embedding_provider == "azure_openai":
+        from remind.providers.azure_openai import AzureOpenAIEmbedding
         embedding = AzureOpenAIEmbedding(
             api_key=config.azure_openai.api_key,
             base_url=config.azure_openai.base_url,
@@ -1636,29 +982,16 @@ def create_memory(
             dimensions=config.azure_openai.embedding_size,
         )
     elif embedding_provider == "ollama":
+        from remind.providers.ollama import OllamaEmbedding
         embedding = OllamaEmbedding(
             model=config.ollama.embedding_model,
             base_url=config.ollama.url,
         )
     else:
-        raise ValueError(f"Unknown embedding provider: {embedding_provider}. Choose from: openai, azure_openai, ollama")
-    
-    # Create triage LLM if ingest_model is configured for the active provider
-    triage_llm = None
-    if llm_provider == "anthropic" and config.anthropic.ingest_model:
-        triage_llm = AnthropicLLM(api_key=config.anthropic.api_key, model=config.anthropic.ingest_model)
-    elif llm_provider == "openai" and config.openai.ingest_model:
-        triage_llm = OpenAILLM(api_key=config.openai.api_key, base_url=config.openai.base_url, model=config.openai.ingest_model)
-    elif llm_provider == "azure_openai" and config.azure_openai.ingest_deployment_name:
-        triage_llm = AzureOpenAILLM(api_key=config.azure_openai.api_key, base_url=config.azure_openai.base_url, deployment_name=config.azure_openai.ingest_deployment_name)
-    elif llm_provider == "ollama" and config.ollama.ingest_model:
-        triage_llm = OllamaLLM(model=config.ollama.ingest_model, base_url=config.ollama.url)
+        raise ValueError(f"Unknown embedding provider: {embedding_provider}. Choose from: local, openai, azure_openai, ollama")
 
     return MemoryInterface(
-        llm=llm,
         embedding=embedding,
         db_url=db_url,
-        triage_llm=triage_llm,
         **kwargs,
     )
-

@@ -358,14 +358,52 @@
                 </div>
               </div>
 
-              {#if concept.concept_type === 'fact_cluster' && concept.specifics && concept.specifics.length > 0}
+              {#if concept.concept_type === 'fact_cluster' && ((concept.facts && concept.facts.length > 0) || (concept.specifics && concept.specifics.length > 0))}
+                {@const factRows = concept.facts || []}
+                {@const activeFacts = factRows.filter((f) => !f.valid_to)}
+                {@const supersededFacts = factRows.filter((f) => f.valid_to)}
                 <div class="detail-section">
-                  <h4>Facts ({concept.specifics.length})</h4>
-                  <ul class="fact-list">
-                    {#each concept.specifics as fact}
-                      <li>{fact}</li>
-                    {/each}
-                  </ul>
+                  {#if activeFacts.length > 0}
+                    <h4>Facts ({activeFacts.length})</h4>
+                    <ul class="fact-list">
+                      {#each activeFacts as fact}
+                        <li>
+                          {fact.statement}
+                          <span class="fact-meta">
+                            since {formatDate(fact.valid_from)}
+                            {#if fact.asserted_by}· by {fact.asserted_by}{/if}
+                            {#if fact.source_ref}
+                              · <a href={fact.source_ref} target="_blank" rel="noopener noreferrer" title={fact.source_ref}>source</a>
+                            {/if}
+                          </span>
+                        </li>
+                      {/each}
+                    </ul>
+                  {:else}
+                    <h4>Facts ({concept.specifics.length})</h4>
+                    <ul class="fact-list">
+                      {#each concept.specifics as fact}
+                        <li>{fact}</li>
+                      {/each}
+                    </ul>
+                  {/if}
+                  {#if supersededFacts.length > 0}
+                    <details class="fact-history">
+                      <summary>History ({supersededFacts.length} superseded)</summary>
+                      <ul class="fact-list superseded">
+                        {#each supersededFacts as fact}
+                          <li>
+                            <span class="superseded-statement">{fact.statement}</span>
+                            <span class="fact-meta">
+                              {formatDate(fact.valid_from)} → {fact.valid_to ? formatDate(fact.valid_to) : ''}
+                              {#if fact.attribute}· {fact.attribute}{/if}
+                              {#if fact.asserted_by}· by {fact.asserted_by}{/if}
+                            </span>
+                          </li>
+                        {/each}
+                      </ul>
+                    </details>
+                  {/if}
                   {#if concept.conflicts && concept.conflicts.length > 0}
                     <div class="conflicts-warning">
                       <span class="warning-icon">⚠</span>
@@ -949,6 +987,45 @@
     margin-bottom: var(--space-sm);
     color: var(--color-text);
     line-height: 1.5;
+  }
+
+  .fact-meta {
+    display: block;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+  }
+
+  .fact-meta a {
+    color: var(--color-text-muted);
+    text-decoration: underline;
+  }
+
+  .fact-meta a:hover {
+    color: var(--color-text);
+  }
+
+  .fact-history {
+    margin-top: var(--space-md);
+  }
+
+  .fact-history summary {
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    user-select: none;
+  }
+
+  .fact-history summary:hover {
+    color: var(--color-text);
+  }
+
+  .fact-list.superseded {
+    margin-top: var(--space-sm);
+  }
+
+  .superseded-statement {
+    text-decoration: line-through;
+    color: var(--color-text-muted);
   }
 
   .conflicts-warning {

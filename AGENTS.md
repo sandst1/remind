@@ -4,39 +4,43 @@ This guide is for AI agents developing **Remind itself**. For using Remind as a 
 
 ## Project Overview
 
-Remind is a generalization-capable memory layer for LLMs. It differs from simple RAG by extracting and maintaining **generalized concepts** from episodic experiences, mimicking how human memory consolidates specific events into abstract knowledge.
+Remind is an agent-driven memory layer for LLMs. It provides temporal facts, semantic retrieval, and structured curation — the calling agent is the only intelligence. There are no internal LLM calls.
 
-**Core insight**: Episodes → Consolidation (LLM-powered "sleep") → Concepts with relations
+**Core architecture**: Episodes → Agent curation via `apply` → Concepts with relations
 
 ## Architecture
 
 ```
 src/remind/
-├── models.py          # Data models (Concept, Episode, Entity, Relation, Topic)
-├── store.py           # SQLite persistence layer
+├── models.py          # Data models (Concept, Episode, Entity, Relation, Topic, Fact, Conflict)
+├── store.py           # SQLAlchemy persistence layer (SQLite, PostgreSQL, MySQL)
 ├── interface.py       # MemoryInterface - main public API
 ├── config.py          # Configuration loading (config file, env vars, defaults)
-├── consolidation.py   # LLM-powered episode → concept transformation
-├── extraction.py      # Entity/type extraction from episodes
+├── facts.py           # Deterministic fact processing (clustering, collision detection)
+├── apply.py           # Batch write engine (op vocabulary, transaction support)
+├── snapshot.py        # Batch read engine (combinable scopes)
 ├── retrieval.py       # Spreading activation retrieval
 ├── reranker.py        # Optional cross-encoder reranking (requires [rerank] extra)
-├── triage.py          # Auto-ingest: buffered intake + density scoring
 ├── cli.py             # Command-line interface (project-aware)
 ├── mcp_server.py      # MCP (Model Context Protocol) server
-├── background.py      # Background consolidation spawning
-├── background_worker.py # Subprocess entry point for background consolidation
+├── background.py      # Background recall worker spawning
+├── background_worker.py # Subprocess entry point for recall worker
 ├── api/               # REST API for web UI
 │   ├── __init__.py    # Exports api_routes
 │   └── routes.py      # Starlette route handlers
 ├── static/            # Web UI assets (compiled)
 │   ├── index.html     # Entry point
 │   └── assets/        # CSS/JS bundles
-└── providers/         # LLM and embedding provider implementations
-    ├── base.py        # Abstract base classes
-    ├── anthropic.py   # Claude
-    ├── openai.py      # OpenAI
-    ├── azure_openai.py # Azure OpenAI
-    └── ollama.py      # Local models via Ollama
+├── skills/            # Bundled agent skills (installed via `remind skill-install`)
+│   ├── remind-capture/  # When/how to write memories while working
+│   ├── remind-context/  # When/how to recall before acting
+│   └── remind-curate/   # Consolidation procedure, conflict triage, topic upkeep
+└── providers/         # Embedding provider implementations
+    ├── base.py        # EmbeddingProvider ABC
+    ├── local.py       # Local embeddings via fastembed (default)
+    ├── openai.py      # OpenAI embeddings
+    ├── azure_openai.py # Azure OpenAI embeddings
+    └── ollama.py      # Ollama embeddings
 ```
 
 ## Key Abstractions
@@ -45,33 +49,27 @@ src/remind/
 
 | Model | Purpose |
 |-------|---------|
-| `Episode` | Raw experience/interaction. Temporary, gets consolidated. |
+| `Episode` | Raw experience/interaction. Marked `consolidated=True` when processed. |
 | `Concept` | Generalized knowledge with confidence, relations, conditions. Has `concept_type`: `pattern`, `fact_cluster`, or `legacy`. |
-| `ConceptType` | Enum: `LEGACY`, `PATTERN`, `FACT_CLUSTER`. Determines how concepts are created and displayed. |
 | `Entity` | External referent (file, person, concept, tool). Format: `type:name` |
 | `Relation` | Typed edge between concepts (implies, contradicts, specializes, etc.) |
 | `Topic` | Named knowledge area grouping episodes/concepts. Has id (slug), name, description. |
+| `Fact` | First-class factual assertion with validity window (`valid_from`/`valid_to`), structural supersession (`superseded_by`), and provenance. Belongs to a fact_cluster concept via `cluster_id`. |
+| `Conflict` | Detected contradiction with lifecycle: `open` → `resolved`/`dismissed`. `kind` is `fact` (two fact rows) or `concept` (two concepts). |
 
 **Episode types**: `observation`, `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
 
-**Episode lifecycle**: Created via `remember()` or `ingest()` → Entity extraction → Consolidation → Marked consolidated
+**Episode lifecycle**: Created via `remember()` → For facts: deterministic clustering + collision detection → Marked processed via `apply` with `processed` op
 
-**Fact episodes**: Specific factual assertions (config values, names, dates, concrete technical details). Consolidation preserves fact details verbatim in concept summaries rather than generalizing them away.
-
-**Outcome episode metadata**: `strategy` (approach used), `result` (success/failure/partial), `prediction_error` (low/medium/high)
+**Episode provenance**: Optional `asserted_by` (who asserted the information) and `source_ref` (permalink to the original artifact).
 
 **Entity ID format**: `type:name` (e.g., `file:src/auth.ts`, `person:alice`, `concept:caching`)
 
 ### Providers (`providers/base.py`)
 
-Two abstract base classes:
+One abstract base class (LLM providers have been removed):
 
 ```python
-class LLMProvider(ABC):
-    async def complete(prompt, system, temperature, max_tokens) -> str
-    async def complete_json(prompt, system, temperature, max_tokens) -> dict
-    @property name: str
-
 class EmbeddingProvider(ABC):
     async def embed(text) -> list[float]
     async def embed_batch(texts) -> list[list[float]]
@@ -79,233 +77,106 @@ class EmbeddingProvider(ABC):
     @property name: str
 ```
 
-**Adding a new provider**: Implement these interfaces. See `ollama.py` for a complete example with error handling.
+**Default provider**: `LocalEmbedding` using fastembed (`all-MiniLM-L6-v2`, 384 dimensions). No API key required.
 
 ### Memory Interface (`interface.py`)
 
 The main entry point. Key design decisions:
 
-1. **`remember()` is synchronous and fast** - no LLM calls, just stores episode
-2. **`ingest()` is async with LLM triage** - buffers, extracts episodes, immediately consolidates
-3. **`consolidate()` does all LLM work** - extraction + generalization
-4. **Two consolidation modes**: Automatic (threshold-based) or manual (hook-based)
+1. **`remember()` returns `RememberResult`** - episode_id + fact info for fact types
+2. **`recall()` uses spreading activation** - with hybrid embedding+keyword scoring
+3. **No internal LLM calls** - the calling agent provides all judgment
 
 ```python
-# Consolidation happens in two phases:
-# 1. Extract entities/types from unextracted episodes
-# 2. Generalize episodes into concepts (the "sleep" process)
+@dataclass
+class RememberResult:
+    episode_id: str
+    fact_id: Optional[str] = None
+    cluster_id: Optional[str] = None
+    cluster_created: bool = False
+    collisions: list[Fact] = field(default_factory=list)
 ```
 
-### Consolidation (`consolidation.py`)
+### Fact Processing (`facts.py`)
 
-The "brain" of the system. Uses dual-track processing:
+Deterministic fact handling (no LLM):
 
-**Fact track** (no LLM generalization):
-- Fact episodes are clustered using Jaccard similarity on entity sets
-- Episodes cluster together when `|shared entities| / |total entities|` ≥ threshold (default 0.5)
-- This avoids transitive explosion (old union-find approach clustered all facts sharing ANY entity transitively)
-- Existing fact_clusters are looked up via entity recall
-- Facts are preserved verbatim in `specifics` field
-- Conflicts are detected and flagged (not auto-resolved)
+1. `create_fact_from_episode()` - Main entry point for fact-type episodes
+2. `find_matching_cluster()` - Jaccard similarity on entity sets
+3. `create_fact_cluster()` - Creates cluster with templated title
+4. `detect_collisions()` - Entity overlap + embedding similarity
 
-**Pattern track** (LLM generalization):
-- Classify episode types (observation, decision, question, meta, preference, outcome)
-- Extract entity mentions from natural language
-- Identify patterns across episodes
-- Create generalized concepts with relations
-- Detect contradictions
-- Identify causal patterns in outcome episodes (strategy-outcome relations)
+Collisions are reported to the agent via `RememberResult.collisions` for disposition.
 
-### Auto-Ingest Triage (`triage.py`)
+### Apply Engine (`apply.py`)
 
-The "input selection" subsystem. Two classes:
-- `IngestionBuffer` — character-threshold accumulator. Buffers raw text until threshold (~4000 chars).
-- `IngestionTriager` — LLM-based episode extraction. The LLM decides directly what's worth remembering, extracts distilled episodes, and detects action-result pairs as outcome episodes. A density score (0.0-1.0) is produced for diagnostics but doesn't gate extraction.
+Batch write operations with transaction support:
 
-**Topics**: Topics are explicit and optional. When `ingest()` is called with an explicit `topic`, all extracted episodes are stamped with that topic. When `topic` is omitted, episodes get `topic_id=None`. Sub-chunks are triaged concurrently, bounded by `llm_concurrency`.
+**Op vocabulary**: `remember`, `supersede`, `conflict`, `resolve`, `dismiss`, `concept`, `update`, `link`, `topic`, `set_topic`, `delete`, `restore`, `processed`
 
-**Instructions**: The `instructions` parameter (optional) lets callers steer what the triage LLM extracts. When provided, instructions are appended to the triage system prompt as a prioritized directive. This enables focused ingestion (e.g. "extract only architectural decisions", "capture all config values"). Threaded through the full pipeline: `ingest()`/`flush_ingest()` → `_process_ingest_chunk()` → `_triage_sub_chunk()` → `IngestionTriager.triage()`. Also serialized in the background queue JSON payload for CLI background workers.
+**Two formats** (auto-detected):
+- Compact line format (canonical, lower token usage)
+- JSON array
 
-Pipeline: `ingest()` → buffer → triage + extract (LLM) → `remember()` → `consolidate(force=True)`
+**Transaction**: All ops run in a single database transaction via `store.transaction()`.
+
+### Snapshot Engine (`snapshot.py`)
+
+Batch read returning JSON:
+
+**Scopes**: `pending`, `conflicts`, `entity:<id>`, `topic:<id>`, `concept:<id>`, `recent:<n>`, `stats`, `query:<text>`
 
 ### Retrieval (`retrieval.py`)
 
 **Hybrid recall** with spreading activation + entity-based episode retrieval:
-1. Query is embedded and matched to concepts via cosine similarity (native vector index when available)
-2. Embedding scores are optionally fused with keyword overlap scores (`hybrid_keyword_weight` config, default 0.3)
+1. Query is embedded and matched to concepts via cosine similarity
+2. Embedding scores are fused with keyword overlap scores (`hybrid_keyword_weight`)
 3. Matched concepts activate related concepts through the graph
 4. Activation spreads with decay over multiple hops
-5. Optional cross-encoder reranking blends activation scores with query-document relevance (`reranking_enabled` config, requires `[rerank]` extra)
-6. Highest-activation concepts are returned with source episodes (including type labels and entity context)
+5. Optional cross-encoder reranking
 
-Key class: `MemoryRetriever` with `ActivatedConcept` results.
-
-Helper function: `_keyword_score(query, text)` — normalized token overlap for hybrid scoring.
-
-**Reranking** (`reranker.py`): Optional cross-encoder post-processing. When `reranking_enabled=True`, a `Reranker` wrapping sentence-transformers `CrossEncoder` rescores candidates after spreading activation. Blending: `0.4 × activation + 0.6 × rerank_score`. Model is lazy-loaded on first recall. Requires `pip install "remind-mcp[rerank]"`.
+**Time-travel recall**: `recall(as_of=...)` renders fact_cluster concepts with historical facts.
 
 ### Store (`store.py`)
 
-Multi-database persistence via SQLAlchemy Core. Supports SQLite (default), PostgreSQL, and MySQL. Tables:
-- `concepts` - Stores concepts with JSON-serialized relations
-- `episodes` - Raw episodes with consolidation status
-- `entities` - Entity registry
-- `mentions` - Episode-entity junction table
-- `relations` - Concept-to-concept graph edges
-- `entity_relations` - Entity-to-entity relationships
-- `metadata` - Persistent key-value store
+Multi-database persistence via SQLAlchemy Core. Supports SQLite, PostgreSQL, MySQL.
 
-**Vector search backends** (auto-detected at startup):
-- **sqlite-vec** (SQLite): `vec0` virtual tables (`vec_concepts`, `vec_episodes`) with cosine distance KNN. Extension is loaded via `sqlite_vec.load()` on connection creation.
-- **pgvector** (PostgreSQL): `vector(N)` columns (`embedding_vec`) with HNSW indexes and `<=>` cosine distance operator.
-- **Brute-force fallback**: If neither extension is available, falls back to Python-side numpy cosine similarity (O(n) per query).
+**Transaction support**: `store.transaction()` context manager for atomic operations.
 
-Embedding dimensions are recorded in the `metadata` table on first write. Vector tables/columns are created lazily when the first embedding is stored.
-
-The `MemoryStore` ABC defines the interface. `SQLAlchemyMemoryStore` is the concrete implementation (aliased as `SQLiteMemoryStore` for backward compatibility).
+**Vector search backends**:
+- **sqlite-vec** (SQLite): `vec0` virtual tables with cosine distance KNN
+- **pgvector** (PostgreSQL): `vector(N)` columns with HNSW indexes
+- **Fallback**: Python-side numpy cosine similarity
 
 ### Configuration (`config.py`)
 
-Centralized configuration management with provider-specific settings:
-
 ```python
-REMIND_DIR = Path.home() / ".remind"
-CONFIG_FILE = REMIND_DIR / "remind.config.json"
-
-@dataclass
-class AnthropicConfig:
-    api_key: Optional[str] = None
-    model: str = "claude-sonnet-4-20250514"
-    ingest_model: Optional[str] = None
-
-@dataclass
-class OpenAIConfig:
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
-    model: str = "gpt-4.1"
-    embedding_model: str = "text-embedding-3-small"
-    ingest_model: Optional[str] = None
-
-@dataclass
-class AzureOpenAIConfig:
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None  # e.g. https://myresource.openai.azure.com (/openai/v1 appended automatically)
-    deployment_name: Optional[str] = None
-    embedding_deployment_name: Optional[str] = None
-    embedding_size: int = 1536
-    ingest_deployment_name: Optional[str] = None
-
-@dataclass
-class OllamaConfig:
-    url: str = "http://localhost:11434"
-    llm_model: str = "llama3.2"
-    embedding_model: str = "nomic-embed-text"
-    ingest_model: Optional[str] = None
-
 @dataclass
 class RemindConfig:
- llm_provider: str = "anthropic"
- embedding_provider: str = "openai"
- consolidation_threshold: int = 5
- concepts_per_pass: int = 64
- auto_consolidate: bool = True
- extraction_batch_size: int = 50
- extraction_llm_batch_size: int = 10
- consolidation_batch_size: int = 25
- llm_concurrency: int = 3
- # Database URL (SQLAlchemy format; None = SQLite default)
- db_url: Optional[str] = None
- # Auto-ingest settings
- ingest_buffer_size: int = 4000
- # Retrieval tuning
- hybrid_keyword_weight: float = 0.3
- recall_initial_candidates: int = 10
- # Reranking (requires `pip install "remind-mcp[rerank]"`)
- reranking_enabled: bool = False
- reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
- # Fact clustering
- fact_cluster_jaccard_threshold: float = 0.5  # Min Jaccard similarity for clustering facts
- # Logging
- logging_enabled: bool = False
- # Episode types (controls which types are valid + gates CLI/MCP features)
- episode_types: list[str] = field(default_factory=lambda: list(DEFAULT_EPISODE_TYPES))
- # Nested provider configs
- anthropic: AnthropicConfig
- openai: OpenAIConfig
- azure_openai: AzureOpenAIConfig
- ollama: OllamaConfig
-
-def load_config() -> RemindConfig:
-    """Priority: env vars > config file > defaults"""
-
-def resolve_db_url(db_name: Optional[str], project_aware: bool = False) -> str:
-    """Resolve a database name/path/URL to a SQLAlchemy database URL.
-    - Full URL (postgresql://..., mysql://...): returned as-is
-    - db_name provided: sqlite:///~/.remind/{name}.db
-    - db_name=None + project_aware=True: sqlite:///<cwd>/.remind/remind.db
-    - db_name=None + project_aware=False: sqlite:///~/.remind/memory.db
-    """
-
-def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
-    """Legacy function - resolves to a file path (SQLite only)."""
+    embedding_provider: str = "local"
+    db_url: Optional[str] = None
+    hybrid_keyword_weight: float = 0.3
+    recall_initial_candidates: int = 10
+    reranking_enabled: bool = False
+    fact_cluster_jaccard_threshold: float = 0.5
+    logging_enabled: bool = False
+    episode_types: list[str] = ...
+    local: LocalConfig  # Local embedding config
+    openai: OpenAIConfig  # OpenAI embedding config
+    # etc.
 ```
-
-**Database URL** (`db_url`): Supports any SQLAlchemy-compatible database URL. Env var: `REMIND_DB_URL`. Examples:
-- SQLite (default): `sqlite:///~/.remind/memory.db`
-- PostgreSQL: `postgresql+psycopg://user:pass@localhost:5432/remind`
-- MySQL: `mysql+pymysql://user:pass@localhost:3306/remind`
-
-**Config file format** (`~/.remind/remind.config.json`):
-```json
-{
- "llm_provider": "anthropic",
- "embedding_provider": "openai",
- "consolidation_threshold": 5,
- "auto_consolidate": true,
- "hybrid_keyword_weight": 0.3,
- "logging_enabled": false,
- "cli_output_mode": "table",
- "db_url": null,
- "anthropic": { "api_key": "sk-ant-..." },
- "openai": { "api_key": "sk-..." },
- "azure_openai": { "api_key": "...", "base_url": "..." },
- "ollama": { "url": "http://localhost:11434" }
-}
-```
-
-`cli_output_mode` may be `table` (default), `json`, or `compact-json` (minimal id/title/summary for browse commands).
-
-### Background Consolidation (`background.py`, `background_worker.py`)
-
-Non-blocking consolidation for CLI:
-
-- `spawn_background_consolidation()` - Spawns a subprocess to consolidate
-- Uses `filelock` for cross-platform file locking to prevent concurrent runs
-- Lock files stored at `~/.remind/.consolidate-{hash}.lock`
-- Logs to `~/.remind/logs/consolidation.log`
-
-The CLI automatically triggers background consolidation after `remember` when the episode threshold is reached.
 
 ## Code Conventions
 
 ### Async/Await
-- All LLM operations are async
-- `remember()` is deliberately sync (fast path)
+- All embedding operations are async
+- `remember()` is deliberately sync (fast path) though returns an async-safe result
 - Use `asyncio.run()` in CLI, native async in MCP server
 
 ### Type Hints
 - Full type hints on all public APIs
-- Use `Optional[T]` explicitly, not `T | None` for consistency
+- Use `Optional[T]` explicitly
 - Dataclasses with `field(default_factory=...)` for mutable defaults
-
-### Error Handling
-- Providers handle their own retries and rate limiting
-- Store operations raise on critical errors, return None for "not found"
-- Consolidation is fault-tolerant (individual episode failures don't abort)
-
-### Logging
-- Use `logging.getLogger(__name__)` pattern
-- Debug for operation traces, Info for consolidation events, Warning for recoverable issues
 
 ### JSON Serialization
 - All models have `to_dict()` and `from_dict()` class methods
@@ -314,188 +185,86 @@ The CLI automatically triggers background consolidation after `remember` when th
 
 ## Testing
 
-Tests are in `tests/` using pytest. Key patterns:
+Tests are in `tests/` using pytest:
 
-```python
-# Temporary database fixture
-@pytest.fixture
-def store():
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    store = SQLiteMemoryStore(path)
-    yield store
-    os.unlink(path)
-```
-
-Run tests:
 ```bash
-pytest                      # All tests
-pytest tests/test_store.py  # Specific file
-pytest -v                   # Verbose
+pytest                        # All tests
+pytest tests/test_store.py    # Specific file
+pytest -v                     # Verbose
 ```
 
-**Note**: Tests requiring LLM calls should use mocks or be marked as integration tests.
+Tests use temporary databases and mock embedding providers.
 
 ## Common Development Tasks
 
 ### Adding a New Provider
 
 1. Create `providers/newprovider.py`
-2. Implement `LLMProvider` and/or `EmbeddingProvider`
+2. Implement `EmbeddingProvider`
 3. Add to `providers/__init__.py` exports
 4. Add to `interface.py` factory map in `create_memory()`
-5. Update CLI in `cli.py` if needed
+5. Update config in `config.py`
 6. Document in README.md
 
 ### Adding a New Episode Type
 
 1. Add to `EpisodeType` enum in `models.py`
-2. Update extraction prompt in `extraction.py`
-3. Update consolidation prompts in `consolidation.py`
-4. Add MCP tool if type-specific querying is useful
+2. Update skills documentation
 
-**Note**: `episode_types` config controls which types are active. Custom types (strings not in `EpisodeType` enum) are also supported.
+### Adding a New Apply Operation
 
-### Adding a New Entity Type
+1. Add validation in `ApplyEngine._validate_ops()`
+2. Add execution in `ApplyEngine._execute_op()`
+3. Create `_op_<name>()` method
+4. Update skills documentation
 
-1. Add to `EntityType` enum in `models.py`
-2. Update extraction prompt in `extraction.py`
-3. No other changes needed (entities are dynamically typed)
+### Adding a New Snapshot Scope
 
-### Adding a New Relation Type
-
-1. Add to `RelationType` enum in `models.py`
-2. Update consolidation prompts to use new relation
-3. Consider retrieval implications (spreading activation weights)
-
-### Adding a New MCP Tool
-
-1. Add function to `mcp_server.py` using FastMCP decorators
-2. Document in `docs/AGENTS.md`
-3. Test via MCP client
-
-### Adding a New REST API Endpoint
-
-1. Add route handler function to `api/routes.py`
-2. Add route to `api_routes` list at bottom of file
-3. Use `_get_memory_from_request()` helper to get MemoryInterface
-4. Return `JSONResponse` for data or `StreamingResponse` for SSE
-
-The REST API uses Starlette and serves the web UI. Endpoints:
-- `GET /api/v1/stats` - Memory statistics
-- `GET /api/v1/concepts` - Paginated concepts list
-- `GET /api/v1/concepts/{id}` - Concept detail with source episodes
-- `GET /api/v1/episodes` - Paginated episodes with filters
-- `GET /api/v1/episodes/{id}` - Episode detail
-- `GET /api/v1/entities` - All entities with mention counts
-- `GET /api/v1/entities/{id}` - Entity detail
-- `GET /api/v1/entities/{id}/episodes` - Episodes mentioning entity
-- `GET /api/v1/entities/{id}/concepts` - Concepts derived from entity's episodes
-- `GET /api/v1/graph` - Full concept graph for D3 visualization
-- `POST /api/v1/query` - Execute recall query
-- `POST /api/v1/chat` - Streaming chat with memory context (SSE)
-- `GET /api/v1/databases` - List available databases
-
-## Development Setup
-
-```bash
-# Clone and install in development mode
-git clone <repo>
-cd remind
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-
-# Set up environment
-cp .env.example .env
-# Edit .env with API keys
-
-# Run tests
-pytest
-
-# Run CLI
-remind --help
-
-# Run MCP server
-remind-mcp --port 8765
-```
-
-### Using uv (Recommended)
-
-[uv](https://docs.astral.sh/uv/) is a fast Python package manager that simplifies development:
-
-```bash
-# Install dependencies and run tests
-uv run pytest
-
-# Run CLI commands
-uv run remind --help
-uv run remind remember "Some observation"
-uv run remind recall "query"
-
-# Run MCP server
-uv run remind-mcp --port 8765
-```
-
-With `uv`, you don't need to manually create a virtual environment or install dependencies - it handles everything automatically.
-
-## Shell commands
-IMPORTANT: Prefix all shell commands, including 'uv' ones with `oo`.
-so e.g. 'oo uv run pytest'. 
-
-## Design Principles
-
-1. **Separation of concerns**: Storage, providers, consolidation, retrieval are independent
-2. **Fast path for writes**: `remember()` never blocks on LLM
-3. **Batch LLM work**: Consolidation processes multiple episodes together
-4. **Graceful degradation**: Missing embeddings fall back to keyword matching
-5. **Provider agnostic**: Core logic doesn't depend on specific LLM/embedding provider
-6. **Explicit over implicit**: Episode types/entities can be auto-detected or manually specified
+1. Add scope handler in `SnapshotEngine.snapshot()`
+2. Create `_scope_<name>()` method
+3. Update CLI help and MCP tool description
 
 ## Important Files for Context
-
-When making changes, these files are most commonly modified together:
 
 | Change Type | Files |
 |-------------|-------|
 | New data structure | `models.py`, `store.py` |
 | New provider | `providers/newprovider.py`, `providers/__init__.py`, `interface.py` |
-| Consolidation logic | `consolidation.py`, `extraction.py` |
-| Retrieval behavior | `retrieval.py`, `reranker.py`, `config.py` |
-| Auto-ingest pipeline | `triage.py`, `llm_protocol.py`, `interface.py`, `config.py` |
+| Fact processing | `facts.py`, `interface.py` |
+| Apply operations | `apply.py`, `cli.py`, `mcp_server.py` |
+| Snapshot scopes | `snapshot.py`, `cli.py`, `mcp_server.py` |
+| Retrieval behavior | `retrieval.py`, `reranker.py` |
 | CLI commands | `cli.py` |
 | Configuration | `config.py`, `interface.py`, `mcp_server.py`, `cli.py` |
-| Background consolidation | `background.py`, `background_worker.py`, `cli.py` |
-| MCP tools | `mcp_server.py`, `docs/AGENTS.md` |
+| MCP tools | `mcp_server.py` |
 | REST API endpoints | `api/routes.py` |
 | Public API | `interface.py`, `__init__.py`, `README.md` |
 
 ## Debugging Tips
 
-- **Consolidation issues**: Check episode `entities_extracted` and `consolidated` flags
-- **Retrieval misses**: Verify concepts have embeddings (`embedding` field not None)
-- **Entity linking**: Entity IDs are case-sensitive, use canonical forms
-- **MCP issues**: Check `db` query parameter in MCP URL, verify server is running
-- **Config issues**: Check `~/.remind/remind.config.json` exists and is valid JSON
-- **Background consolidation**: Check `~/.remind/logs/consolidation.log` for errors
-- **CLI database path**: Without `--db`, uses `<cwd>/.remind/remind.db` (project-aware). Accepts database URLs (e.g. `--db postgresql+psycopg://...`)
+- **Fact clustering issues**: Check Jaccard threshold, entity overlap
+- **Collision detection**: Verify entity IDs match, check embedding similarity
+- **Retrieval misses**: Verify concepts have embeddings, check vector index status
+- **MCP issues**: Check `db` query parameter, verify server is running
+- **Config issues**: Check `~/.remind/remind.config.json` is valid JSON
+- **CLI database path**: Without `--db`, uses `<cwd>/.remind/remind.db` (project-aware)
 
 ## Database Schema
 
 ```sql
 CREATE TABLE concepts (
     id TEXT PRIMARY KEY,
-    data JSON NOT NULL  -- Serialized Concept
+    data JSON NOT NULL
 );
 
 CREATE TABLE episodes (
     id TEXT PRIMARY KEY,
-    data JSON NOT NULL  -- Serialized Episode
+    data JSON NOT NULL
 );
 
 CREATE TABLE entities (
     id TEXT PRIMARY KEY,
-    data JSON NOT NULL  -- Serialized Entity
+    data JSON NOT NULL
 );
 
 CREATE TABLE mentions (
@@ -503,7 +272,25 @@ CREATE TABLE mentions (
     entity_id TEXT,
     PRIMARY KEY (episode_id, entity_id)
 );
+
+CREATE TABLE facts (
+    id TEXT PRIMARY KEY,
+    cluster_id TEXT,
+    statement TEXT,
+    valid_from DATETIME,
+    valid_to DATETIME,
+    superseded_by TEXT,
+    -- ... other columns
+);
+
+CREATE TABLE conflicts (
+    id TEXT PRIMARY KEY,
+    kind TEXT,
+    status TEXT,
+    fact_a_id TEXT,
+    fact_b_id TEXT,
+    -- ... other columns
+);
 ```
 
 The store handles JSON serialization/deserialization transparently.
-

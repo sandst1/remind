@@ -3,8 +3,9 @@
 import pytest
 import tempfile
 import os
+from datetime import datetime, timedelta
 
-from remind.models import Concept, Episode, Relation, RelationType, Entity, EntityType, EntityRelation
+from remind.models import Concept, Conflict, Episode, Fact, Relation, RelationType, Entity, EntityType, EntityRelation
 from remind.store import SQLiteMemoryStore, cosine_similarity
 
 
@@ -222,6 +223,275 @@ class TestSQLiteMemoryStore:
         assert len(new_store.get_all_concepts()) == 1
         
         os.unlink(path)
+
+    # =========================================================================
+    # Fact operations
+    # =========================================================================
+
+    def test_add_and_get_fact(self, store):
+        fact = Fact(
+            statement="Cache TTL is 300s",
+            attribute="cache TTL",
+            entity_ids=["tool:redis"],
+            asserted_by="alice",
+            source_ref="https://example.com/pr/1",
+            source_episode_id="ep123",
+        )
+
+        fact_id = store.add_fact(fact)
+        assert fact_id == fact.id
+
+        retrieved = store.get_fact(fact_id)
+        assert retrieved is not None
+        assert retrieved.statement == "Cache TTL is 300s"
+        assert retrieved.attribute == "cache TTL"
+        assert retrieved.entity_ids == ["tool:redis"]
+        assert retrieved.asserted_by == "alice"
+        assert retrieved.source_ref == "https://example.com/pr/1"
+        assert retrieved.source_episode_id == "ep123"
+        assert retrieved.is_active
+        assert retrieved.superseded_by is None
+
+    def test_add_facts_batch(self, store):
+        facts = [Fact(statement=f"Fact {i}") for i in range(3)]
+        ids = store.add_facts_batch(facts)
+        assert len(ids) == 3
+        for fid in ids:
+            assert store.get_fact(fid) is not None
+
+    def test_get_facts_by_cluster(self, store):
+        cluster = Concept(summary="Redis facts", concept_type="fact_cluster")
+        store.add_concept(cluster)
+        store.add_fact(Fact(cluster_id=cluster.id, statement="In cluster"))
+        store.add_fact(Fact(statement="Not in cluster"))
+
+        facts = store.get_facts(cluster_id=cluster.id)
+        assert len(facts) == 1
+        assert facts[0].statement == "In cluster"
+
+    def test_get_facts_by_entity(self, store):
+        store.add_fact(Fact(statement="Redis fact", entity_ids=["tool:redis", "subject:caching"]))
+        store.add_fact(Fact(statement="Postgres fact", entity_ids=["tool:postgres"]))
+
+        facts = store.get_facts(entity_id="tool:redis")
+        assert len(facts) == 1
+        assert facts[0].statement == "Redis fact"
+
+    def test_supersede_fact(self, store):
+        old = Fact(statement="TTL is 300s", attribute="TTL")
+        new = Fact(statement="TTL is 600s", attribute="TTL")
+        store.add_fact(old)
+        store.add_fact(new)
+
+        assert store.supersede_fact(old.id, new.id) is True
+
+        superseded = store.get_fact(old.id)
+        assert superseded.valid_to is not None
+        assert superseded.superseded_by == new.id
+        assert not superseded.is_active
+
+        # Active-only filter excludes the superseded fact
+        active = store.get_facts(active_only=True)
+        assert [f.id for f in active] == [new.id]
+
+    def test_supersede_missing_fact_returns_false(self, store):
+        assert store.supersede_fact("nonexistent", "also-nonexistent") is False
+
+    def test_get_facts_as_of(self, store):
+        t0 = datetime(2026, 1, 1)
+        t1 = datetime(2026, 3, 1)
+
+        old = Fact(statement="Price is $29", attribute="price", valid_from=t0)
+        new = Fact(statement="Price is $49", attribute="price", valid_from=t1)
+        store.add_fact(old)
+        store.add_fact(new)
+        store.supersede_fact(old.id, new.id, at=t1)
+
+        # Query between t0 and t1: only the old fact was valid
+        facts = store.get_facts(as_of=datetime(2026, 2, 1))
+        assert [f.id for f in facts] == [old.id]
+
+        # Query after t1: only the new fact is valid
+        facts = store.get_facts(as_of=datetime(2026, 4, 1))
+        assert [f.id for f in facts] == [new.id]
+
+        # Query before t0: nothing was valid yet
+        assert store.get_facts(as_of=datetime(2025, 12, 1)) == []
+
+    def test_delete_facts_for_cluster(self, store):
+        cluster = Concept(summary="Cluster", concept_type="fact_cluster")
+        store.add_concept(cluster)
+        store.add_fact(Fact(cluster_id=cluster.id, statement="a"))
+        store.add_fact(Fact(cluster_id=cluster.id, statement="b"))
+        store.add_fact(Fact(statement="unrelated"))
+
+        assert store.delete_facts_for_cluster(cluster.id) == 2
+        assert store.get_facts(cluster_id=cluster.id) == []
+        assert len(store.get_facts()) == 1
+
+    def test_update_fact(self, store):
+        fact = Fact(statement="Original", attribute=None)
+        store.add_fact(fact)
+
+        fact.statement = "Updated"
+        fact.attribute = "some attr"
+        store.update_fact(fact)
+
+        retrieved = store.get_fact(fact.id)
+        assert retrieved.statement == "Updated"
+        assert retrieved.attribute == "some attr"
+
+    def test_backfill_facts_from_specifics(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            store = SQLiteMemoryStore(path)
+            cluster = Concept(
+                summary="Legacy cluster",
+                concept_type="fact_cluster",
+                specifics=["TTL is 300s", "Uses Redis"],
+                entity_ids=["tool:redis"],
+            )
+            store.add_concept(cluster)
+
+            # Simulate a pre-facts database: drop the backfill flag and rows
+            store.delete_facts_for_cluster(cluster.id)
+            store.set_metadata("facts_backfill_v1", "")
+            with store._connect() as conn:
+                from sqlalchemy import text
+                conn.execute(text("DELETE FROM metadata WHERE key='facts_backfill_v1'"))
+
+            # Re-opening the store triggers the backfill
+            store2 = SQLiteMemoryStore(path)
+            facts = store2.get_facts(cluster_id=cluster.id)
+            assert len(facts) == 2
+            assert {f.statement for f in facts} == {"TTL is 300s", "Uses Redis"}
+            assert all(f.entity_ids == ["tool:redis"] for f in facts)
+            assert all(f.valid_from == cluster.created_at for f in facts)
+
+            # Backfill is idempotent
+            store3 = SQLiteMemoryStore(path)
+            assert len(store3.get_facts(cluster_id=cluster.id)) == 2
+        finally:
+            os.unlink(path)
+
+    def test_stats_include_fact_counts(self, store):
+        a = Fact(statement="a")
+        b = Fact(statement="b")
+        store.add_fact(a)
+        store.add_fact(b)
+        store.supersede_fact(a.id, b.id)
+
+        stats = store.get_stats()
+        assert stats["facts"] == 2
+        assert stats["active_facts"] == 1
+
+    # =========================================================================
+    # Conflict operations
+    # =========================================================================
+
+    def test_add_and_get_conflict(self, store):
+        conflict = Conflict(
+            kind="fact",
+            fact_a_id="f1",
+            fact_b_id="f2",
+            concept_ids=["cluster1"],
+            description='"TTL is 300s" vs "TTL is 600s"',
+            severity="high",
+        )
+        conflict_id = store.add_conflict(conflict)
+
+        retrieved = store.get_conflict(conflict_id)
+        assert retrieved is not None
+        assert retrieved.kind == "fact"
+        assert retrieved.fact_a_id == "f1"
+        assert retrieved.fact_b_id == "f2"
+        assert retrieved.concept_ids == ["cluster1"]
+        assert retrieved.severity == "high"
+        assert retrieved.status == "open"
+
+    def test_get_conflicts_filters(self, store):
+        store.add_conflict(Conflict(kind="fact", description="a"))
+        store.add_conflict(Conflict(kind="concept", concept_ids=["c1"], description="b"))
+        resolved = Conflict(kind="fact", description="c", status="resolved")
+        store.add_conflict(resolved)
+
+        assert len(store.get_conflicts()) == 3
+        assert len(store.get_conflicts(status="open")) == 2
+        assert len(store.get_conflicts(kind="concept")) == 1
+        assert len(store.get_conflicts(concept_id="c1")) == 1
+        assert store.count_conflicts(status="open") == 2
+
+    def test_update_conflict_lifecycle(self, store):
+        conflict = Conflict(kind="fact", fact_a_id="f1", fact_b_id="f2", description="x")
+        store.add_conflict(conflict)
+
+        from datetime import datetime as _dt
+        conflict.status = "resolved"
+        conflict.resolved_at = _dt.now()
+        conflict.resolution_note = "f2 is current"
+        conflict.resolved_by = "alice"
+        conflict.winning_fact_id = "f2"
+        store.update_conflict(conflict)
+
+        retrieved = store.get_conflict(conflict.id)
+        assert retrieved.status == "resolved"
+        assert retrieved.winning_fact_id == "f2"
+        assert retrieved.resolved_by == "alice"
+        assert retrieved.resolution_note == "f2 is current"
+        assert retrieved.resolved_at is not None
+
+    def test_find_open_conflict_for_facts(self, store):
+        store.add_conflict(Conflict(kind="fact", fact_a_id="f1", fact_b_id="f2"))
+
+        assert store.find_open_conflict_for_facts("f1", "f2") is not None
+        # Order-insensitive
+        assert store.find_open_conflict_for_facts("f2", "f1") is not None
+        assert store.find_open_conflict_for_facts("f1", "f3") is None
+
+    def test_backfill_conflicts_from_concept_dicts(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            store = SQLiteMemoryStore(path)
+            cluster = Concept(
+                summary="Cluster with conflict",
+                concept_type="fact_cluster",
+                specifics=["TTL is 300s", "TTL is 600s"],
+                conflicts=[{
+                    "fact_a": "TTL is 300s",
+                    "fact_b": "TTL is 600s",
+                    "reason": "contradictory values",
+                    "detected_at": "2026-01-01T00:00:00",
+                }],
+            )
+            store.add_concept(cluster)
+            fact_a = Fact(cluster_id=cluster.id, statement="TTL is 300s")
+            fact_b = Fact(cluster_id=cluster.id, statement="TTL is 600s")
+            store.add_fact(fact_a)
+            store.add_fact(fact_b)
+
+            # Simulate a pre-conflicts database: remove the backfill flag
+            with store._connect() as conn:
+                from sqlalchemy import text
+                conn.execute(text("DELETE FROM metadata WHERE key='conflicts_backfill_v1'"))
+                conn.execute(text("DELETE FROM conflicts"))
+
+            store2 = SQLiteMemoryStore(path)
+            conflicts = store2.get_conflicts(status="open")
+            assert len(conflicts) == 1
+            c = conflicts[0]
+            assert c.kind == "fact"
+            assert c.concept_ids == [cluster.id]
+            # Statements resolved to fact row IDs
+            assert {c.fact_a_id, c.fact_b_id} == {fact_a.id, fact_b.id}
+            assert "contradictory values" in c.description
+
+            # Idempotent
+            store3 = SQLiteMemoryStore(path)
+            assert len(store3.get_conflicts()) == 1
+        finally:
+            os.unlink(path)
 
     def test_merge_duplicate_entities_merges_mentions_and_relations(self, store):
         canonical = Entity(id="other:act", type=EntityType.OTHER, display_name="act")

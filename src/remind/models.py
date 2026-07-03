@@ -298,6 +298,158 @@ class Relation:
 
 
 @dataclass
+class Fact:
+    """
+    A single factual assertion with temporal validity and provenance.
+
+    Facts are first-class rows (not strings inside a concept) so that
+    supersession is structural: when a fact is updated, the old row's
+    validity window is closed and points at its replacement. This makes
+    "as of" queries and conflict resolution deterministic.
+    """
+
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+
+    # FK to the fact_cluster Concept this fact belongs to
+    cluster_id: Optional[str] = None
+
+    # The factual assertion, verbatim (e.g. "Cache TTL is 300s")
+    statement: str = ""
+
+    # What the fact is about, for supersession matching (e.g. "cache TTL")
+    attribute: Optional[str] = None
+
+    # Entity IDs this fact references
+    entity_ids: list[str] = field(default_factory=list)
+
+    # Validity window: valid_to is None while the fact is current.
+    valid_from: datetime = field(default_factory=datetime.now)
+    valid_to: Optional[datetime] = None
+
+    # Fact.id of the replacement when superseded
+    superseded_by: Optional[str] = None
+
+    # Provenance (carried over from the source episode)
+    asserted_by: Optional[str] = None
+    source_ref: Optional[str] = None
+    source_episode_id: Optional[str] = None
+
+    created_at: datetime = field(default_factory=datetime.now)
+
+    @property
+    def is_active(self) -> bool:
+        """True while this fact has not been superseded/expired."""
+        return self.valid_to is None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "cluster_id": self.cluster_id,
+            "statement": self.statement,
+            "attribute": self.attribute,
+            "entity_ids": self.entity_ids,
+            "valid_from": self.valid_from.isoformat(),
+            "valid_to": self.valid_to.isoformat() if self.valid_to else None,
+            "superseded_by": self.superseded_by,
+            "asserted_by": self.asserted_by,
+            "source_ref": self.source_ref,
+            "source_episode_id": self.source_episode_id,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Fact":
+        return cls(
+            id=data["id"],
+            cluster_id=data.get("cluster_id"),
+            statement=data.get("statement", ""),
+            attribute=data.get("attribute"),
+            entity_ids=data.get("entity_ids", []),
+            valid_from=datetime.fromisoformat(data["valid_from"]) if data.get("valid_from") else datetime.now(),
+            valid_to=datetime.fromisoformat(data["valid_to"]) if data.get("valid_to") else None,
+            superseded_by=data.get("superseded_by"),
+            asserted_by=data.get("asserted_by"),
+            source_ref=data.get("source_ref"),
+            source_episode_id=data.get("source_episode_id"),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+        )
+
+
+@dataclass
+class Conflict:
+    """
+    A detected contradiction with a resolution lifecycle.
+
+    Conflicts are first-class rows so they can be triaged (open →
+    resolved/dismissed) instead of accumulating as dicts inside concepts.
+    Fact conflicts reference the two contradicting fact rows; concept
+    conflicts reference the contradicting concepts.
+    """
+
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+
+    # "fact" (two fact rows contradict) or "concept" (two concepts contradict)
+    kind: str = "fact"
+
+    # For fact conflicts: the two contradicting fact rows
+    fact_a_id: Optional[str] = None
+    fact_b_id: Optional[str] = None
+
+    # Concepts involved (the cluster for fact conflicts; both concepts for concept conflicts)
+    concept_ids: list[str] = field(default_factory=list)
+
+    # Human-readable description of the contradiction
+    description: str = ""
+
+    severity: str = "medium"  # high | medium | low
+
+    status: str = "open"  # open | resolved | dismissed
+
+    created_at: datetime = field(default_factory=datetime.now)
+    resolved_at: Optional[datetime] = None
+    resolution_note: Optional[str] = None
+    resolved_by: Optional[str] = None
+
+    # For resolved fact conflicts: which fact won
+    winning_fact_id: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "fact_a_id": self.fact_a_id,
+            "fact_b_id": self.fact_b_id,
+            "concept_ids": self.concept_ids,
+            "description": self.description,
+            "severity": self.severity,
+            "status": self.status,
+            "created_at": self.created_at.isoformat(),
+            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+            "resolution_note": self.resolution_note,
+            "resolved_by": self.resolved_by,
+            "winning_fact_id": self.winning_fact_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Conflict":
+        return cls(
+            id=data["id"],
+            kind=data.get("kind", "fact"),
+            fact_a_id=data.get("fact_a_id"),
+            fact_b_id=data.get("fact_b_id"),
+            concept_ids=data.get("concept_ids", []),
+            description=data.get("description", ""),
+            severity=data.get("severity", "medium"),
+            status=data.get("status", "open"),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+            resolved_at=datetime.fromisoformat(data["resolved_at"]) if data.get("resolved_at") else None,
+            resolution_note=data.get("resolution_note"),
+            resolved_by=data.get("resolved_by"),
+            winning_fact_id=data.get("winning_fact_id"),
+        )
+
+
+@dataclass
 class Concept:
     """
     A generalized concept extracted from episodic memories.
@@ -492,6 +644,12 @@ class Episode:
     # Origin of this episode (e.g. "agent", "slack", "github", "manual")
     source_type: Optional[str] = None
 
+    # Who asserted this information (e.g. "alice", "person:alice", "agent:cursor")
+    asserted_by: Optional[str] = None
+
+    # Link back to the original artifact (URL/permalink, e.g. Slack message, PR, doc)
+    source_ref: Optional[str] = None
+
     # For retrieval (stored as BLOB, not in JSON data)
     embedding: Optional[list[float]] = None
 
@@ -533,6 +691,8 @@ class Episode:
             "metadata": self.metadata,
             "topic_id": self.topic_id,
             "source_type": self.source_type,
+            "asserted_by": self.asserted_by,
+            "source_ref": self.source_ref,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
         }
     
@@ -573,6 +733,8 @@ class Episode:
             metadata=data.get("metadata", {}),
             topic_id=data.get("topic_id") or data.get("topic"),
             source_type=data.get("source_type"),
+            asserted_by=data.get("asserted_by"),
+            source_ref=data.get("source_ref"),
             deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None,
         )
 

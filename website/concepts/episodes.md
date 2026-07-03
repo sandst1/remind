@@ -14,24 +14,37 @@ Episodes are raw experiences — specific interactions, observations, or decisio
 | `outcome` | Result of an action or strategy | "Grep search for 'auth' missed verify_credentials due to naming" |
 | `fact` | Specific factual assertion to preserve verbatim | "Redis cache TTL is 300 seconds for auth tokens" |
 
-You can configure which types are available via the `episode_types` setting. Custom type names are also supported. See [Configuration](/guide/configuration#episode-types).
+You can configure which types are available via the `episode_types` setting. See [Configuration](/guide/configuration#episode-types).
 
 ## Lifecycle
 
-Episodes are **temporary by design**. The lifecycle:
+Episodes go through these stages:
 
-1. **Created** via `remember()` or `ingest()` — `remember` is fast with no LLM calls; `ingest` buffers and triages automatically
-2. **Entity extraction** — during consolidation, entities and types are extracted
-3. **Consolidated** — episodes are generalized into concepts
-4. **Marked consolidated** — the episode is flagged so it isn't processed again
+1. **Created** via `remember()` — fast, with local embeddings by default
+2. **Pending** — awaiting agent review
+3. **Processed** — agent has either created a concept from it or marked it as reviewed
 
-The episode still exists in the database after consolidation, but it's been "digested" into generalized knowledge. You can always inspect the original episodes that contributed to a concept.
+The agent decides what to do with episodes via `snapshot` (read pending state) and `apply` (create concepts, mark processed).
 
 ## Topics and source types
 
-Episodes can be tagged with a **topic** — a knowledge area that groups related memories (e.g., `"architecture"`, `"product"`, `"infra"`). Topics scope consolidation and retrieval, reducing noise in large memory graphs.
+Episodes can be tagged with a **topic** — a knowledge area that groups related memories (e.g., `"architecture"`, `"product"`). Topics scope retrieval, reducing noise in large memory graphs.
 
-Episodes can also carry a **source type** — the origin of the memory (e.g., `"agent"`, `"slack"`, `"github"`, `"manual"`). This tracks lineage without attributing to individuals.
+## Provenance
+
+Episodes carry optional provenance: **who** asserted the information and **where** it came from.
+
+| Field | Example | Purpose |
+|-------|---------|---------|
+| `asserted_by` | `alice`, `agent:cursor` | Who made the assertion |
+| `source_ref` | Slack permalink, PR URL | Link back to the original artifact |
+
+```bash
+remind remember "Cache TTL is 600 seconds" -t fact \
+  --asserted-by alice --source-ref "https://team.slack.com/archives/..."
+```
+
+Provenance flows through to fact rows and shows up in recall output. It's what makes [conflict resolution](/concepts/facts-and-conflicts#conflict-lifecycle) decidable — competing claims can be weighed by who said them and when.
 
 ## Storing episodes
 
@@ -41,20 +54,20 @@ Episodes can also carry a **source type** — the origin of the memory (e.g., `"
 remind remember "User likes Python and Rust"
 remind remember "Chose PostgreSQL for the user store" -t decision
 remind remember "All API routes need authentication" -t fact -e module:auth
-remind remember "Use event sourcing for audit trail" --topic architecture --source-type agent
+remind remember "Use event sourcing for audit trail" --topic architecture
 ```
 
 ```python [Python]
 memory.remember("User likes Python and Rust")
 memory.remember("Chose PostgreSQL", episode_type=EpisodeType.DECISION)
 memory.remember("All API routes need auth", episode_type=EpisodeType.FACT, entities=["module:auth"])
-memory.remember("Use event sourcing", topic="architecture", source_type="agent")
+memory.remember("Use event sourcing", topic="architecture")
 ```
 
 ```text [MCP]
 remember(content="User likes Python and Rust")
 remember(content="Chose PostgreSQL", episode_type="decision")
-remember(content="Use event sourcing for audit trail", topic="architecture", source_type="agent")
+remember(content="Use event sourcing", topic="architecture")
 ```
 
 :::
@@ -69,31 +82,31 @@ Episodes can be tagged with entities to build a navigable knowledge graph. Entit
 | `function` | `function:handleLogin` |
 | `class` | `class:UserService` |
 | `person` | `person:alice` |
-| `concept` | `concept:caching` |
+| `subject` | `subject:caching`, `subject:login-flow` |
 | `tool` | `tool:redis`, `tool:postgres` |
 | `project` | `project:backend-api` |
 | `module` | `module:auth`, `module:billing` |
-| `subject` | `subject:login-flow` |
-
-Entities are also extracted automatically during consolidation — you don't always need to tag them manually.
 
 ## Fact episodes
 
-Fact episodes capture specific factual assertions — concrete values, configuration details, names, dates, and technical specifics that should be preserved verbatim through consolidation rather than generalized away.
+Fact episodes capture specific factual assertions — concrete values, configuration details, names, dates, and technical specifics.
 
 ```bash
-remind remember "Redis cache TTL is 300 seconds for auth tokens" -t fact -e tool:redis,concept:auth
+remind remember "Redis cache TTL is 300 seconds" -t fact -e tool:redis
 remind remember "Production database runs on port 5432" -t fact
-remind remember "API rate limit is 100 requests/second per tenant" -t fact
+remind remember "API rate limit is 100 requests/second" -t fact
 ```
 
-Facts differ from observations: an observation like "Redis seems fast" may generalize during consolidation, but a fact like "Redis TTL is 300s" is preserved exactly in concept summaries.
+When you store a fact, Remind:
+1. Clusters it by entity overlap with existing facts
+2. Detects collisions with active facts in the cluster
+3. Returns collision info for the agent to handle
 
-Auto-ingest (`ingest()`) also detects facts automatically from raw conversation data (config values, version numbers, concrete technical details).
+See [Fact Pipeline](/concepts/auto-ingest) for details.
 
 ## Outcome episodes
 
-Outcome episodes record the result of an action or strategy, closing the feedback loop. They use structured metadata:
+Outcome episodes record the result of an action or strategy. They use structured metadata:
 
 | Metadata field | Values | Purpose |
 |----------------|--------|---------|
@@ -106,17 +119,21 @@ remind remember "Grep search missed auth function due to naming" -t outcome \
   -m '{"strategy":"grep search for auth","result":"partial","prediction_error":"high"}'
 ```
 
-During consolidation, outcome episodes produce causal concepts with `causes` relations — e.g., "grep-based search is unreliable when function names don't match the domain term."
-
-Auto-ingest (`ingest()`) detects action-result pairs automatically and creates outcome episodes without manual tagging.
-
 ## Managing episodes
 
 ```bash
-# Update content (resets for re-consolidation)
+# View pending episodes
+remind snapshot pending
+
+# Mark as processed (via apply)
+remind apply << 'EOF'
+processed ids=ep:11,ep:12
+EOF
+
+# Update content
 remind update-episode <id> -c "Corrected information"
 
-# Move to another topic (ID or name, same as remember) or clear
+# Move to another topic
 remind update-episode <id> --topic architecture
 remind update-episode <id> --clear-topic
 

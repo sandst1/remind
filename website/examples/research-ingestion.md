@@ -1,10 +1,10 @@
 # Research Ingestion
 
-Feed research papers into Remind and use consolidation to find commonalities, contradictions, and themes across sources. Instead of reading each paper in isolation, Remind builds a connected knowledge graph across all of them.
+Feed research papers into Remind and have your agent curate them into a connected knowledge graph. Instead of reading each paper in isolation, the agent surfaces commonalities, contradictions, and themes across sources.
 
 ## The problem
 
-You read 10 papers on a topic. Each one has insights, but finding the threads that connect them — the agreements, the contradictions, the gaps — requires holding all of them in your head simultaneously. That's exactly what consolidation is for.
+You read 10 papers on a topic. Each one has insights, but finding the threads that connect them — the agreements, the contradictions, the gaps — requires holding all of them in your head simultaneously. That's what your agent can do with Remind.
 
 ## Setup
 
@@ -16,117 +16,109 @@ cd ~/research/llm-memory
 remind skill-install
 ```
 
-Optionally create a topic so you can group this survey and scope recall later. Topics are **explicit**: Remind does not infer or auto-assign them. If you omit a topic, episodes stay untagged (`topic_id` unset). If you pass `--topic` to `remember` or `ingest`, that name must match an existing topic (create it first).
+Optionally create a topic to group this survey:
 
 ```bash
-remind topics create "LLM memory survey" --description "Papers on agent memory architectures"
+remind apply << 'EOF'
+topic name="LLM memory survey" "Papers on agent memory architectures"
+EOF
 ```
 
-**Episode types** (the types Remind understands for classification and consolidation):
+**Episode types**:
 
-- `observation` — default for factual summaries and findings from a paper
-- `decision` — when you record a methodological or interpretive choice
+- `observation` — factual summaries and findings from a paper
+- `decision` — methodological or interpretive choices
 - `question` — open research questions or gaps
-- `meta` — notes about the reading process, comparisons, or survey structure
-- `preference` — stance or weighting (e.g. favoring one design over another)
-- `outcome` — result of an experiment or evaluation described in the paper
-- `fact` — specific numbers, claims, or definitions that should stay verbatim in concepts
+- `fact` — specific numbers, claims, or definitions that should stay verbatim
+- `outcome` — result of an experiment or evaluation
 
 ## Walkthrough
 
-### Ingesting papers
+### Storing paper findings
 
-For each paper, have the agent read it and store key findings as episodes. Add `--topic` with your topic id or name when you want episodes grouped (optional).
+For each paper, have the agent read it and store key findings as episodes:
 
 ```bash
 # Paper 1: "Generative Agents" (Park et al.)
 remind remember "Generative Agents uses a retrieval-based memory with recency, \
   importance, and relevance scoring. Agents reflect on memories to form \
   higher-level abstractions." \
-  -t observation -e person:park -e concept:memory-architecture \
+  -t observation -e person:park -e subject:memory-architecture \
   --topic "llm-memory-survey"
 
 remind remember "Generative Agents reflection mechanism: periodically ask \
   'what are the most salient high-level questions?' and generate insights" \
-  -t observation -e concept:reflection -e concept:generative-agents \
+  -t observation -e subject:reflection -e subject:generative-agents \
   --topic "llm-memory-survey"
 
 # Paper 2: "MemGPT" (Packer et al.)
 remind remember "MemGPT treats context window as 'working memory' and uses \
   explicit read/write to a larger 'archival memory'. Inspired by OS virtual \
   memory paging." \
-  -t observation -e person:packer -e concept:memory-architecture \
-  --topic "llm-memory-survey"
-
-remind remember "MemGPT key insight: LLMs can manage their own memory if given \
-  tools to page information in and out of context" \
-  -t observation -e concept:memgpt -e concept:self-managed-memory \
+  -t observation -e person:packer -e subject:memory-architecture \
   --topic "llm-memory-survey"
 
 # Paper 3: "Voyager" (Wang et al.)
 remind remember "Voyager stores learned skills as code in a 'skill library'. \
-  Retrieval matches skills by description similarity. Skills compose and build on \
-  each other." \
-  -t observation -e person:wang -e concept:skill-library -e concept:voyager \
-  --topic "llm-memory-survey"
-
-remind remember "Voyager demonstrates that executable code can serve as a \
-  memory representation — more precise than natural language for procedural \
-  knowledge" \
-  -t observation -e concept:memory-representation -e concept:voyager \
+  Retrieval matches skills by description similarity." \
+  -t observation -e person:wang -e subject:skill-library -e subject:voyager \
   --topic "llm-memory-survey"
 ```
 
-To auto-ingest raw excerpts instead of hand-picking sentences, pass the same optional `--topic` so every extracted episode from that ingest gets the tag — still no implicit topic guessing:
+### Agent curates themes
+
+After ingesting several papers, the agent reviews pending episodes and creates concepts:
 
 ```bash
-cat paper-notes.txt | remind ingest --topic "llm-memory-survey"
+# See what needs review
+remind snapshot pending
+
+# Create cross-paper concepts
+remind apply << 'EOF'
+concept from=ep:1,ep:3 title="Two-tier memory architecture" "Current LLM memory systems share a two-tier architecture: fast working memory (context window) + slower persistent storage, differing mainly in how they manage the boundary"
+concept from=ep:4 title="Code as memory representation" "Executable code can serve as a memory representation — more precise than natural language for procedural knowledge"
+link source=$c1 type=implies target=$c2
+processed ids=ep:1,ep:2,ep:3,ep:4
+EOF
 ```
-
-### Consolidation surfaces themes
-
-```bash
-remind consolidate --force
-```
-
-After ingesting several papers, consolidation might produce:
-
-> **"Current LLM memory systems share a two-tier architecture: fast working memory (context window) + slower persistent storage, differing mainly in how they manage the boundary"**
-> - Confidence: 0.85
-> - Source: Generative Agents, MemGPT, Voyager
-> - Relations: generalizes → specific observations about each system
-
-> **"There is a spectrum of memory representations from natural language (Generative Agents) to structured code (Voyager), with a tradeoff between expressiveness and precision"**
-> - Relations: contradicts → "Natural language is the universal memory format"
-
-> **"All surveyed systems lack true generalization — they store and retrieve specific memories rather than consolidating into abstract knowledge"**
-> - Confidence: 0.7
-> - Relations: implies → "Gap in the literature for consolidation-based memory"
 
 ### Querying across papers
 
 ```bash
 remind recall "how do different systems handle memory retrieval?"
 remind recall "memory representation tradeoffs"
-remind recall "limitations" --entity concept:memory-architecture
+remind recall "limitations" --entity subject:memory-architecture
 remind recall "retrieval tradeoffs" --topic "llm-memory-survey"
-remind entities  # See all papers, concepts, and their connections
+```
+
+### Recording contradictions
+
+When papers disagree, the agent can create conflicts:
+
+```bash
+remind remember "Paper A claims 64-shot is optimal" -t fact -e subject:few-shot
+remind remember "Paper B claims 8-shot performs equally well" -t fact -e subject:few-shot
+
+# If collision is detected, agent can open a conflict
+remind apply << 'EOF'
+conflict fact_a=fact:abc fact_b=fact:def severity=medium
+EOF
 ```
 
 ## The result
 
-Here's what the entity graph looks like after ingesting several ML papers — concepts, models, techniques, and their relationships, all extracted and linked automatically:
+Here's what the entity graph looks like after ingesting several ML papers:
 
 ![Entity graph from research paper ingestion](/ui-entity-graph.png)
 
-And the concepts view showing generalized knowledge with confidence, conditions, exceptions, and relations:
+And the concepts view showing curated knowledge:
 
 ![Concepts extracted from papers](/ui-concepts.png)
 
 ## What you get
 
 - **Cross-paper synthesis** — Themes and patterns that span multiple sources
-- **Contradiction detection** — Where papers disagree, flagged automatically
-- **Gap identification** — What the literature doesn't address
+- **Contradiction tracking** — Where papers disagree, flagged as conflicts
+- **Gap identification** — Open questions captured as `question` episodes
 - **Entity graph** — Navigate from an author to their contributions, from a concept to all papers that discuss it
-- **Persistent knowledge base** — Come back months later and recall the synthesis, not just individual paper notes
+- **Persistent knowledge base** — Come back months later and recall the synthesis

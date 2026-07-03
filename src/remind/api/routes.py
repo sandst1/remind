@@ -176,6 +176,11 @@ async def get_concept_detail(request: Request) -> JSONResponse:
             if condition_refs:
                 result["conditions_refs"] = condition_refs
 
+        # For fact clusters, include the fact rows (active + superseded history)
+        if concept.concept_type == "fact_cluster":
+            facts = memory.store.get_facts(cluster_id=concept.id)
+            result["facts"] = [f.to_dict() for f in facts]
+
         return JSONResponse(result)
     except Exception as e:
         logger.exception("Failed to get concept")
@@ -848,74 +853,6 @@ async def execute_query(request: Request) -> JSONResponse:
 
 
 # =============================================================================
-# Chat
-# =============================================================================
-
-CHAT_SYSTEM_PROMPT = """You are a helpful assistant with access to the user's memory system.
-Answer questions based on the provided memory context.
-Be concise and direct. If the memory doesn't contain relevant information, say so.
-Do not make up information that isn't in the provided context."""
-
-
-async def stream_chat(request: Request):
-    """Stream a chat response using the LLM with memory context."""
-    memory, error = await _get_memory_from_request(request)
-    if error:
-        return error
-
-    try:
-        body = await request.json()
-        messages = body.get("messages", [])
-        context = body.get("context", "")
-
-        if not messages:
-            return JSONResponse(
-                {"error": "Missing 'messages' in request body"},
-                status_code=400,
-            )
-
-        # Build the system prompt with memory context
-        system_prompt = CHAT_SYSTEM_PROMPT
-        if context:
-            system_prompt += f"\n\n{context}"
-
-        # Convert messages to the format expected by the LLM provider
-        chat_messages = [
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in messages
-        ]
-
-        async def generate():
-            try:
-                async for chunk in memory.llm.complete_stream(
-                    messages=chat_messages,
-                    system=system_prompt,
-                    temperature=0.7,
-                    max_tokens=2048,
-                ):
-                    # Send as SSE format
-                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-                # Signal completion
-                yield f"data: {json.dumps({'done': True})}\n\n"
-            except Exception as e:
-                logger.exception("Error during chat streaming")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-
-        return StreamingResponse(
-            generate(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-    except Exception as e:
-        logger.exception("Failed to start chat stream")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-# =============================================================================
 # Databases
 # =============================================================================
 
@@ -1074,6 +1011,111 @@ async def api_delete_topic(request: Request) -> JSONResponse:
 
 
 # =============================================================================
+# Conflicts
+# =============================================================================
+
+
+def _conflict_with_context(memory, conflict) -> dict:
+    """Serialize a conflict with its facts and concept titles for display."""
+    data = conflict.to_dict()
+
+    for key, fact_id in (("fact_a", conflict.fact_a_id), ("fact_b", conflict.fact_b_id)):
+        if fact_id:
+            fact = memory.store.get_fact(fact_id)
+            data[key] = fact.to_dict() if fact else None
+        else:
+            data[key] = None
+
+    concepts_data = []
+    for concept_id in conflict.concept_ids:
+        concept = memory.store.get_concept(concept_id)
+        if concept:
+            concepts_data.append({
+                "id": concept.id,
+                "title": concept.title,
+                "summary": concept.summary[:150],
+                "concept_type": concept.concept_type,
+            })
+    data["concepts"] = concepts_data
+    return data
+
+
+async def get_conflicts(request: Request) -> JSONResponse:
+    """Get conflicts, filterable by status (default open) and kind."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    try:
+        status = request.query_params.get("status", "open")
+        if status == "all":
+            status = None
+        kind = request.query_params.get("kind")
+
+        conflicts = memory.list_conflicts(status=status, kind=kind)
+        return JSONResponse({
+            "conflicts": [_conflict_with_context(memory, c) for c in conflicts],
+            "open_count": memory.store.count_conflicts(status="open"),
+        })
+    except Exception as e:
+        logger.exception("Failed to get conflicts")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def resolve_conflict_route(request: Request) -> JSONResponse:
+    """Resolve a conflict; for fact conflicts, body must name the winning fact."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    conflict_id = request.path_params.get("id")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    try:
+        conflict = await memory.resolve_conflict(
+            conflict_id,
+            winning_fact_id=body.get("winning_fact_id"),
+            note=body.get("note"),
+            resolved_by=body.get("resolved_by"),
+        )
+        return JSONResponse(_conflict_with_context(memory, conflict))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.exception("Failed to resolve conflict")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def dismiss_conflict_route(request: Request) -> JSONResponse:
+    """Dismiss a conflict (both claims valid, different contexts)."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+
+    conflict_id = request.path_params.get("id")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    try:
+        conflict = await memory.dismiss_conflict(
+            conflict_id,
+            note=body.get("note"),
+            resolved_by=body.get("resolved_by"),
+        )
+        return JSONResponse(_conflict_with_context(memory, conflict))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.exception("Failed to dismiss conflict")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# =============================================================================
 # Route definitions
 # =============================================================================
 
@@ -1104,13 +1146,16 @@ api_routes = [
     # Graph
     Route("/api/v1/graph", get_graph, methods=["GET"]),
     Route("/api/v1/entity-graph", get_entity_graph, methods=["GET"]),
-    # Query/Chat
+    # Query
     Route("/api/v1/query", execute_query, methods=["POST"]),
-    Route("/api/v1/chat", stream_chat, methods=["POST"]),
     # Databases
     Route("/api/v1/databases", list_databases, methods=["GET"]),
     # Config
     Route("/api/v1/config", get_config, methods=["GET"]),
+    # Conflicts
+    Route("/api/v1/conflicts", get_conflicts, methods=["GET"]),
+    Route("/api/v1/conflicts/{id}/resolve", resolve_conflict_route, methods=["POST"]),
+    Route("/api/v1/conflicts/{id}/dismiss", dismiss_conflict_route, methods=["POST"]),
     # Topics
     Route("/api/v1/topics", api_get_topics, methods=["GET"]),
     Route("/api/v1/topics", api_create_topic, methods=["POST"]),

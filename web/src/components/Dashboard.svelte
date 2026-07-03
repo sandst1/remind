@@ -129,30 +129,20 @@
     </div>
 
     <div class="section">
-      <h3>Consolidation Status</h3>
+      <h3>Pending Review</h3>
       <div class="consolidation-status">
         {#if $stats.unconsolidated_episodes > 0}
           <div class="status-item pending">
             <AlertCircle size={20} />
             <div>
               <span class="status-count">{$stats.unconsolidated_episodes}</span>
-              <span class="status-label">episodes pending consolidation</span>
+              <span class="status-label">episodes awaiting curation</span>
             </div>
           </div>
         {:else}
           <div class="status-item ok">
             <CheckCircle size={20} />
-            <span>All episodes consolidated</span>
-          </div>
-        {/if}
-
-        {#if $stats.unextracted_episodes > 0}
-          <div class="status-item pending">
-            <AlertCircle size={20} />
-            <div>
-              <span class="status-count">{$stats.unextracted_episodes}</span>
-              <span class="status-label">episodes pending entity extraction</span>
-            </div>
+            <span>All episodes processed</span>
           </div>
         {/if}
       </div>

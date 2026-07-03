@@ -279,6 +279,12 @@
             {/if}
             <div class="episode-footer">
               <span class="episode-id">ID: {episode.id}</span>
+              {#if episode.asserted_by}
+                <span class="episode-provenance" title="Who asserted this">by {episode.asserted_by}</span>
+              {/if}
+              {#if episode.source_ref}
+                <a class="episode-source-ref" href={episode.source_ref} target="_blank" rel="noopener noreferrer" title={episode.source_ref}>source</a>
+              {/if}
               {#if episode.confidence < 1}
                 <span class="episode-confidence">
                   Confidence: {Math.round(episode.confidence * 100)}%
@@ -589,6 +595,19 @@
   
   .episode-id {
     font-family: var(--font-mono);
+  }
+
+  .episode-provenance {
+    font-style: italic;
+  }
+
+  .episode-source-ref {
+    color: var(--color-text-muted);
+    text-decoration: underline;
+  }
+
+  .episode-source-ref:hover {
+    color: var(--color-text);
   }
 
   .delete-btn {

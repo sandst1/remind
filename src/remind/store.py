@@ -37,7 +37,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from remind.models import (
-    Concept, Episode, Relation, RelationType,
+    Concept, Conflict, Episode, Fact, Relation, RelationType,
     Entity, EntityType, EntityRelation, EpisodeType,
     Topic, canonicalize_entity_name,
 )
@@ -182,6 +182,104 @@ class MemoryStore(ABC):
     @abstractmethod
     def get_concepts_by_type(self, concept_type: str) -> list[Concept]:
         """Get all concepts of a specific type (pattern, fact_cluster, legacy)."""
+        ...
+
+    # Fact operations
+    @abstractmethod
+    def add_fact(self, fact: Fact) -> str:
+        """Add a fact row and return its ID."""
+        ...
+
+    @abstractmethod
+    def add_facts_batch(self, facts: list[Fact]) -> list[str]:
+        """Add multiple facts in a single transaction. Returns fact IDs."""
+        ...
+
+    @abstractmethod
+    def get_fact(self, id: str) -> Optional[Fact]:
+        """Get a fact by ID."""
+        ...
+
+    @abstractmethod
+    def get_facts(
+        self,
+        cluster_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        active_only: bool = False,
+        as_of: Optional[datetime] = None,
+        limit: int = 500,
+    ) -> list[Fact]:
+        """Get facts, optionally filtered.
+
+        Args:
+            cluster_id: Only facts belonging to this fact_cluster concept.
+            entity_id: Only facts referencing this entity.
+            active_only: Only facts with an open validity window (valid_to IS NULL).
+            as_of: Only facts valid at this point in time
+                   (valid_from <= as_of < valid_to). Overrides active_only.
+            limit: Maximum number of facts returned (newest valid_from first).
+        """
+        ...
+
+    @abstractmethod
+    def update_fact(self, fact: Fact) -> None:
+        """Update an existing fact row."""
+        ...
+
+    @abstractmethod
+    def supersede_fact(
+        self,
+        old_fact_id: str,
+        new_fact_id: str,
+        at: Optional[datetime] = None,
+    ) -> bool:
+        """Structurally supersede a fact: close the old fact's validity
+        window (valid_to = *at*) and point it at its replacement.
+
+        Returns True if the old fact was found and superseded.
+        """
+        ...
+
+    @abstractmethod
+    def delete_facts_for_cluster(self, cluster_id: str) -> int:
+        """Delete all facts belonging to a cluster. Returns count deleted."""
+        ...
+
+    # Conflict operations
+    @abstractmethod
+    def add_conflict(self, conflict: Conflict) -> str:
+        """Add a conflict row and return its ID."""
+        ...
+
+    @abstractmethod
+    def get_conflict(self, id: str) -> Optional[Conflict]:
+        """Get a conflict by ID."""
+        ...
+
+    @abstractmethod
+    def get_conflicts(
+        self,
+        status: Optional[str] = None,
+        kind: Optional[str] = None,
+        concept_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[Conflict]:
+        """Get conflicts, optionally filtered by status, kind, or involved concept."""
+        ...
+
+    @abstractmethod
+    def update_conflict(self, conflict: Conflict) -> None:
+        """Update an existing conflict row."""
+        ...
+
+    @abstractmethod
+    def count_conflicts(self, status: str = "open") -> int:
+        """Count conflicts with the given status."""
+        ...
+
+    @abstractmethod
+    def find_open_conflict_for_facts(self, fact_a_id: str, fact_b_id: str) -> Optional[Conflict]:
+        """Find an open fact conflict involving this pair (order-insensitive)."""
         ...
 
     # Embedding-based retrieval
@@ -507,10 +605,11 @@ class MemoryStore(ABC):
         self,
         include_episodes: bool = True,
         include_concepts: bool = True,
+        include_entities: bool = True,
     ) -> dict[str, int]:
         """Clear stored embeddings for selected record types.
 
-        Returns counts for cleared concept and episode rows.
+        Returns counts for cleared concept, episode, and entity rows.
         """
         ...
 
@@ -551,6 +650,22 @@ class MemoryStore(ABC):
     @abstractmethod
     def get_stats(self) -> dict:
         """Get storage statistics."""
+        ...
+
+    # Transaction support
+    @abstractmethod
+    def transaction(self):
+        """Context manager for transaction scope.
+        
+        All operations within the context are executed in a single transaction.
+        Commits on successful exit, rolls back on exception.
+        
+        Usage:
+            with store.transaction():
+                store.add_episode(ep1)
+                store.add_episode(ep2)
+                # Both commit together, or neither does
+        """
         ...
 
 
@@ -649,6 +764,39 @@ entity_relations_table = Table(
     PrimaryKeyConstraint("source_id", "target_id", "relation_type"),
 )
 
+facts_table = Table(
+    "facts", metadata_obj,
+    Column("id", String, primary_key=True),
+    Column("cluster_id", String, ForeignKey("concepts.id", ondelete="CASCADE"), nullable=True),
+    Column("statement", Text, nullable=False),
+    Column("attribute", Text, nullable=True),
+    Column("entity_ids", Text, default="[]"),
+    Column("valid_from", DateTime, nullable=False),
+    Column("valid_to", DateTime, nullable=True),
+    Column("superseded_by", String, nullable=True),
+    Column("asserted_by", Text, nullable=True),
+    Column("source_ref", Text, nullable=True),
+    Column("source_episode_id", String, nullable=True),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
+conflicts_table = Table(
+    "conflicts", metadata_obj,
+    Column("id", String, primary_key=True),
+    Column("kind", String, nullable=False, server_default="fact"),
+    Column("fact_a_id", String, nullable=True),
+    Column("fact_b_id", String, nullable=True),
+    Column("concept_ids", Text, default="[]"),
+    Column("description", Text, nullable=False, server_default=""),
+    Column("severity", String, nullable=False, server_default="medium"),
+    Column("status", String, nullable=False, server_default="open"),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("resolved_at", DateTime, nullable=True),
+    Column("resolution_note", Text, nullable=True),
+    Column("resolved_by", Text, nullable=True),
+    Column("winning_fact_id", String, nullable=True),
+)
+
 metadata_table = Table(
     "metadata", metadata_obj,
     Column("key", String, primary_key=True),
@@ -669,6 +817,10 @@ Index("idx_mentions_entity", mentions_table.c.entity_id)
 Index("idx_entity_relations_source", entity_relations_table.c.source_id)
 Index("idx_entity_relations_target", entity_relations_table.c.target_id)
 Index("idx_entity_relations_episode", entity_relations_table.c.source_episode_id)
+Index("idx_facts_cluster", facts_table.c.cluster_id)
+Index("idx_facts_valid_to", facts_table.c.valid_to)
+Index("idx_facts_valid_from", facts_table.c.valid_from)
+Index("idx_conflicts_status", conflicts_table.c.status)
 
 
 def _is_sqlite(engine) -> bool:
@@ -722,6 +874,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
     """
 
     def __init__(self, db_url: str = "sqlite:///memory.db"):
+        import threading
+        
         if db_url.endswith(".db") and "://" not in db_url:
             db_url = f"sqlite:///{db_url}"
 
@@ -731,6 +885,9 @@ class SQLAlchemyMemoryStore(MemoryStore):
         # Vector backend state
         self._vec_backend: Optional[str] = None  # "sqlite-vec", "pgvector", or None
         self._vec_dimensions: Optional[int] = None
+        
+        # Transaction state (thread-local for safety)
+        self._local = threading.local()
 
         self._setup_vector_backend()
         self._init_db()
@@ -759,16 +916,131 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     @contextmanager
     def _connect(self):
-        """Context manager that yields a connection and auto-commits on success."""
+        """Context manager that yields a connection and auto-commits on success.
+        
+        When inside a transaction() block, reuses the transaction connection
+        and defers commit until the transaction exits.
+        """
+        # Check if we're inside a transaction
+        tx_conn = getattr(self._local, 'tx_conn', None)
+        if tx_conn is not None:
+            # Reuse transaction connection, don't commit
+            yield tx_conn
+            return
+        
+        # Normal mode: create new connection and auto-commit
         with self.engine.connect() as conn:
             yield conn
             conn.commit()
+    
+    @contextmanager
+    def transaction(self):
+        """Context manager for transaction scope.
+        
+        All operations within the context are executed in a single transaction.
+        Commits on successful exit, rolls back on exception.
+        
+        Usage:
+            with store.transaction():
+                store.add_episode(ep1)
+                store.add_episode(ep2)
+                # Both commit together, or neither does
+        """
+        # Prevent nested transactions
+        if getattr(self._local, 'tx_conn', None) is not None:
+            raise RuntimeError("Nested transactions are not supported")
+        
+        with self.engine.begin() as conn:
+            self._local.tx_conn = conn
+            try:
+                yield
+                # engine.begin() auto-commits on successful context exit
+            finally:
+                self._local.tx_conn = None
 
     def _init_db(self):
         """Create tables and run additive migrations."""
         metadata_obj.create_all(self.engine)
         self._run_migrations()
         self._init_vector_tables()
+        self._backfill_facts_from_specifics()
+        self._backfill_conflicts_from_concepts()
+
+    def _backfill_facts_from_specifics(self) -> None:
+        """One-time backfill: turn legacy fact_cluster `specifics` strings
+        into first-class fact rows.
+
+        Legacy facts get valid_from = cluster.created_at (best available
+        approximation) and inherit the cluster's entity_ids. Guarded by a
+        metadata flag so it runs once per database.
+        """
+        if self.get_metadata("facts_backfill_v1"):
+            return
+
+        facts: list[Fact] = []
+        for concept in self.get_all_concepts():
+            if concept.concept_type != "fact_cluster" or not concept.specifics:
+                continue
+            if self.get_facts(cluster_id=concept.id, limit=1):
+                continue  # already has fact rows
+            for statement in concept.specifics:
+                facts.append(Fact(
+                    cluster_id=concept.id,
+                    statement=statement,
+                    entity_ids=list(concept.entity_ids),
+                    valid_from=concept.created_at,
+                    created_at=concept.created_at,
+                ))
+
+        if facts:
+            self.add_facts_batch(facts)
+            logger.info(f"Backfilled {len(facts)} facts from legacy fact_cluster specifics")
+
+        self.set_metadata("facts_backfill_v1", "done")
+
+    def _backfill_conflicts_from_concepts(self) -> None:
+        """One-time backfill: turn legacy `Concept.conflicts` dicts into
+        open conflict rows. Fact statements are matched to fact rows by
+        exact statement when possible. Guarded by a metadata flag.
+        """
+        if self.get_metadata("conflicts_backfill_v1"):
+            return
+
+        migrated = 0
+        for concept in self.get_all_concepts():
+            if not concept.conflicts:
+                continue
+            cluster_facts = self.get_facts(cluster_id=concept.id, limit=1000)
+            by_statement = {f.statement: f for f in cluster_facts}
+            for entry in concept.conflicts:
+                fact_a = entry.get("fact_a", "")
+                fact_b = entry.get("fact_b", "")
+                reason = entry.get("reason", "")
+                description = f'"{fact_a}" vs "{fact_b}"'
+                if reason:
+                    description += f": {reason}"
+                fact_a_id = entry.get("fact_a_id") or (by_statement[fact_a].id if fact_a in by_statement else None)
+                fact_b_id = entry.get("fact_b_id") or (by_statement[fact_b].id if fact_b in by_statement else None)
+                created_at = datetime.now()
+                if entry.get("detected_at"):
+                    try:
+                        created_at = datetime.fromisoformat(entry["detected_at"])
+                    except ValueError:
+                        pass
+                self.add_conflict(Conflict(
+                    kind="fact",
+                    fact_a_id=fact_a_id,
+                    fact_b_id=fact_b_id,
+                    concept_ids=[concept.id],
+                    description=description,
+                    created_at=created_at,
+                ))
+                migrated += 1
+
+        if migrated:
+            logger.info(f"Backfilled {migrated} conflicts from legacy concept conflict dicts")
+
+        self.set_metadata("conflicts_backfill_v1", "done")
 
     def _run_migrations(self):
         """Run additive schema migrations for backwards compatibility."""
@@ -1180,6 +1452,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
     def purge_concept(self, id: str) -> bool:
         with self._connect() as conn:
             self._delete_vec_concept(conn, id)
+            # SQLite doesn't enforce FK cascades by default; clean up fact rows explicitly
+            conn.execute(facts_table.delete().where(facts_table.c.cluster_id == id))
             result = conn.execute(
                 concepts_table.delete().where(concepts_table.c.id == id)
             )
@@ -2393,6 +2667,234 @@ class SQLAlchemyMemoryStore(MemoryStore):
         return [c for c in all_concepts if c.concept_type == concept_type]
 
     # ------------------------------------------------------------------
+    # Fact operations
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _fact_insert_values(fact: Fact) -> dict:
+        return {
+            "id": fact.id,
+            "cluster_id": fact.cluster_id,
+            "statement": fact.statement,
+            "attribute": fact.attribute,
+            "entity_ids": json.dumps(fact.entity_ids),
+            "valid_from": fact.valid_from,
+            "valid_to": fact.valid_to,
+            "superseded_by": fact.superseded_by,
+            "asserted_by": fact.asserted_by,
+            "source_ref": fact.source_ref,
+            "source_episode_id": fact.source_episode_id,
+            "created_at": fact.created_at,
+        }
+
+    @staticmethod
+    def _row_to_fact(row) -> Fact:
+        entity_ids_raw = row.entity_ids or "[]"
+        try:
+            entity_ids = json.loads(entity_ids_raw) if isinstance(entity_ids_raw, str) else (entity_ids_raw or [])
+        except (json.JSONDecodeError, TypeError):
+            entity_ids = []
+        return Fact(
+            id=row.id,
+            cluster_id=row.cluster_id,
+            statement=row.statement or "",
+            attribute=row.attribute,
+            entity_ids=entity_ids,
+            valid_from=row.valid_from,
+            valid_to=row.valid_to,
+            superseded_by=row.superseded_by,
+            asserted_by=row.asserted_by,
+            source_ref=row.source_ref,
+            source_episode_id=row.source_episode_id,
+            created_at=row.created_at or datetime.now(),
+        )
+
+    def add_fact(self, fact: Fact) -> str:
+        with self._connect() as conn:
+            conn.execute(facts_table.insert().values(**self._fact_insert_values(fact)))
+        return fact.id
+
+    def add_facts_batch(self, facts: list[Fact]) -> list[str]:
+        if not facts:
+            return []
+        with self._connect() as conn:
+            conn.execute(
+                facts_table.insert(),
+                [self._fact_insert_values(f) for f in facts],
+            )
+        return [f.id for f in facts]
+
+    def get_fact(self, id: str) -> Optional[Fact]:
+        with self._connect() as conn:
+            row = conn.execute(
+                select(facts_table).where(facts_table.c.id == id)
+            ).fetchone()
+            return self._row_to_fact(row) if row else None
+
+    def get_facts(
+        self,
+        cluster_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        active_only: bool = False,
+        as_of: Optional[datetime] = None,
+        limit: int = 500,
+    ) -> list[Fact]:
+        query = select(facts_table)
+        if cluster_id is not None:
+            query = query.where(facts_table.c.cluster_id == cluster_id)
+        if entity_id is not None:
+            # entity_ids is a JSON array serialized as text; match the quoted ID
+            query = query.where(facts_table.c.entity_ids.like(f'%"{entity_id}"%'))
+        if as_of is not None:
+            query = query.where(facts_table.c.valid_from <= as_of)
+            query = query.where(
+                (facts_table.c.valid_to.is_(None)) | (facts_table.c.valid_to > as_of)
+            )
+        elif active_only:
+            query = query.where(facts_table.c.valid_to.is_(None))
+        query = query.order_by(facts_table.c.valid_from.desc()).limit(limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(query).fetchall()
+            return [self._row_to_fact(row) for row in rows]
+
+    def update_fact(self, fact: Fact) -> None:
+        values = self._fact_insert_values(fact)
+        values.pop("id")
+        with self._connect() as conn:
+            conn.execute(
+                facts_table.update().where(facts_table.c.id == fact.id).values(**values)
+            )
+
+    def supersede_fact(
+        self,
+        old_fact_id: str,
+        new_fact_id: str,
+        at: Optional[datetime] = None,
+    ) -> bool:
+        at = at or datetime.now()
+        with self._connect() as conn:
+            result = conn.execute(
+                facts_table.update()
+                .where(facts_table.c.id == old_fact_id)
+                .values(valid_to=at, superseded_by=new_fact_id)
+            )
+            return result.rowcount > 0
+
+    def delete_facts_for_cluster(self, cluster_id: str) -> int:
+        with self._connect() as conn:
+            result = conn.execute(
+                facts_table.delete().where(facts_table.c.cluster_id == cluster_id)
+            )
+            return result.rowcount
+
+    # ------------------------------------------------------------------
+    # Conflict operations
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _conflict_values(conflict: Conflict) -> dict:
+        return {
+            "kind": conflict.kind,
+            "fact_a_id": conflict.fact_a_id,
+            "fact_b_id": conflict.fact_b_id,
+            "concept_ids": json.dumps(conflict.concept_ids),
+            "description": conflict.description,
+            "severity": conflict.severity,
+            "status": conflict.status,
+            "created_at": conflict.created_at,
+            "resolved_at": conflict.resolved_at,
+            "resolution_note": conflict.resolution_note,
+            "resolved_by": conflict.resolved_by,
+            "winning_fact_id": conflict.winning_fact_id,
+        }
+
+    @staticmethod
+    def _row_to_conflict(row) -> Conflict:
+        concept_ids_raw = row.concept_ids or "[]"
+        try:
+            concept_ids = json.loads(concept_ids_raw) if isinstance(concept_ids_raw, str) else (concept_ids_raw or [])
+        except (json.JSONDecodeError, TypeError):
+            concept_ids = []
+        return Conflict(
+            id=row.id,
+            kind=row.kind or "fact",
+            fact_a_id=row.fact_a_id,
+            fact_b_id=row.fact_b_id,
+            concept_ids=concept_ids,
+            description=row.description or "",
+            severity=row.severity or "medium",
+            status=row.status or "open",
+            created_at=row.created_at or datetime.now(),
+            resolved_at=row.resolved_at,
+            resolution_note=row.resolution_note,
+            resolved_by=row.resolved_by,
+            winning_fact_id=row.winning_fact_id,
+        )
+
+    def add_conflict(self, conflict: Conflict) -> str:
+        with self._connect() as conn:
+            conn.execute(
+                conflicts_table.insert().values(id=conflict.id, **self._conflict_values(conflict))
+            )
+        return conflict.id
+
+    def get_conflict(self, id: str) -> Optional[Conflict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                select(conflicts_table).where(conflicts_table.c.id == id)
+            ).fetchone()
+            return self._row_to_conflict(row) if row else None
+
+    def get_conflicts(
+        self,
+        status: Optional[str] = None,
+        kind: Optional[str] = None,
+        concept_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[Conflict]:
+        query = select(conflicts_table)
+        if status is not None:
+            query = query.where(conflicts_table.c.status == status)
+        if kind is not None:
+            query = query.where(conflicts_table.c.kind == kind)
+        if concept_id is not None:
+            # concept_ids is a JSON array serialized as text; match the quoted ID
+            query = query.where(conflicts_table.c.concept_ids.like(f'%"{concept_id}"%'))
+        query = query.order_by(conflicts_table.c.created_at.desc()).limit(limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(query).fetchall()
+            return [self._row_to_conflict(row) for row in rows]
+
+    def update_conflict(self, conflict: Conflict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                conflicts_table.update()
+                .where(conflicts_table.c.id == conflict.id)
+                .values(**self._conflict_values(conflict))
+            )
+
+    def count_conflicts(self, status: str = "open") -> int:
+        with self._connect() as conn:
+            return conn.execute(
+                select(func.count()).select_from(conflicts_table)
+                .where(conflicts_table.c.status == status)
+            ).scalar() or 0
+
+    def find_open_conflict_for_facts(self, fact_a_id: str, fact_b_id: str) -> Optional[Conflict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                select(conflicts_table)
+                .where(conflicts_table.c.status == "open")
+                .where(
+                    ((conflicts_table.c.fact_a_id == fact_a_id) & (conflicts_table.c.fact_b_id == fact_b_id))
+                    | ((conflicts_table.c.fact_a_id == fact_b_id) & (conflicts_table.c.fact_b_id == fact_a_id))
+                )
+            ).fetchone()
+            return self._row_to_conflict(row) if row else None
+
+    # ------------------------------------------------------------------
     # Entity relation operations
     # ------------------------------------------------------------------
 
@@ -2600,9 +3102,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
         self,
         include_episodes: bool = True,
         include_concepts: bool = True,
+        include_entities: bool = True,
     ) -> dict[str, int]:
         cleared_concepts = 0
         cleared_episodes = 0
+        cleared_entities = 0
 
         with self._connect() as conn:
             if include_concepts:
@@ -2639,9 +3143,27 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     except OperationalError:
                         pass
 
+            if include_entities:
+                result = conn.execute(
+                    entities_table.update().values(embedding=None)
+                )
+                cleared_entities = result.rowcount or 0
+
+                if self._vec_backend == "sqlite-vec":
+                    try:
+                        conn.execute(text("DELETE FROM vec_entities"))
+                    except OperationalError:
+                        pass
+                elif self._vec_backend == "pgvector":
+                    try:
+                        conn.execute(text("UPDATE entities SET embedding_vec = NULL"))
+                    except OperationalError:
+                        pass
+
         return {
             "concepts_cleared": cleared_concepts,
             "episodes_cleared": cleared_episodes,
+            "entities_cleared": cleared_entities,
         }
 
     # ------------------------------------------------------------------
@@ -2740,6 +3262,17 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 select(func.count()).select_from(entity_relations_table)
             ).scalar()
 
+            fact_count = conn.execute(select(func.count()).select_from(facts_table)).scalar()
+            active_fact_count = conn.execute(
+                select(func.count()).select_from(facts_table)
+                .where(facts_table.c.valid_to.is_(None))
+            ).scalar()
+
+            open_conflict_count = conn.execute(
+                select(func.count()).select_from(conflicts_table)
+                .where(conflicts_table.c.status == "open")
+            ).scalar()
+
             entity_relation_types = conn.execute(
                 select(entity_relations_table.c.relation_type, func.count().label("count"))
                 .group_by(entity_relations_table.c.relation_type)
@@ -2795,6 +3328,9 @@ class SQLAlchemyMemoryStore(MemoryStore):
             "mentions": mention_count,
             "relations": relation_count,
             "entity_relations": entity_relation_count,
+            "facts": fact_count,
+            "active_facts": active_fact_count,
+            "open_conflicts": open_conflict_count,
             "unconsolidated_episodes": unconsolidated_count,
             "unextracted_episodes": unextracted_count,
             "relation_types": {row.type: row.count for row in relation_types},

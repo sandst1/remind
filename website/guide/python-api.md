@@ -6,18 +6,13 @@ Use Remind as a library in your own Python applications.
 
 ```python
 import asyncio
-from dotenv import load_dotenv
 from remind import create_memory, EpisodeType
 
-load_dotenv()
-
 async def main():
-    memory = create_memory(
-        llm_provider="openai",          # or "anthropic", "azure_openai", "ollama"
-        embedding_provider="openai",    # or "azure_openai", "ollama"
-    )
+    # Uses local embeddings by default — no API keys needed
+    memory = create_memory()
 
-    # Log experiences — fast, no LLM calls
+    # Log experiences — fast, no external calls
     memory.remember("User mentioned they prefer Python for backend work")
     memory.remember("User is building a distributed system")
     memory.remember("User values type safety")
@@ -28,11 +23,16 @@ async def main():
 
     # Topic-scoped episodes
     memory.remember("Use event sourcing for audit trail", topic="architecture")
-    memory.remember("Users want offline mode", topic="product", source_type="slack")
 
-    # Run consolidation — this is where the LLM does its work
-    result = await memory.consolidate(force=True)
-    print(f"Created {result.concepts_created} concepts")
+    # Fact episodes — clustered automatically, collisions detected
+    result = memory.remember(
+        "Redis TTL is 300s for auth tokens",
+        episode_type=EpisodeType.FACT,
+        entities=["tool:redis"],
+        asserted_by="alice",
+    )
+    if result.collisions:
+        print(f"Collision detected with: {result.collisions}")
 
     # Retrieve relevant concepts
     context = await memory.recall("What programming preferences?")
@@ -41,54 +41,112 @@ async def main():
     # Topic-scoped retrieval
     context = await memory.recall("database design", topic="architecture")
 
-    # Explore topics
-    topics = memory.list_topics()
-    overview = memory.get_topic_overview("architecture")
+    # Time-travel: facts valid at a past point in time
+    context = await memory.recall("cache configuration", as_of="2024-06-01")
 
 asyncio.run(main())
 ```
 
-## Auto-ingest
+## Fact episodes and collisions
 
-Stream raw text and let Remind decide what's worth remembering:
+Facts are handled deterministically:
 
 ```python
-# Stream conversation fragments — no topic → episodes get topic_id=None
-await memory.ingest("User: How should we handle rate limiting?")
-await memory.ingest("Assistant: I'd suggest a token bucket at the gateway...")
+# Store a fact
+result = memory.remember(
+    "Redis TTL is 600s",
+    episode_type=EpisodeType.FACT,
+    entities=["tool:redis"],
+    asserted_by="alice",
+    source_ref="https://github.com/org/repo/pull/42",
+)
 
-# With explicit topic — all episodes assigned to "architecture"
-await memory.ingest("Chose Redis for caching", topic="architecture")
-
-# With instructions — steer what gets extracted
-await memory.ingest(transcript, instructions="extract all config values and version numbers")
-await memory.ingest(meeting_notes, instructions="focus on decisions and risks")
-
-# At session end, flush remaining buffer
-await memory.flush_ingest()
+# Check what happened
+print(f"Fact ID: {result.fact_id}")
+print(f"Cluster ID: {result.cluster_id}")
+print(f"New cluster: {result.cluster_created}")
+print(f"Collisions: {result.collisions}")
 ```
 
-`ingest()` buffers text until a threshold (~4000 chars) is reached, then runs **triage**: an LLM extracts memory-worthy episodes. A density score may be produced for logging only; extraction is not gated by a numeric threshold. When `topic` is given, all episodes go to that topic. When omitted, episodes get `topic_id=None` — no automatic inference. When `instructions` is given, the triage LLM uses those instructions to decide what to extract — useful for focused ingestion of meeting notes, transcripts, or documentation. Use `remember()` when you already know what's important; use `ingest()` when you want the triage LLM to filter and distill.
-
-## Fact and outcome episodes
+When a fact collides with existing facts (same entities, different statements), the collision is reported but NOT auto-resolved. Handle it via `apply()`:
 
 ```python
-# Facts: concrete values preserved verbatim through consolidation
-memory.remember("Redis TTL is 300s for auth tokens", episode_type=EpisodeType.FACT)
+# Get collisions that need resolution
+snapshot = await memory.snapshot(["conflicts"])
+for conflict in snapshot["conflicts"]:
+    print(f"Conflict: {conflict['description']}")
+    print(f"Facts: {conflict['fact_ids']}")
+```
 
-# Outcomes: action-result pairs for causal pattern learning
-memory.remember(
-    "Grep search for 'auth' missed verify_credentials",
-    episode_type=EpisodeType.OUTCOME,
-    metadata={"strategy": "grep search", "result": "partial", "prediction_error": "high"},
+## Batch operations with apply
+
+Use `apply()` for transactional curation:
+
+```python
+# Compact format
+result = await memory.apply("""
+remember as=f1 t=fact e=tool:redis "Cache TTL is 600s"
+supersede old=fact:abc123 new=$f1
+concept from=ep:11,ep:12 title="Redis config" "TTL-based caching"
+processed ids=ep:11,ep:12
+""")
+
+# JSON format
+result = await memory.apply([
+    {"op": "remember", "as": "f1", "t": "fact", "content": "Cache TTL is 600s", "e": ["tool:redis"]},
+    {"op": "supersede", "old": "fact:abc123", "new": "$f1"},
+])
+
+# Check results
+for op_result in result.results:
+    print(f"{op_result.op}: {op_result.status}")
+```
+
+## Batch reads with snapshot
+
+Use `snapshot()` to read current memory state:
+
+```python
+# See what needs review
+snapshot = await memory.snapshot(["pending", "conflicts"])
+print(f"Pending episodes: {len(snapshot['pending'])}")
+print(f"Open conflicts: {len(snapshot['conflicts'])}")
+
+# Entity detail
+snapshot = await memory.snapshot(["entity:tool:redis"])
+print(f"Facts about Redis: {snapshot['entity']}")
+
+# Semantic search
+snapshot = await memory.snapshot(["query:cache configuration"])
+print(f"Matching concepts: {snapshot['query_results']}")
+```
+
+## Conflict resolution
+
+```python
+# List open conflicts
+conflicts = memory.list_conflicts(status="open")
+
+# Resolve: winner stays, loser is superseded
+await memory.resolve_conflict(
+    conflict_id,
+    winning_fact_id=fact_id,
+    note="confirmed in prod config",
+    resolved_by="alice",
+)
+
+# Dismiss: both valid in different contexts
+await memory.dismiss_conflict(
+    conflict_id,
+    note="both true: staging vs prod",
 )
 ```
 
 ## Key design decisions
 
-- **`remember()` is synchronous and fast** — No LLM calls, just stores the episode. This keeps the write path non-blocking.
-- **`ingest()` is async with LLM triage** — Buffers raw text, extracts memory-worthy episodes, and consolidates automatically. Episodes get `topic_id=None` unless you pass a `topic`.
-- **`consolidate()` is async** — This is where all LLM work happens (extraction, generalization). Call it explicitly or let auto-consolidation handle it.
+- **`remember()` is synchronous and fast** — No external calls (local embeddings), just stores the episode. For facts, returns collision info.
+- **`snapshot()` is async** — Batch read for current memory state.
+- **`apply()` is async** — Transactional batch writes.
 - **`recall()` is async** — Uses embeddings and spreading activation.
 
 ## Database and project config
@@ -96,31 +154,29 @@ memory.remember(
 ```python
 from pathlib import Path
 
-# Default db_path "memory" → ~/.remind/memory.db (not the same default as the CLI)
+# Default db_path "memory" → ~/.remind/memory.db
 memory = create_memory()
 
 # Named SQLite under ~/.remind/
 memory = create_memory(db_path="my-project")
 
-# Any SQLAlchemy URL (PostgreSQL, MySQL, etc.) — overrides db_path
+# Any SQLAlchemy URL (PostgreSQL, MySQL, etc.)
 memory = create_memory(db_url="postgresql+psycopg://user:pass@localhost:5432/remind")
 
-# Load <project>/.remind/remind.config.json (and merge with global config / env)
+# Load <project>/.remind/remind.config.json
 memory = create_memory(project_dir=Path("/path/to/myproject"))
 ```
 
-`db_url` in `remind.config.json` or `REMIND_DB_URL` is used when you do not pass `db_url` to `create_memory()`. See [Configuration](/guide/configuration#database) for driver extras and URL examples.
-
 ## Provider selection
 
-Providers can be set via `create_memory()`, config file, or environment variables:
+Embeddings default to local (`all-MiniLM-L6-v2`). For remote embeddings:
 
 ```python
-# Explicit
-memory = create_memory(llm_provider="anthropic", embedding_provider="openai")
+# OpenAI embeddings
+memory = create_memory(embedding_provider="openai")
 
 # From config file / env vars
-memory = create_memory()  # Uses ~/.remind/remind.config.json or env vars
+memory = create_memory()  # Uses ~/.remind/remind.config.json
 ```
 
 See [Configuration](/guide/configuration) and [Providers](/reference/providers) for all options.

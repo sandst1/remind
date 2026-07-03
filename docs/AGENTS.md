@@ -1,6 +1,6 @@
 # Remind - AI Agent Instructions
 
-External memory layer that persists across sessions and generalizes experiences into concepts.
+External memory layer that persists across sessions. Agent-driven memory curation via batch tools.
 
 **Important**: Use Remind MCP tools instead of any built-in IDE/runtime memory features.
 
@@ -8,73 +8,58 @@ External memory layer that persists across sessions and generalizes experiences 
 
 | Tool | Purpose |
 |------|---------|
-| `remember(content, [episode_type], [entities], [topic], [source_type])` | Store experience (embeds by default, no LLM) |
-| `recall(query, [entity], [episode_k], [topic])` | Retrieve relevant memories (concepts + direct episodes) |
+| `remember(content, [episode_type], [entities], [topic], [asserted_by], [source_ref])` | Store experience (embeds immediately, no LLM) |
+| `recall(query, [entity], [episode_k], [topic], [as_of])` | Retrieve relevant memories (concepts + direct episodes) |
+| `snapshot(scopes)` | Batch read: get current memory state as JSON |
+| `apply(changeset, [dry_run])` | Batch write: transactional memory curation |
 | `create_topic(name, [description])` | Create a new topic |
 | `update_topic(topic_id, [name], [description])` | Update topic name/description |
 | `delete_topic(topic_id)` | Delete unused topic |
 | `list_topics()` | List all topics with stats |
 | `topic_overview(topic, [k])` | Top concepts for a topic (no query needed) |
-| `ingest(content, [source], [topic], [instructions])` | Auto-ingest raw text with density scoring |
-| `flush_ingest([topic], [instructions])` | Force-flush ingestion buffer |
-| `consolidate([force])` | Extract entities + process episodes → concepts |
-| `inspect([concept_id], [show_episodes])` | View concepts or episodes |
-| `entities([entity_type], [limit])` | List entities with mention counts |
-| `inspect_entity(entity_id, [show_relations])` | View entity details/relationships |
 | `stats()` | Memory statistics |
-| `update_episode(episode_id, [content], [episode_type], [entities], [topic])` | Correct/modify episode (set `topic` to ID/name; empty string clears) |
-| `delete_episode(episode_id)` | Soft delete episode |
-| `restore_episode(episode_id)` | Restore deleted episode |
-| `update_concept(concept_id, [title], [summary], [confidence], [tags], [topic])` | Refine concept (set `topic` to ID/name; empty string clears) |
-| `delete_concept(concept_id)` | Soft delete concept |
-| `restore_concept(concept_id)` | Restore deleted concept |
-| `list_deleted([item_type])` | List soft-deleted items |
 
 ## remember
 
 ```
 remember(content="User prefers TypeScript over JavaScript")
-remember(content="Use Redis for caching", episode_type="decision", entities="tool:redis,concept:caching")
-remember(content="Chose SQLite for zero-dep deploys", topic="architecture", source_type="agent")
+remember(content="Use Redis for caching", episode_type="decision", entities="tool:redis,subject:caching")
+remember(content="Chose SQLite for zero-dep deploys", topic="architecture")
+remember(content="Cache TTL is 300s", episode_type="fact", entities="tool:redis", asserted_by="alice", source_ref="https://github.com/org/repo/pull/42")
 ```
 
 **Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
 
-**Topics**: Knowledge areas that group related memories (e.g., `"architecture"`, `"product"`, `"infra"`). Scopes consolidation and retrieval. Use `list_topics()` to see what exists.
+**Topics**: Knowledge areas that group related memories (e.g., `"architecture"`, `"product"`, `"infra"`). Use `list_topics()` to see what exists.
 
-**Source types**: Origin of the memory (e.g., `"agent"`, `"slack"`, `"github"`, `"manual"`).
+**Provenance**: Use `asserted_by` and `source_ref` to track who stated a fact and where it came from.
 
 **When to use**: User preferences, project context, decisions+rationale, open questions, corrections, specific facts
 **Skip**: Trivial info, already-captured knowledge, raw conversation logs
 
-## ingest
+### Fact Episodes
+
+Use `fact` type for specific factual assertions — concrete values that should be preserved verbatim:
 
 ```
-ingest(content="User: Fix the auth bug\nAssistant: Looking at verify_credentials...")
-ingest(content="<raw tool output>", source="tool_output")
-ingest(content="Chose Postgres for JSONB support", topic="architecture")
-ingest(content="<meeting transcript>", instructions="extract decisions and action items")
+remember(content="Redis cache TTL is 300 seconds", episode_type="fact", entities="tool:redis")
+remember(content="Production database runs on port 5432", episode_type="fact")
+remember(content="API rate limit is 100 requests/second", episode_type="fact")
 ```
 
-Streams raw text into Remind's auto-ingest pipeline. Text buffers internally (~4000 chars) then gets scored for information density and distilled into episodes automatically. Use `flush_ingest()` at session end to process remaining buffer.
+Facts are automatically clustered by entity overlap and stored as first-class rows with validity windows. When a new fact overlaps with existing facts, `remember` returns collision information for you to handle via `apply`.
 
-**Topic behavior**:
-- **With `topic`**: All extracted episodes are assigned to the given topic.
-- **Without `topic`**: Episodes get no topic assignment (`topic_id=None`).
+### Collision Handling
 
-**Instructions**: Pass `instructions` to steer what the triage LLM extracts. For example, `"focus on architectural decisions"` or `"extract all config values and version numbers"`. Instructions are appended to the triage system prompt and take priority over default extraction behavior.
+When you store a fact that might conflict with existing facts, `remember` returns:
+- `fact_id` — the new fact's ID
+- `cluster_id` — the fact cluster it was assigned to
+- `collisions` — existing active facts with entity overlap
 
-**`ingest()` vs `remember()`**: Use `remember()` when you've already decided what's worth storing. Use `ingest()` when you want Remind to decide — it filters, scores, and distills automatically.
-
-## flush_ingest
-
-```
-flush_ingest()
-flush_ingest(topic="architecture")
-flush_ingest(instructions="extract only action items")
-```
-
-Forces processing of whatever text is in the ingestion buffer, regardless of threshold. Pass `topic` to assign all flushed episodes to a specific topic; omit for no topic assignment. Pass `instructions` to steer extraction (same as `ingest()`).
+You decide how to handle collisions:
+- **Supersede**: Use `apply` with `supersede` op if the new fact replaces an old one
+- **Conflict**: Use `apply` with `conflict` op if both facts are valid but contradictory
+- **Ignore**: Do nothing if the facts are compatible
 
 ## recall
 
@@ -84,207 +69,193 @@ recall(query="auth", entity="file:src/auth.ts") # Entity-specific
 recall(query="auth", episode_k=10)              # More direct episode matches
 recall(query="auth", episode_k=0)               # Concepts only, no episode search
 recall(query="database design", topic="architecture")  # Topic-scoped
+recall(query="cache config", as_of="2024-06-01")  # Time-travel: facts as of date
 ```
 
 Recall returns two layers of results:
 - **RELEVANT EPISODES** — Direct episode matches via embedding similarity (controlled by `episode_k`, default: 5, set to 0 to disable)
-- **RELEVANT MEMORY** — Concept matches via spreading activation, each showing source episodes, entity context, contradicting concepts, and superseded/superseding concepts
+- **RELEVANT MEMORY** — Concept matches via spreading activation, each showing source episodes, entity context, and conflicts
 
 When `topic` is set, initial matches are filtered to that topic. Cross-topic results can still surface via spreading activation but are penalized.
 
+**Time-travel**: Use `as_of` (ISO date or datetime) to see fact_cluster concepts with the facts that were valid at that point in time, instead of current ones.
+
+## snapshot
+
+Batch read returning current memory state as JSON. Combine scopes in a single call:
+
+```
+snapshot(scopes="pending")                    # Unprocessed episodes with entities
+snapshot(scopes="conflicts")                  # Open conflicts with fact context
+snapshot(scopes="pending,conflicts")          # Both at once
+snapshot(scopes="entity:tool:redis")          # All data for an entity
+snapshot(scopes="topic:architecture")         # All data for a topic
+snapshot(scopes="concept:abc123")             # Concept detail with facts/history
+snapshot(scopes="recent:20")                  # 20 most recent episodes
+snapshot(scopes="stats")                      # Memory statistics
+snapshot(scopes="query:cache config")         # Semantic search (concepts only)
+```
+
+**Scopes**:
+- `pending` — Episodes not yet processed, with their entities
+- `conflicts` — Open conflicts with both facts and provenance
+- `entity:<id>` — Entity detail with episodes and fact clusters
+- `topic:<id>` — Topic detail with all episodes and concepts
+- `concept:<id>` — Concept detail including superseded fact history
+- `recent:<n>` — N most recent episodes
+- `stats` — Memory statistics
+- `query:<text>` — Semantic search for concepts
+
+Use `snapshot` to inspect memory state before curating with `apply`.
+
+## apply
+
+Batch write for transactional memory curation. All-or-nothing; returns per-op results.
+
+### Compact Format (preferred for agents)
+
+One op per line, shlex tokenization, `key=value` args, trailing quoted string = content/note:
+
+```
+remember as=f1 t=fact e=tool:redis by=alice "Cache TTL is 600 seconds"
+supersede old=fact:a91c2 new=$f1
+remember as=o1 t=outcome e=subject:auth "SameSite=Strict broke OAuth; Lax required"
+concept as=c1 from=ep:11,ep:12 title="Retry with backoff" "Transient failures resolve with backoff"
+resolve id=conflict:7 winner=fact:b3d01 "confirmed by bob"
+processed ids=ep:11,ep:12
+```
+
+**Ops**:
+- `remember` — Store episode (same as tool, but batched)
+- `supersede old=<fact_id> new=<fact_id>` — Replace old fact with new
+- `conflict fact_a=<id> fact_b=<id> [severity=<high|medium|low>]` — Open a conflict
+- `resolve id=<conflict_id> winner=<fact_id> [note]` — Resolve conflict (winner supersedes loser)
+- `dismiss id=<conflict_id> [note]` — Dismiss conflict (both facts stay active)
+- `concept title=<title> from=<ep_ids> [relations]` — Create concept from episodes
+- `update id=<id> [field=value...]` — Update episode/concept fields
+- `link source=<concept_id> type=<relation> target=<concept_id>` — Add concept relation
+- `topic name=<name> [description]` — Create topic
+- `set_topic id=<id> topic=<topic_id>` — Assign topic to episode/concept
+- `delete id=<id>` — Soft delete
+- `restore id=<id>` — Restore deleted item
+- `processed ids=<ep_id,ep_id,...>` — Mark episodes as reviewed
+
+**Local refs**: Use `as=name` to declare, `$name` to reference within the changeset.
+
+**Dry run**: Pass `dry_run=true` to validate without executing.
+
+### JSON Format (programmatic)
+
+```json
+[
+  {"op": "remember", "as": "f1", "t": "fact", "content": "Cache TTL is 600s",
+   "e": ["tool:redis"], "by": "alice"},
+  {"op": "supersede", "old": "fact:a91c2", "new": "$f1"},
+  {"op": "resolve", "id": "conflict:7", "winner": "fact:b3d01", "note": "confirmed"}
+]
+```
+
+## Curation Workflow
+
+Memory curation is agent-driven. The typical flow:
+
+**1. Capture during work**:
+```
+remember(content="Rate limiting is at gateway level", topic="architecture")
+remember(content="Max connections is 100", episode_type="fact", entities="tool:postgres")
+```
+
+**2. Review pending state**:
+```
+snapshot(scopes="pending,conflicts")
+```
+
+**3. Curate with apply**:
+```
+apply(changeset="""
+concept from=ep:11,ep:12 title="Gateway handles rate limits" "All rate limiting at gateway"
+resolve id=conflict:3 winner=fact:abc "newer config value"
+processed ids=ep:11,ep:12
+""")
+```
+
+This replaces the old LLM-based consolidation with explicit agent judgment.
+
 ## Topics
 
-Topics are first-class managed entities that group related memories. Each topic has an ID (slug), name, and description.
+Topics are first-class managed entities that group related memories.
 
 ```
-create_topic(name="Architecture", description="System design decisions and patterns")
-create_topic(name="Product")
+create_topic(name="Architecture", description="System design decisions")
 update_topic(topic_id="architecture", description="Updated description")
 delete_topic(topic_id="old-topic")  # Only works if no episodes/concepts use it
-list_topics()                           # See all topics with stats
-topic_overview(topic="architecture")    # Top concepts for a topic
-topic_overview(topic="product", k=10)   # More results
+list_topics()                       # See all topics with stats
+topic_overview(topic="architecture") # Top concepts for a topic
 ```
 
-When calling `remember()` with a topic, the topic is resolved by ID or name; if no match, the topic is not assigned.
-
-When calling `ingest()` with a topic, all extracted episodes go to that topic. When calling `ingest()` without a topic, episodes get no topic assignment.
-
-When calling `recall()` without a topic, results are grouped by topic showing top N per topic. With a topic, results are filtered to that topic only.
-
-Use topics to browse memory structure before querying. Good workflow: `list_topics()` → `topic_overview(topic)` → `recall(query, topic=topic)`
-
-## consolidate
-
-Runs extraction (entities/types) then generalization (episodes → concepts). Run periodically or at session end.
-
-```
-consolidate()        # Normal (threshold-based)
-consolidate(force=True)  # Force even with few episodes
-```
+Use topics to organize knowledge by domain. Good workflow: `list_topics()` → `topic_overview(topic)` → `recall(query, topic=topic)`
 
 ## Entity Format
 
-`type:name` — Types: `file`, `function`, `class`, `person`, `concept`, `tool`, `project`
+`type:name` — Types: `file`, `function`, `class`, `person`, `subject`, `tool`, `project`
 
-Examples: `file:src/auth.ts`, `person:alice`, `tool:redis`
-
-## Workflow
-
-**Session start**:
-```
-recall("project context")
-recall("user preferences")
-```
-
-**During work**:
-```
-remember("Rate limiting is at gateway level", topic="architecture")
-remember("User wants retry-after headers on 429s", episode_type="preference", topic="product")
-```
-
-**Session end**:
-```
-consolidate(force=True)
-```
+Examples: `file:src/auth.ts`, `person:alice`, `tool:redis`, `subject:caching`
 
 ## Concepts
 
-- **Episodes**: Raw experiences via `remember()` — temporary
-- **Concepts**: Generalized knowledge via `consolidate()` — persistent
+- **Episodes**: Raw experiences via `remember()` — pending until processed
+- **Concepts**: Curated knowledge created via `apply` — persistent
+- **Fact clusters**: Groups of related facts (auto-created for `fact` episodes)
 - **Relations**: `implies`, `contradicts`, `supersedes`, `specializes`, `generalizes`, `causes`, `part_of`
-- **Confidence**: 0.0-1.0 based on supporting episodes
-
-### Concept Types
-
-Concepts come in three types:
-
-- **Pattern concepts**: Generalizations from observations/decisions/outcomes. These abstract patterns across multiple experiences.
-- **Fact clusters**: Groups of related facts, preserved verbatim. Facts are never abstracted away — config values, port numbers, API limits stay exact.
-- **Legacy concepts**: Pre-existing concepts (no type badge in UI).
-
-When using `recall()`:
-- Pattern concepts show a generalized summary with optional evidence quotes
-- Fact clusters show a bulleted list of specific facts
 
 ### Fact Conflicts
 
-Fact conflicts (e.g., two different values for the same config) are flagged but not auto-resolved. The recall output shows conflicts prominently with timestamps so you can decide which is current.
-
-## Managing Memory
-
-### Correcting Episodes
-```
-update_episode(episode_id="abc123", content="Corrected information")
-update_episode(episode_id="abc123", episode_type="decision")
-update_episode(episode_id="abc123", topic="architecture")
-update_episode(episode_id="abc123", topic="")
-```
-
-Note: Updating content resets the episode for re-consolidation. Use `topic` to move the episode to another knowledge area (resolved like `remember()`); an empty string clears the episode's topic.
-
-### Refining Concepts
-```
-update_concept(concept_id="def456", summary="Refined understanding")
-update_concept(concept_id="def456", confidence=0.9, tags="auth,security")
-update_concept(concept_id="def456", topic="product")
-update_concept(concept_id="def456", topic="")
-```
-
-Note: Updating summary clears the embedding (regenerated on next recall). Use `topic` to reassign the concept; an empty string clears its topic.
-
-### Removing Outdated Data
-```
-delete_episode(episode_id="abc123")
-delete_concept(concept_id="def456")
-```
-
-Items are soft-deleted and can be restored:
-```
-list_deleted()                    # See all deleted items
-restore_episode(episode_id="abc123")
-restore_concept(concept_id="def456")
-```
-
-**Important:**
-- Deleting episodes does NOT delete derived concepts
-- Use `inspect(show_episodes=True)` to find episode IDs
-- Use `inspect()` to find concept IDs
-
-## Auto-Ingest Workflow
-
-For continuous memory capture without manual curation:
-
-**During work** — stream raw conversation/output into `ingest()`:
-```
-ingest(content="<conversation fragment or tool output>")
-ingest(content="<architecture discussion>", topic="architecture")
-ingest(content="<meeting notes>", instructions="extract decisions and who owns each action item")
-```
-
-**Session end** — flush remaining buffer:
-```
-flush_ingest()
-```
-
-Remind handles density scoring, distillation, and consolidation automatically. High-density content produces episodes; low-density content (greetings, boilerplate) is dropped. Use `instructions` to focus extraction on specific types of information.
-
-## Fact Episodes
-
-Use `fact` type for specific factual assertions — concrete values that should be preserved verbatim through consolidation:
+When facts contradict (e.g., two different TTL values), conflicts are flagged:
 
 ```
-remember(content="Redis cache TTL is 300 seconds for auth tokens", episode_type="fact", entities="tool:redis,concept:auth")
-remember(content="Production database runs on port 5432", episode_type="fact")
-remember(content="API rate limit is 100 requests/second per tenant", episode_type="fact")
+snapshot(scopes="conflicts")  # See open conflicts
 ```
 
-Facts differ from observations: an observation like "Redis seems fast" may generalize, but a fact like "Redis TTL is 300s" should be preserved exactly. Consolidation retains fact details in concept summaries rather than abstracting them away.
-
-Auto-ingest also detects facts from raw conversation data (config values, version numbers, concrete technical details).
-
-## Outcome Episodes
-
-Use `outcome` type to record action-result pairs:
-
+Then resolve via `apply`:
 ```
-remember(content="Grep search for 'auth' missed verify_credentials", episode_type="outcome", metadata='{"strategy":"grep search","result":"partial","prediction_error":"high"}')
+resolve id=conflict:7 winner=fact:newer "confirmed in latest config"
 ```
 
-Outcome metadata conventions:
-- `strategy` — what approach was used
-- `result` — `success`, `failure`, or `partial`
-- `prediction_error` — `low`, `medium`, or `high` (how surprising the result was)
-
-Auto-ingest detects outcomes automatically from raw conversation data.
+Or dismiss if both are valid in different contexts:
+```
+dismiss id=conflict:7 "different environments"
+```
 
 ## Configuration
 
-### Retrieval Tuning
+### Embedding Provider
 
-`hybrid_keyword_weight` (default: `0.3`, env: `REMIND_HYBRID_KEYWORD_WEIGHT`) — Controls the blend between embedding similarity and keyword overlap in retrieval scoring. Set to `0.0` for pure embedding search, `1.0` for pure keyword matching. The default `0.3` means 70% embedding + 30% keyword overlap, which helps surface exact term matches that embeddings miss.
+Default is local embeddings via `fastembed` (all-MiniLM-L6-v2, 384 dimensions). No API key needed.
+
+For remote embeddings:
+- **OpenAI**: Set `OPENAI_API_KEY` and `embedding_provider: "openai"` in config
+- **Azure OpenAI**: Set credentials and `embedding_provider: "azure_openai"`
+- **Ollama**: Set `embedding_provider: "ollama"` for local Ollama
 
 ### Vector Search
 
 Remind uses native vector indexes when available:
-- **SQLite**: `sqlite-vec` is included as a dependency and used automatically
-- **PostgreSQL**: Install with `pip install "remind-mcp[postgres]"` which includes `pgvector`
+- **SQLite**: `sqlite-vec` is included and used automatically
+- **PostgreSQL**: Install with `pip install "remind-mcp[postgres]"` for `pgvector`
 
-If neither extension is available, Remind falls back to brute-force cosine similarity in Python.
+Fallback: brute-force cosine similarity in Python.
 
 ## Best Practices
 
 1. Be selective — skip trivial info
 2. Use clear statements — "User prefers tabs" not "tabs"
 3. Tag decisions with `episode_type="decision"`
-4. Track uncertainties with `episode_type="question"`
-5. Use entity recall for specific files/people
-6. Consolidate at natural boundaries
-7. Remember updates to flag contradictions
-8. Delete outdated/incorrect information rather than adding corrections
-9. Use `ingest()` for raw conversation logs instead of `remember()`
-10. Use `outcome` type to close the feedback loop on strategies
-11. Use `fact` type for concrete values, configs, and technical details that must not be generalized
-12. Assign `topic` to organize knowledge by domain — enables scoped retrieval and reduces noise
-13. Use `list_topics()` and `topic_overview()` to explore memory before targeted recall
-14. Reclassify misplaced episodes or concepts with `update_episode` / `update_concept` and `topic` (or clear with `topic=""`)
+4. Use `fact` type for concrete values that must not be generalized
+5. Track provenance with `asserted_by` and `source_ref`
+6. Handle collisions from `remember` — don't ignore them
+7. Use `snapshot` to inspect before curating
+8. Use `apply` for batch curation — it's transactional
+9. Mark episodes as `processed` after review
+10. Resolve or dismiss conflicts explicitly
+11. Assign `topic` to organize knowledge by domain
+12. Use time-travel `as_of` to see historical fact states

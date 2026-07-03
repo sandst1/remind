@@ -1,24 +1,21 @@
 """
-Remind: Generalization-capable memory layer for LLMs.
+Remind: Agent-driven memory layer for LLMs.
 
 A hierarchical memory system featuring:
 - Episodic buffers for raw experiences
 - Semantic concept graphs with typed relations
-- LLM-powered consolidation (generalization from episodes to concepts)
+- Temporal facts with conflict detection
 - Spreading activation retrieval
 
 Basic usage:
     from remind import MemoryInterface, create_memory
     
-    # Quick setup with defaults
-    memory = create_memory(llm_provider="anthropic", embedding_provider="openai")
+    # Quick setup with defaults (local embeddings)
+    memory = create_memory()
     
     # Log experiences
     await memory.remember("User prefers Python for backend development")
     await memory.remember("User works on distributed systems")
-    
-    # Run consolidation (extracts generalized concepts)
-    await memory.consolidate()
     
     # Retrieve relevant context
     context = await memory.recall("What programming languages?")
@@ -27,23 +24,22 @@ Basic usage:
     response = await llm.complete(f"{context}\\n\\nUser: {message}")
 """
 
-__version__ = "0.10.2"
+__version__ = "0.11.0"
 
 # Core models
 from remind.models import (
     Concept,
     ConceptType,
+    Conflict,
     Episode,
+    Fact,
     Relation,
     RelationType,
-    ConsolidationResult,
     Topic,
-    # v2 models
     Entity,
     EntityType,
     EntityRelation,
     EpisodeType,
-    ExtractionResult,
 )
 
 # Storage
@@ -64,17 +60,11 @@ from remind.retrieval import (
     ActivatedConcept,
 )
 
-# Consolidation
-from remind.consolidation import Consolidator
-
 # Providers
 from remind.providers import (
-    LLMProvider,
     EmbeddingProvider,
-    AnthropicLLM,
-    OpenAILLM,
+    LocalEmbedding,
     OpenAIEmbedding,
-    OllamaLLM,
     OllamaEmbedding,
 )
 
@@ -84,16 +74,15 @@ __all__ = [
     # Models
     "Concept",
     "ConceptType",
+    "Conflict",
     "Episode",
+    "Fact",
     "Relation",
     "RelationType",
-    "ConsolidationResult",
-    # v2 models
     "Entity",
     "EntityType",
     "EntityRelation",
     "EpisodeType",
-    "ExtractionResult",
     "Topic",
     # Storage
     "MemoryStore",
@@ -104,14 +93,9 @@ __all__ = [
     # Retrieval
     "MemoryRetriever",
     "ActivatedConcept",
-    # Consolidation
-    "Consolidator",
     # Providers
-    "LLMProvider",
     "EmbeddingProvider",
-    "AnthropicLLM",
-    "OpenAILLM",
+    "LocalEmbedding",
     "OpenAIEmbedding",
-    "OllamaLLM",
     "OllamaEmbedding",
 ]

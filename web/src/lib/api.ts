@@ -1,6 +1,8 @@
 import type {
   Stats,
   Concept,
+  Conflict,
+  ConflictStatus,
   Episode,
   Entity,
   Topic,
@@ -246,6 +248,43 @@ export async function deleteConcept(id: string): Promise<{ success: boolean }> {
 
 export async function restoreConcept(id: string): Promise<{ success: boolean }> {
   return fetchJson(apiUrl(`/concepts/${id}/restore`), { method: 'POST' });
+}
+
+// Conflicts
+
+export interface ConflictsResponse {
+  conflicts: Conflict[];
+  open_count: number;
+}
+
+export async function fetchConflicts(options: {
+  status?: ConflictStatus | 'all';
+  kind?: 'fact' | 'concept';
+} = {}): Promise<ConflictsResponse> {
+  const params: Record<string, string> = {};
+  if (options.status) params.status = options.status;
+  if (options.kind) params.kind = options.kind;
+  return fetchJson<ConflictsResponse>(apiUrl('/conflicts', params));
+}
+
+export async function resolveConflict(
+  id: string,
+  body: { winning_fact_id?: string; note?: string; resolved_by?: string } = {}
+): Promise<Conflict> {
+  return fetchJson<Conflict>(apiUrl(`/conflicts/${id}/resolve`), {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function dismissConflict(
+  id: string,
+  body: { note?: string; resolved_by?: string } = {}
+): Promise<Conflict> {
+  return fetchJson<Conflict>(apiUrl(`/conflicts/${id}/dismiss`), {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 }
 
 // Topics

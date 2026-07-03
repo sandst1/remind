@@ -20,25 +20,67 @@ uvx --from remind-mcp remind --help
 ```bash [Docker]
 git clone https://github.com/sandst1/remind.git
 cd remind
-cp .env.example .env   # Edit with your API keys
 docker compose up -d
 ```
 
 :::
 
-## Configure a provider
+## Zero-config start
 
-Remind needs an LLM provider (for consolidation) and an embedding provider (for retrieval). The simplest setup:
+Remind works out of the box with **local embeddings** (no API keys needed):
+
+```bash
+# Store some experiences
+remind remember "This project uses React with TypeScript"
+remind remember "We chose PostgreSQL for the database" -t decision
+remind remember "Cache TTL is 300s for auth tokens" -t fact -e tool:redis
+
+# Retrieve
+remind recall "What tech stack are we using?"
+```
+
+That's it. Episodes are stored and embedded locally using `all-MiniLM-L6-v2`.
+
+## Fact handling
+
+When you store a fact that might conflict with existing facts, Remind reports collisions:
+
+```bash
+# First fact
+remind remember "Cache TTL is 300s" -t fact -e tool:redis
+
+# Later, a new value
+remind remember "Cache TTL is 600s" -t fact -e tool:redis
+# Output: collision detected with fact:abc123 ("Cache TTL is 300s")
+```
+
+The agent decides what to do: supersede the old fact, open a conflict, or ignore.
+
+## Batch operations
+
+Use `snapshot` and `apply` for batch memory curation:
+
+```bash
+# See what needs review
+remind snapshot pending,conflicts
+
+# Apply a changeset
+remind apply << 'EOF'
+supersede old=fact:abc123 new=fact:def456
+concept from=ep:11,ep:12 title="Redis caching" "TTL-based cache for auth tokens"
+processed ids=ep:11,ep:12
+EOF
+```
+
+## Optional: Remote embeddings
+
+For higher-quality embeddings, configure a remote provider:
 
 Create `~/.remind/remind.config.json`:
 
 ```json
 {
-  "llm_provider": "anthropic",
   "embedding_provider": "openai",
-  "anthropic": {
-    "api_key": "sk-ant-..."
-  },
   "openai": {
     "api_key": "sk-..."
   }
@@ -48,32 +90,15 @@ Create `~/.remind/remind.config.json`:
 Or use environment variables:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
+export REMIND_EMBEDDING_PROVIDER=openai
 ```
 
-See [Configuration](/guide/configuration) for all provider options including Azure OpenAI and Ollama (fully local).
-
-## Your first memory
-
-```bash
-# Store some experiences
-remind remember "This project uses React with TypeScript"
-remind remember "We chose PostgreSQL for the database" -t decision
-remind remember "All API routes need authentication" -t preference
-
-# Consolidate into concepts
-remind consolidate
-
-# Retrieve
-remind recall "What tech stack are we using?"
-```
-
-That's it. Episodes go in, consolidation runs, generalized concepts come out.
+See [Configuration](/guide/configuration) for all provider options including Azure OpenAI and Ollama.
 
 ## Next steps
 
 - **[Skills + CLI](/guide/skills)** — The recommended integration path. Use Remind as a memory primitive inside agent skills.
 - **[MCP Server](/guide/mcp)** — Run Remind as a centralized tool server for IDE agents.
-- **[Core Concepts](/concepts/episodes)** — Understand episodes, consolidation, and the concept graph.
-- **[Examples](/examples/)** — See Remind used for project memory, sparring, and research ingestion.
+- **[Core Concepts](/concepts/episodes)** — Understand episodes, facts, and the concept graph.
+- **[Examples](/examples/)** — See Remind used for project memory, sparring, and research.

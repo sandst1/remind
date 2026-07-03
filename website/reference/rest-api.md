@@ -14,17 +14,35 @@ All endpoints accept a `db` query parameter to select the database.
 curl http://localhost:8765/api/v1/stats?db=my-project
 ```
 
+## Snapshot
+
+**`POST /snapshot`** — Batch read of current memory state.
+
+```bash
+curl -X POST http://localhost:8765/api/v1/snapshot?db=my-project \
+  -H "Content-Type: application/json" \
+  -d '{"scopes": ["pending", "conflicts"]}'
+```
+
+Scopes: `pending`, `conflicts`, `entity:<id>`, `topic:<id>`, `concept:<id>`, `recent:<n>`, `stats`, `query:<text>`.
+
+## Apply
+
+**`POST /apply`** — Transactional batch write.
+
+```bash
+curl -X POST http://localhost:8765/api/v1/apply?db=my-project \
+  -H "Content-Type: application/json" \
+  -d '{"changeset": "remember t=fact e=tool:redis \"Cache TTL is 600s\""}'
+```
+
+See [MCP Tools — apply](/reference/mcp-tools#apply) for the full op vocabulary.
+
 ## Concepts
 
 **`GET /concepts`** — Paginated concept list. Params: `page`, `limit`.
 
-**`GET /concepts/{id}`** — Concept detail with source episodes.
-
-**`POST /concepts/{id}`** — Update a concept.
-
-**`DELETE /concepts/{id}`** — Soft delete a concept.
-
-**`POST /concepts/{id}/restore`** — Restore a deleted concept.
+**`GET /concepts/{id}`** — Concept detail with source episodes. For fact clusters, includes a `facts` array (active facts plus superseded history).
 
 **`GET /concepts/deleted`** — List soft-deleted concepts.
 
@@ -33,12 +51,6 @@ curl http://localhost:8765/api/v1/stats?db=my-project
 **`GET /episodes`** — Paginated episodes. Params: `page`, `limit`, `type`.
 
 **`GET /episodes/{id}`** — Episode detail.
-
-**`POST /episodes/{id}`** — Update an episode.
-
-**`DELETE /episodes/{id}`** — Soft delete an episode.
-
-**`POST /episodes/{id}/restore`** — Restore a deleted episode.
 
 **`GET /episodes/deleted`** — List soft-deleted episodes.
 
@@ -52,13 +64,21 @@ curl http://localhost:8765/api/v1/stats?db=my-project
 
 **`GET /entities/{id}/concepts`** — Concepts derived from this entity's episodes.
 
+## Conflicts
+
+**`GET /conflicts`** — List conflicts. Params: `status` (`open` default, `resolved`, `dismissed`, `all`), `kind` (`fact`, `concept`).
+
+```bash
+curl "http://localhost:8765/api/v1/conflicts?db=my-project&status=open"
+```
+
 ## Graph
 
 **`GET /graph`** — Full concept graph for D3 visualization.
 
 **`GET /graph/entities`** — Entity relationship graph.
 
-## Query and Chat
+## Query
 
 **`POST /query`** — Execute a recall query.
 
@@ -68,18 +88,6 @@ curl -X POST http://localhost:8765/api/v1/query?db=my-project \
   -d '{"query": "authentication approach"}'
 ```
 
-**`POST /chat`** — Streaming chat with memory context (Server-Sent Events).
-
-```bash
-curl -X POST http://localhost:8765/api/v1/chat?db=my-project \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What do we know about auth?"}'
-```
-
 ## Databases
 
 **`GET /databases`** — List available databases in `~/.remind/`.
-
-## Bulk Operations
-
-**`POST /purge`** — Permanently delete all soft-deleted items.

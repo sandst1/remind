@@ -1,18 +1,16 @@
 """
-CLI for Remind - testing and experimentation interface.
+CLI for Remind - agent-driven memory layer.
 
 Commands:
     remind remember "text"       - Add an episode
     remind recall "query"        - Retrieve relevant concepts
-    remind consolidate           - Run consolidation
+    remind snapshot <scopes>     - Read memory state as JSON
+    remind apply <changeset>     - Apply batch changes transactionally
     remind inspect [id]          - View concepts/relations
     remind stats                 - Show memory statistics
-    remind status                - Show processing status (workers, queues)
     remind export <file>         - Export memory to JSON
     remind import <file>         - Import memory from JSON
-    remind ingest "text"         - Auto-ingest (LLM triage; density score diagnostic only)
-    remind flush-ingest          - Force-flush ingestion buffer
-    remind re-embed              - Recompute embeddings for episodes/concepts
+    remind re-embed              - Recompute embeddings
 """
 
 import asyncio
@@ -150,7 +148,10 @@ def _compact_relation_in(rel: Any, store: Any) -> dict[str, Any]:
     }
 
 
-SKILL_NAMES = ["remind"]
+SKILL_NAMES = ["remind-capture", "remind-context", "remind-curate"]
+
+# Old monolithic skill, replaced by the three above. Cleaned up on install.
+LEGACY_SKILL_NAMES = ["remind"]
 
 
 def _read_skill(name: str) -> str:
@@ -159,11 +160,10 @@ def _read_skill(name: str) -> str:
     return ref.read_text(encoding="utf-8")
 
 
-def get_memory(db_path: str, llm: str, embedding: str, project_dir: Optional[Path] = None):
+def get_memory(db_path: str, embedding: str, project_dir: Optional[Path] = None):
     """Create a MemoryInterface with the given settings."""
     from remind.interface import create_memory
     return create_memory(
-        llm_provider=llm,
         embedding_provider=embedding,
         db_url=db_path,
         project_dir=project_dir or Path.cwd(),
@@ -270,16 +270,14 @@ def _run_recall_via_worker(
 @click.group()
 @click.version_option(version=version("remind-mcp"), prog_name="remind")
 @click.option("--db", default=None, help="Database name, path, or URL (e.g. 'myproject', '/path/to/db.db', 'postgresql+psycopg://user:pass@host/db'). Default: <cwd>/.remind/remind.db")
-@click.option("--llm", default=None, type=click.Choice(["anthropic", "openai", "azure_openai", "ollama"]))
-@click.option("--embedding", default=None, type=click.Choice(["openai", "azure_openai", "ollama"]))
+@click.option("--embedding", default=None, type=click.Choice(["local", "openai", "azure_openai", "ollama"]))
 @click.pass_context
-def main(ctx, db: str, llm: str, embedding: str):
-    """Remind - Generalization-capable memory for LLMs."""
+def main(ctx, db: str, embedding: str):
+    """Remind - Agent-driven memory layer for LLMs."""
     from remind.config import load_config, resolve_db_url, _is_db_url, setup_file_logging
 
     config = load_config(project_dir=Path.cwd())
 
-    llm = llm or config.llm_provider
     embedding = embedding or config.embedding_provider
 
     if db and _is_db_url(db):
@@ -291,7 +289,7 @@ def main(ctx, db: str, llm: str, embedding: str):
     else:
         db_url = resolve_db_url(None, project_aware=True)
 
-    # Determine the directory for locks/logs/queues used by background workers.
+    # Determine the directory for locks/logs used by background workers.
     # - SQLite: use the directory containing the .db file (co-located with the db)
     # - Remote DB (postgres, mysql, …): use <cwd>/.remind (project-local)
     # - Anything else: None → falls back to ~/.remind
@@ -309,7 +307,6 @@ def main(ctx, db: str, llm: str, embedding: str):
 
     ctx.ensure_object(dict)
     ctx.obj["db"] = db_url
-    ctx.obj["llm"] = llm
     ctx.obj["embedding"] = embedding
     ctx.obj["remind_dir"] = project_remind_dir
     ctx.obj["cli_output_mode"] = config.cli_output_mode
@@ -324,16 +321,19 @@ def main(ctx, db: str, llm: str, embedding: str):
               help="Entity IDs (e.g., file:src/auth.ts, person:alice)")
 @click.option("--topic", help="Knowledge area (e.g., architecture, product, infra)")
 @click.option("--source-type", help="Origin of this memory (e.g., agent, slack, github, manual)")
+@click.option("--asserted-by", help="Who asserted this information (e.g., alice, agent:cursor)")
+@click.option("--source-ref", help="Link to the original artifact (URL/permalink)")
 @click.option("--no-embed", is_flag=True, help="Skip embedding the episode (faster, no API call)")
 @click.pass_context
 def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[str], 
-             entities: tuple, topic: Optional[str], source_type: Optional[str], no_embed: bool):
+             entities: tuple, topic: Optional[str], source_type: Optional[str],
+             asserted_by: Optional[str], source_ref: Optional[str], no_embed: bool):
     """Add an episode to memory.
     
     Embeds the episode by default for vector search during recall.
     Entity extraction and type classification happen during consolidation.
     """
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     
     meta = json.loads(metadata) if metadata else None
     entity_list = list(entities) if entities else None
@@ -347,11 +347,13 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
             embed=not no_embed,
             topic=topic,
             source_type=source_type,
+            asserted_by=asserted_by,
+            source_ref=source_ref,
         )
 
-    episode_id = run_async(_remember())
+    result = run_async(_remember())
     
-    console.print(f"[green]✓[/green] Remembered as episode [cyan]{episode_id}[/cyan]")
+    console.print(f"[green]✓[/green] Remembered as episode [cyan]{result.episode_id}[/cyan]")
 
     # Show explicit type/entities if provided
     if episode_type:
@@ -362,26 +364,162 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
         console.print(f"  Topic: [blue]{topic}[/blue]")
     if source_type:
         console.print(f"  Source: {source_type}")
+    if asserted_by:
+        console.print(f"  Asserted by: {asserted_by}")
+    if source_ref:
+        console.print(f"  Source ref: {source_ref}")
+    
+    # For facts, show cluster and collision info
+    if result.fact_id:
+        console.print(f"  Fact ID: [cyan]{result.fact_id}[/cyan]")
+        cluster_suffix = " [dim](new)[/dim]" if result.cluster_created else ""
+        console.print(f"  Cluster: [cyan]{result.cluster_id}[/cyan]{cluster_suffix}")
+        
+        if result.has_collisions():
+            console.print(f"\n[yellow]⚠ {len(result.collisions)} potential collision(s):[/yellow]")
+            for collision in result.collisions:
+                stmt = collision.statement[:60] + "..." if len(collision.statement) > 60 else collision.statement
+                console.print(f"  - {collision.id}: {stmt}")
 
-    # Check if background consolidation should run
-    stats = memory.get_stats()
-    unconsolidated = stats.get("unconsolidated_episodes", 0)
 
-    if unconsolidated >= memory.consolidation_threshold:
-        # Spawn background consolidation
-        from remind.background import spawn_background_consolidation
-
-        if spawn_background_consolidation(
-            db_url=ctx.obj["db"],
-            llm_provider=ctx.obj["llm"],
-            embedding_provider=ctx.obj["embedding"],
-            remind_dir=ctx.obj.get("remind_dir"),
-        ):
-            console.print(f"[dim]→ Background consolidation started ({unconsolidated} episodes)[/dim]")
+@main.command()
+@click.argument("changeset", required=False, default=None)
+@click.option("--file", "-f", "input_file", type=click.Path(exists=True), 
+              help="Read changeset from file instead of argument")
+@click.option("--dry-run", is_flag=True, help="Validate only, don't execute")
+@click.option("--json", "as_json", is_flag=True, help="Output result as JSON")
+@click.pass_context
+def apply(ctx, changeset: Optional[str], input_file: Optional[str], dry_run: bool, as_json: bool):
+    """Apply a batch changeset to memory.
+    
+    Accepts either JSON or compact line format (auto-detected).
+    All operations execute in a single transaction (all-or-nothing).
+    
+    \b
+    Compact line format (canonical):
+        remember as=f1 t=fact e=concept:caching "Cache TTL is 600 seconds"
+        supersede old=fact:a91c2 new=$f1
+        concept as=c1 from=ep:11,ep:12 title="Pattern title" "Summary text"
+        resolve id=conflict:7 winner=fact:b3d01 "confirmed by bob"
+        processed ids=ep:11,ep:12
+    
+    \b
+    JSON format:
+        [{"op": "remember", "as": "f1", "t": "fact", "content": "..."}]
+    
+    \b
+    Operations: remember, supersede, conflict, resolve, dismiss, concept,
+                update, link, topic, set_topic, delete, restore, processed
+    
+    Examples:
+        remind apply 'remember t=fact e=concept:cache "TTL is 600"'
+        remind apply -f changes.txt
+        cat changes.txt | remind apply -
+        remind apply --dry-run 'remember t=fact "test"'
+    """
+    from remind.apply import ApplyEngine
+    
+    # Read changeset from stdin, file, or argument
+    if changeset == "-":
+        changeset = sys.stdin.read()
+    elif input_file:
+        changeset = Path(input_file).read_text()
+    elif not changeset:
+        # Try reading from stdin if nothing provided
+        if not sys.stdin.isatty():
+            changeset = sys.stdin.read()
         else:
-            console.print(f"[dim]→ Consolidation already running[/dim]")
-    elif unconsolidated >= 3:
-        console.print(f"[dim]→ {unconsolidated} episodes pending consolidation[/dim]")
+            raise click.UsageError("Provide a changeset as argument, via --file, or pipe to stdin")
+    
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
+    
+    engine = ApplyEngine(
+        store=memory.store,
+        embedding=memory.embedding,
+        fact_cluster_jaccard_threshold=memory.config.fact_cluster_jaccard_threshold,
+    )
+    
+    async def _apply():
+        return await engine.apply(changeset, dry_run=dry_run)
+    
+    result = run_async(_apply())
+    
+    if as_json:
+        _emit_cli_json(result.to_dict())
+        return
+    
+    if result.success:
+        if dry_run:
+            console.print(f"[green]✓[/green] Validation passed ({result.ops_executed} operations)")
+        else:
+            console.print(f"[green]✓[/green] Applied {result.ops_executed} operations")
+            
+            # Show created IDs
+            for r in result.results:
+                if r.id:
+                    label = f" ({r.ref})" if r.ref else ""
+                    console.print(f"  {r.op_type}: [cyan]{r.id}[/cyan]{label}")
+                    
+                    # Show collisions for remember ops
+                    if r.collisions:
+                        console.print(f"    [yellow]⚠ {len(r.collisions)} potential collision(s):[/yellow]")
+                        for c in r.collisions:
+                            console.print(f"      - {c['id']}: {c['statement'][:60]}...")
+    else:
+        console.print(f"[red]✗[/red] Apply failed")
+        for err in result.errors:
+            loc = f"line {err.line}" if err.line else f"op {err.op_index}"
+            console.print(f"  [{loc}] {err.op_type}: {err.message}")
+
+
+@main.command()
+@click.argument("scopes", nargs=-1)
+@click.option("--pretty", "-p", is_flag=True, help="Pretty-print JSON output")
+@click.pass_context
+def snapshot(ctx, scopes: tuple, pretty: bool):
+    """Read a snapshot of memory state.
+    
+    Combines one or more scopes into a single JSON document.
+    Output is always JSON (machine-readable).
+    
+    \b
+    Scopes:
+        pending      - Unprocessed episodes with their entities
+        conflicts    - Open conflicts with full fact details
+        entity:<id>  - Episodes and concepts for an entity
+        topic:<id>   - Episodes and concepts for a topic
+        concept:<id> - Concept detail with facts and supersession history
+        recent:<n>   - N most recent episodes (default: 10)
+        stats        - Memory statistics
+        query:<text> - Semantic search results
+    
+    Examples:
+        remind snapshot pending conflicts
+        remind snapshot entity:concept:caching
+        remind snapshot recent:20 stats
+        remind snapshot "query:authentication issues"
+    """
+    from remind.snapshot import SnapshotEngine
+    
+    if not scopes:
+        scopes = ("stats",)
+    
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
+    
+    engine = SnapshotEngine(
+        store=memory.store,
+        embedding=memory.embedding,
+    )
+    
+    async def _snapshot():
+        return await engine.snapshot(list(scopes))
+    
+    result = run_async(_snapshot())
+    
+    if pretty:
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        print(json.dumps(result, default=str))
 
 
 @main.command()
@@ -391,32 +529,46 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
 @click.option("--context", "-c", help="Additional context for search")
 @click.option("--entity", "-e", help="Retrieve by entity ID instead of semantic search")
 @click.option("--topic", help="Restrict recall to this topic")
+@click.option("--as-of", "as_of", default=None,
+              help="Show facts valid at this point in time (ISO date/datetime, e.g. 2026-01-15)")
 @click.option("--raw", is_flag=True, help="Show raw concept data")
 @click.pass_context
 def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[str], 
-           entity: Optional[str], topic: Optional[str], raw: bool):
+           entity: Optional[str], topic: Optional[str], as_of: Optional[str], raw: bool):
     """Retrieve relevant concepts for a query.
     
     By default, does semantic search across concepts. 
     Use --entity to retrieve by entity ID instead.
     Use --episode-k to also include direct episode vector matches.
     Use --topic to restrict to a specific knowledge area.
+    Use --as-of to see the facts that were valid at a past point in time.
     
     Examples:
         remind recall "authentication issues"
         remind recall --topic architecture "database design"
         remind recall --episode-k 10 "authentication issues"
+        remind recall --as-of 2026-01-15 "cache configuration"
         remind recall --entity file:src/auth.ts
         remind recall -e "person:alice"
     """
     if not query and not entity:
         raise click.UsageError("Either QUERY or --entity must be provided.")
 
+    if as_of:
+        from datetime import datetime as _dt
+        try:
+            _dt.fromisoformat(as_of)
+        except ValueError:
+            raise click.UsageError(f"--as-of must be an ISO date/datetime, got: {as_of}")
+
     from remind.config import load_config
 
     config = load_config(project_dir=Path.cwd())
+    # The persistent recall worker doesn't carry as_of; use one-shot recall for time-travel queries
     use_recall_worker = bool(
-        config.reranking_enabled and getattr(config, "cli_recall_worker_enabled", True)
+        config.reranking_enabled
+        and getattr(config, "cli_recall_worker_enabled", True)
+        and as_of is None
     )
 
     result = None
@@ -444,7 +596,7 @@ def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[
                 )
 
     if result is None:
-        memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+        memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
         async def _recall():
             return await memory.recall(
@@ -455,6 +607,7 @@ def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[
                 raw=raw,
                 episode_k=episode_k,
                 topic=topic,
+                as_of=as_of,
             )
 
         result = run_async(_recall())
@@ -499,6 +652,130 @@ Exceptions: {', '.join(c.exceptions) if c.exceptions else 'none'}"""
         console.print(Panel(result, title="Retrieved Memory", border_style="cyan"), markup=False)
 
 
+@main.group(invoke_without_command=True)
+@click.pass_context
+def conflicts(ctx):
+    """Triage detected memory conflicts (contradictions).
+
+    Without a subcommand, lists open conflicts.
+    """
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(conflicts_list)
+
+
+@conflicts.command("list")
+@click.option("--status", default="open", type=click.Choice(["open", "resolved", "dismissed", "all"]),
+              help="Filter by status (default: open)")
+@click.option("--kind", default=None, type=click.Choice(["fact", "concept"]), help="Filter by kind")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
+@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
+@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
+@click.pass_context
+def conflicts_list(ctx, status: str = "open", kind: Optional[str] = None,
+                   as_json: bool = False, as_table: bool = False, as_compact_json: bool = False):
+    """List conflicts (open by default)."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
+    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
+    conflict_list = memory.list_conflicts(status=None if status == "all" else status, kind=kind)
+
+    def _fact_line(fact_id):
+        if not fact_id:
+            return None
+        fact = memory.store.get_fact(fact_id)
+        if not fact:
+            return None
+        prov = f" (by {fact.asserted_by})" if fact.asserted_by else ""
+        return f"[{fact.id}] {fact.statement}{prov}"
+
+    if out_fmt == "json":
+        _emit_cli_json({"conflicts": [c.to_dict() for c in conflict_list]})
+        return
+    if out_fmt == "compact_json":
+        _emit_cli_json({
+            "format": "compact-json",
+            "conflicts": [
+                {"id": c.id, "title": f"{c.kind} conflict ({c.severity})", "summary": c.description}
+                for c in conflict_list
+            ],
+        })
+        return
+
+    if not conflict_list:
+        console.print(f"[dim]No {status} conflicts.[/dim]")
+        return
+
+    for c in conflict_list:
+        lines = [f"[bold]{c.description}[/bold]"]
+        lines.append(f"kind: {c.kind}  severity: {c.severity}  detected: {c.created_at.strftime('%Y-%m-%d')}")
+        if c.kind == "fact":
+            for label, fact_id in (("A", c.fact_a_id), ("B", c.fact_b_id)):
+                line = _fact_line(fact_id)
+                if line:
+                    lines.append(f"{label}: {line}")
+        if c.status != "open":
+            resolution = f"status: {c.status}"
+            if c.winning_fact_id:
+                resolution += f"  winner: {c.winning_fact_id}"
+            if c.resolution_note:
+                resolution += f"  note: {c.resolution_note}"
+            lines.append(resolution)
+        console.print(Panel("\n".join(lines), title=f"[cyan]{c.id}[/cyan]", border_style="yellow" if c.status == "open" else "dim"))
+
+    if status == "open" and conflict_list:
+        console.print("[dim]Resolve with: remind conflicts resolve <id> <winning_fact_id>[/dim]")
+        console.print("[dim]Dismiss with: remind conflicts dismiss <id> --note \"both true, different contexts\"[/dim]")
+
+
+@conflicts.command("resolve")
+@click.argument("conflict_id")
+@click.argument("winning_fact_id", required=False, default=None)
+@click.option("--note", default=None, help="Why this resolution is correct")
+@click.option("--by", "resolved_by", default=None, help="Who decided (e.g. alice)")
+@click.pass_context
+def conflicts_resolve(ctx, conflict_id: str, winning_fact_id: Optional[str],
+                      note: Optional[str], resolved_by: Optional[str]):
+    """Resolve a conflict by naming the winning fact.
+
+    The losing fact is superseded (kept as history) and the resolution
+    is recorded as a decision episode.
+    """
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
+
+    async def _resolve():
+        return await memory.resolve_conflict(
+            conflict_id, winning_fact_id=winning_fact_id, note=note, resolved_by=resolved_by,
+        )
+
+    try:
+        conflict = run_async(_resolve())
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        return
+    console.print(f"[green]✓[/green] Conflict [cyan]{conflict.id}[/cyan] resolved.")
+    if winning_fact_id:
+        console.print(f"  Winner: {winning_fact_id} (loser superseded, kept as history)")
+
+
+@conflicts.command("dismiss")
+@click.argument("conflict_id")
+@click.option("--note", default=None, help="Why this isn't a real contradiction")
+@click.option("--by", "resolved_by", default=None, help="Who decided")
+@click.pass_context
+def conflicts_dismiss(ctx, conflict_id: str, note: Optional[str], resolved_by: Optional[str]):
+    """Dismiss a conflict: both claims valid (e.g. different contexts)."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
+
+    async def _dismiss():
+        return await memory.dismiss_conflict(conflict_id, note=note, resolved_by=resolved_by)
+
+    try:
+        conflict = run_async(_dismiss())
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        return
+    console.print(f"[green]✓[/green] Conflict [cyan]{conflict.id}[/cyan] dismissed. Both facts remain active.")
+
+
 @main.group()
 @click.pass_context
 def topics(ctx):
@@ -513,7 +790,7 @@ def topics(ctx):
 @click.pass_context
 def topics_list(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
     """List all topics with stats."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
     topic_list = memory.list_topics()
 
@@ -565,7 +842,7 @@ def topics_list(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
 @click.pass_context
 def topics_create(ctx, name: str, description: str):
     """Create a new topic."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     try:
         topic = memory.create_topic(name, description=description)
         console.print(f"[green]✓[/green] Created topic [blue]{topic.id}[/blue] ({topic.name})")
@@ -582,7 +859,7 @@ def topics_update(ctx, topic_id: str, name: Optional[str], description: Optional
     """Update an existing topic."""
     if name is None and description is None:
         raise click.UsageError("At least --name or --description must be provided.")
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     updated = memory.update_topic(topic_id, name=name, description=description)
     if not updated:
         console.print(f"[red]Topic '{topic_id}' not found.[/red]")
@@ -595,7 +872,7 @@ def topics_update(ctx, topic_id: str, name: Optional[str], description: Optional
 @click.pass_context
 def topics_delete(ctx, topic_id: str):
     """Delete a topic (only if no episodes/concepts reference it)."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     try:
         if memory.delete_topic(topic_id):
             console.print(f"[green]✓[/green] Deleted topic [blue]{topic_id}[/blue]")
@@ -614,7 +891,7 @@ def topics_delete(ctx, topic_id: str):
 @click.pass_context
 def topics_overview(ctx, topic_id: str, k: int, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show top concepts for a topic."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
     topic = memory.get_topic(topic_id)
     concepts = memory.get_topic_overview(topic_id, k=k)
@@ -663,110 +940,6 @@ def topics_overview(ctx, topic_id: str, k: int, as_json: bool, as_table: bool, a
             console.print(f"    → Applies when: {c.conditions}")
         console.print()
 
-
-@main.command()
-@click.option("--force", "-f", is_flag=True, help="Force consolidation even with few episodes")
-@click.option("--background", "-b", is_flag=True, help="Run consolidation in background")
-@click.pass_context
-def consolidate(ctx, force: bool, background: bool):
-    """Run memory consolidation manually."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-
-    stats_before = memory.get_stats()
-    unconsolidated = stats_before.get("unconsolidated_episodes", 0)
-
-    if unconsolidated == 0:
-        console.print("[yellow]No episodes to consolidate[/yellow]")
-        return
-
-    from filelock import FileLock, Timeout
-    from remind.background import (
-        spawn_background_consolidation,
-        get_consolidation_lock_path,
-    )
-
-    db_path = ctx.obj["db"]
-
-    if background:
-        llm = ctx.obj["llm"]
-        embedding = ctx.obj["embedding"]
-
-        if spawn_background_consolidation(db_path, llm, embedding, remind_dir=ctx.obj.get("remind_dir")):
-            console.print(f"[green]✓ Background consolidation started ({unconsolidated} episodes)[/green]")
-        else:
-            console.print("[yellow]Consolidation already running[/yellow]")
-        return
-
-    lock_path = get_consolidation_lock_path(db_path, remind_dir=ctx.obj.get("remind_dir"))
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(str(lock_path), timeout=0)
-
-    try:
-        lock.acquire(blocking=False)
-    except Timeout:
-        console.print("[yellow]Consolidation already running (another process holds the lock)[/yellow]")
-        return
-
-    try:
-        console.print(f"[cyan]Consolidating {unconsolidated} episodes...[/cyan]")
-
-        batch_size = memory.consolidator.consolidation_batch_size
-        total_batches = (unconsolidated + batch_size - 1) // batch_size
-        extraction_batch_size = memory.consolidator.extraction_batch_size
-        extraction_llm_batch_size = memory.consolidator.extraction_llm_batch_size
-        total_extraction_batches = (unconsolidated + extraction_batch_size - 1) // extraction_batch_size
-
-        def on_batch(batch_num, batch_result):
-            if total_batches > 1:
-                console.print(
-                    f"  [dim]Batch {batch_num}/{total_batches}:[/dim] "
-                    f"{batch_result.episodes_processed} episodes → "
-                    f"{batch_result.concepts_created} created, "
-                    f"{batch_result.concepts_updated} updated"
-                )
-
-        def on_extraction_batch(progress):
-            if progress.get("phase") != "entity_extraction":
-                return
-            if total_extraction_batches <= 1:
-                return
-
-            status = progress.get("status", "ok")
-            if status == "failed":
-                status_text = "failed"
-            elif status == "partial":
-                status_text = "partial"
-            else:
-                status_text = f"{progress.get('entities_created', 0)} entities"
-            console.print(
-                f"  [dim]Extract {progress.get('batch_num', 0)}/{progress.get('total_batches', 0)}:[/dim] "
-                f"{progress.get('episodes_processed', 0)}/{progress.get('batch_size', 0)} episodes "
-                f"(llm batch={extraction_llm_batch_size}) → "
-                f"{status_text}"
-            )
-
-        async def _consolidate():
-            return await memory.consolidate(
-                force=True,
-                on_batch_complete=on_batch,
-                on_extraction_batch_complete=on_extraction_batch,
-            )
-
-        result = run_async(_consolidate())
-    finally:
-        lock.release()
-
-    console.print(f"\n[green]✓ Consolidation complete[/green]")
-    console.print(f"  Episodes processed: {result.episodes_processed}")
-    console.print(f"  Concepts created: {result.concepts_created}")
-    console.print(f"  Concepts updated: {result.concepts_updated}")
-
-    if result.contradictions_found:
-        console.print(f"  [yellow]Contradictions found: {result.contradictions_found}[/yellow]")
-        for contradiction in result.contradiction_details:
-            console.print(f"    → {contradiction}")
-
-
 @main.command("embed-episodes")
 @click.option("--batch-size", default=50, help="Number of episodes to embed per batch")
 @click.pass_context
@@ -776,7 +949,7 @@ def embed_episodes(ctx, batch_size: int):
     Useful for vectorizing episodes in existing databases created before
     episode embedding was enabled.
     """
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     async def _embed():
         return await memory.embed_episodes(batch_size=batch_size)
@@ -789,11 +962,12 @@ def embed_episodes(ctx, batch_size: int):
 @main.command("re-embed")
 @click.option("--episodes", is_flag=True, help="Re-embed episodes only")
 @click.option("--concepts", is_flag=True, help="Re-embed concepts only")
-@click.option("--all", "all_targets", is_flag=True, help="Re-embed both episodes and concepts (default)")
+@click.option("--entities", is_flag=True, help="Re-embed entities only")
+@click.option("--all", "all_targets", is_flag=True, help="Re-embed episodes, concepts, and entities (default)")
 @click.option("--batch-size", default=50, help="Number of records to embed per batch")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
-def re_embed(ctx, episodes: bool, concepts: bool, all_targets: bool, batch_size: int, yes: bool):
+def re_embed(ctx, episodes: bool, concepts: bool, entities: bool, all_targets: bool, batch_size: int, yes: bool):
     """Recompute stored embeddings using the current embedding provider.
 
     Use this when embedding model or dimensions change and existing vectors
@@ -805,18 +979,22 @@ def re_embed(ctx, episodes: bool, concepts: bool, all_targets: bool, batch_size:
     if all_targets:
         include_episodes = True
         include_concepts = True
-    elif episodes or concepts:
+        include_entities = True
+    elif episodes or concepts or entities:
         include_episodes = episodes
         include_concepts = concepts
+        include_entities = entities
     else:
         include_episodes = True
         include_concepts = True
+        include_entities = True
 
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     plan = run_async(memory.get_reembed_plan(
         include_episodes=include_episodes,
         include_concepts=include_concepts,
+        include_entities=include_entities,
     ))
 
     target_parts = []
@@ -824,6 +1002,8 @@ def re_embed(ctx, episodes: bool, concepts: bool, all_targets: bool, batch_size:
         target_parts.append(f"{plan['episodes']} episodes")
     if include_concepts:
         target_parts.append(f"{plan['concepts']} concepts")
+    if include_entities:
+        target_parts.append(f"{plan['entities']} entities")
     target_summary = ", ".join(target_parts)
 
     console.print("[bold cyan]Re-embed preview[/bold cyan]")
@@ -839,264 +1019,15 @@ def re_embed(ctx, episodes: bool, concepts: bool, all_targets: bool, batch_size:
     result = run_async(memory.reembed(
         include_episodes=include_episodes,
         include_concepts=include_concepts,
+        include_entities=include_entities,
         batch_size=batch_size,
     ))
     console.print("[green]✓ Re-embed complete[/green]")
     console.print(f"  Re-embedded concepts: {result['concepts_embedded']}")
     console.print(f"  Re-embedded episodes: {result['episodes_embedded']}")
+    console.print(f"  Re-embedded entities: {result['entities_embedded']}")
     console.print(f"  Dimensions: {result['stored_dimensions']} -> {result['target_dimensions']}")
 
-
-@main.command()
-@click.confirmation_option(
-    prompt="This will delete all concepts and entities and rebuild from episodes. Continue?"
-)
-@click.pass_context
-def reconsolidate(ctx):
-    """Reset database and consolidate from scratch.
-
-    This operation:
-    1. Deletes all concepts and relations
-    2. Deletes all entities and mentions
-    3. Resets episode consolidated/extracted flags
-    4. Runs consolidation from scratch
-
-    Useful when consolidation prompts change or to fix accumulated errors.
-    Episodes are preserved - only derived data is cleared.
-    """
-    from remind.store import SQLAlchemyMemoryStore
-
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-    store = SQLAlchemyMemoryStore(ctx.obj["db"])
-
-    console.print("[bold cyan]Reconsolidating memory...[/bold cyan]\n")
-
-    # Step 1: Delete concepts
-    with console.status("[bold cyan]Deleting concepts..."):
-        concept_count = store.delete_all_concepts()
-    console.print(f"  [green]✓[/green] Deleted {concept_count} concepts")
-
-    # Step 2: Delete entities
-    with console.status("[bold cyan]Deleting entities..."):
-        entity_count = store.delete_all_entities()
-    console.print(f"  [green]✓[/green] Deleted {entity_count} entities")
-
-    # Step 3: Reset episode flags
-    with console.status("[bold cyan]Resetting episode flags..."):
-        episode_count = store.reset_episode_flags()
-    console.print(f"  [green]✓[/green] Reset {episode_count} episodes")
-
-    # Step 4: Run consolidation (loops through all batches internally)
-    console.print(f"\n[cyan]Running consolidation on {episode_count} episodes...[/cyan]")
-
-    batch_size = memory.consolidator.consolidation_batch_size
-    total_batches = (episode_count + batch_size - 1) // batch_size
-    extraction_batch_size = memory.consolidator.extraction_batch_size
-    extraction_llm_batch_size = memory.consolidator.extraction_llm_batch_size
-    total_extraction_batches = (episode_count + extraction_batch_size - 1) // extraction_batch_size
-
-    def on_batch(batch_num, batch_result):
-        if total_batches > 1:
-            console.print(
-                f"  [dim]Batch {batch_num}/{total_batches}:[/dim] "
-                f"{batch_result.episodes_processed} episodes → "
-                f"{batch_result.concepts_created} created, "
-                f"{batch_result.concepts_updated} updated"
-            )
-
-    def on_extraction_batch(progress):
-        if progress.get("phase") != "entity_extraction":
-            return
-        if total_extraction_batches <= 1:
-            return
-
-        status = progress.get("status", "ok")
-        if status == "failed":
-            status_text = "failed"
-        elif status == "partial":
-            status_text = "partial"
-        else:
-            status_text = f"{progress.get('entities_created', 0)} entities"
-        console.print(
-            f"  [dim]Extract {progress.get('batch_num', 0)}/{progress.get('total_batches', 0)}:[/dim] "
-            f"{progress.get('episodes_processed', 0)}/{progress.get('batch_size', 0)} episodes "
-            f"(llm batch={extraction_llm_batch_size}) → "
-            f"{status_text}"
-        )
-
-    async def _consolidate():
-        return await memory.consolidate(
-            force=True,
-            on_batch_complete=on_batch,
-            on_extraction_batch_complete=on_extraction_batch,
-        )
-
-    result = run_async(_consolidate())
-
-    console.print(f"\n[green]✓ Reconsolidation complete[/green]")
-    console.print(f"  Total concepts created: {result.concepts_created}")
-    console.print(f"  Total concepts updated: {result.concepts_updated}")
-    if result.contradictions_found:
-        console.print(f"  [yellow]Contradictions found: {result.contradictions_found}[/yellow]")
-
-
-@main.command("end-session")
-@click.pass_context
-def end_session(ctx):
-    """End session: flush ingestion buffer, then consolidate in background.
-
-    Use this as a hook point in your agent workflow:
-    - At end of conversation
-    - After task completion
-    - Before shutdown
-    """
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-
-    # Flush ingestion buffer first
-    if not memory._ingest_buffer.is_empty:
-        buf_size = memory.ingest_buffer_size
-        console.print(f"[blue]Flushing ingestion buffer ({buf_size} chars)...[/blue]")
-        episode_ids = run_async(memory.flush_ingest())
-        if episode_ids:
-            console.print(f"[green]✓ Created {len(episode_ids)} episodes from buffer[/green]")
-
-    pending = memory.pending_episodes_count
-
-    if pending == 0:
-        console.print("[yellow]No pending episodes to consolidate[/yellow]")
-        return
-
-    from remind.background import (
-        spawn_background_consolidation,
-        get_ingest_queue_dir,
-        spawn_ingest_worker,
-    )
-
-    db_path = ctx.obj["db"]
-    llm = ctx.obj["llm"]
-    embedding = ctx.obj["embedding"]
-    remind_dir = ctx.obj.get("remind_dir")
-
-    # Ensure any queued ingest chunks are being processed
-    queue_dir = get_ingest_queue_dir(db_path, remind_dir=remind_dir)
-    if queue_dir.is_dir() and any(queue_dir.glob("*.json")):
-        if spawn_ingest_worker(db_path, llm, embedding, remind_dir=remind_dir):
-            console.print("[dim]Started ingest worker for queued chunks.[/dim]")
-
-    if spawn_background_consolidation(db_path, llm, embedding, remind_dir=remind_dir):
-        console.print(f"[green]✓ Session ended — consolidating {pending} episodes in background[/green]")
-    else:
-        console.print(f"[yellow]Consolidation already running ({pending} episodes pending)[/yellow]")
-
-
-@main.command()
-@click.argument("content", required=False)
-@click.option("--source", "-s", default="conversation", help="Source label for metadata")
-@click.option("--topic", default=None, help="Topic ID or name (inferred by LLM when omitted)")
-@click.option("--instructions", "-i", default=None, help="Natural-language instructions to steer extraction (e.g. 'focus on decisions')")
-@click.option("--foreground", "-f", is_flag=True, help="Run triage and consolidation in foreground (blocking)")
-@click.pass_context
-def ingest(ctx, content: Optional[str], source: str, topic: Optional[str], instructions: Optional[str], foreground: bool):
-    """Ingest raw text for automatic memory curation.
-
-    By default, spawns triage and consolidation in a background process
-    and returns immediately. Use --foreground to run synchronously.
-
-    When --topic is given, all extracted episodes are assigned to that topic.
-    When omitted, the triage LLM infers per-episode topics automatically.
-
-    When --instructions is given, the triage LLM uses those instructions to
-    decide what to extract (e.g. "focus on architectural decisions").
-
-    Accepts text as an argument or via stdin (for piping).
-
-    Examples:
-        remind ingest "User prefers dark mode and Vim keybindings"
-        remind ingest "Rate limiting at gateway" --topic architecture
-        echo "conversation log" | remind ingest
-        cat transcript.txt | remind ingest --source transcript
-        remind ingest --foreground "important observation"
-        cat meeting.txt | remind ingest -i "extract decisions and action items"
-    """
-    # Read from stdin if no argument provided
-    if content is None:
-        if not sys.stdin.isatty():
-            content = sys.stdin.read().strip()
-        if not content:
-            console.print("[red]No content provided. Pass as argument or pipe via stdin.[/red]")
-            return
-
-    if foreground:
-        from remind.interface import create_memory
-        memory = create_memory(
-            llm_provider=ctx.obj["llm"],
-            embedding_provider=ctx.obj["embedding"],
-            db_url=ctx.obj["db"],
-            project_dir=Path.cwd(),
-            ingest_background=False,
-        )
-        with console.status("[bold cyan]Running triage and consolidation..."):
-            episode_ids = run_async(memory.ingest(content, source=source, topic=topic, instructions=instructions))
-            episode_ids.extend(run_async(memory.flush_ingest(topic=topic, instructions=instructions)))
-
-        if episode_ids:
-            console.print(f"[green]✓ Created {len(episode_ids)} episode(s) from ingest[/green]")
-            for eid in episode_ids:
-                console.print(f"  {eid}")
-            console.print("[dim]Consolidation completed.[/dim]")
-        else:
-            console.print("[yellow]Triage found nothing memory-worthy (low density).[/yellow]")
-    else:
-        from remind.background import enqueue_ingest_chunk, spawn_ingest_worker
-
-        enqueue_ingest_chunk(
-            db_url=ctx.obj["db"],
-            chunk=content,
-            source=source,
-            topic=topic,
-            instructions=instructions,
-            remind_dir=ctx.obj.get("remind_dir"),
-        )
-        spawned = spawn_ingest_worker(
-            db_url=ctx.obj["db"],
-            llm_provider=ctx.obj["llm"],
-            embedding_provider=ctx.obj["embedding"],
-            remind_dir=ctx.obj.get("remind_dir"),
-        )
-        console.print(f"[green]✓[/green] Ingest queued ({len(content)} chars)")
-        if spawned:
-            console.print("[dim]Background worker started.[/dim]")
-        else:
-            console.print("[dim]Worker already running — it will pick this up.[/dim]")
-
-
-@main.command("flush-ingest")
-@click.pass_context
-def flush_ingest(ctx):
-    """Force-flush the ingestion buffer.
-
-    Processes whatever text is in the buffer immediately, regardless of
-    whether the character threshold has been reached. Note: in CLI context,
-    the buffer is per-process and typically empty. This is mainly useful
-    when called from end-session or long-lived contexts.
-    """
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-
-    buf_size = memory.ingest_buffer_size
-    if buf_size == 0:
-        console.print("[yellow]Ingestion buffer is empty, nothing to flush.[/yellow]")
-        return
-
-    console.print(f"[blue]Flushing buffer ({buf_size} chars)...[/blue]")
-    episode_ids = run_async(memory.flush_ingest())
-
-    if episode_ids:
-        console.print(f"[green]✓ Created {len(episode_ids)} episode(s)[/green]")
-        for eid in episode_ids:
-            console.print(f"  {eid}")
-        console.print("[dim]Consolidation completed.[/dim]")
-    else:
-        console.print("[yellow]Triage found nothing memory-worthy.[/yellow]")
 
 
 @main.command()
@@ -1282,7 +1213,7 @@ def inspect(
 @click.pass_context
 def stats(ctx):
     """Show memory statistics."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     stats = memory.get_stats()
     
     # Consolidation status
@@ -1587,7 +1518,7 @@ def status(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
 @click.pass_context
 def export_cmd(ctx, file: str):
     """Export memory to JSON file."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     
     data = memory.export_memory(file)
     console.print(f"[green]✓[/green] Exported {data['stats']['concepts']} concepts and {data['stats']['episodes']} episodes to [cyan]{file}[/cyan]")
@@ -1598,7 +1529,7 @@ def export_cmd(ctx, file: str):
 @click.pass_context
 def import_cmd(ctx, file: str):
     """Import memory from JSON file."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     
     result = memory.import_memory(file)
     console.print(f"[green]✓[/green] Imported {result['concepts_imported']} concepts, {result['episodes_imported']} episodes from [cyan]{file}[/cyan]")
@@ -1973,65 +1904,6 @@ def questions(ctx, limit: int, as_json: bool, as_table: bool, as_compact_json: b
 
     console.print(table)
 
-
-@main.command("extract-relations")
-@click.option("--batch-size", "-b", default=50, help="Number of episodes to process per batch")
-@click.option("--force", "-f", is_flag=True, help="Re-extract relations for all episodes (including already extracted)")
-@click.pass_context
-def extract_relations(ctx, batch_size: int, force: bool):
-    """Extract entity relationships from existing episodes.
-
-    Processes episodes that have entities but haven't had relationship extraction.
-    This is useful for backfilling entity relationships in existing databases.
-    """
-    from remind.extraction import EntityExtractor
-
-    # Get memory interface (includes LLM provider)
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
-
-    # Create extractor using the memory's LLM and store
-    extractor = EntityExtractor(memory.llm, memory.store)
-
-    if force:
-        # Get all episodes with 2+ entities
-        console.print("[yellow]Force mode: re-extracting relations for all episodes with 2+ entities[/yellow]")
-        episodes = memory.store.get_recent_episodes(limit=10000)
-        episodes = [ep for ep in episodes if len(ep.entity_ids) >= 2]
-    else:
-        # Get episodes needing relation extraction
-        episodes = memory.store.get_unextracted_relation_episodes(limit=batch_size)
-
-    if not episodes:
-        console.print("[yellow]No episodes need relation extraction[/yellow]")
-        return
-
-    console.print(f"[cyan]Extracting relations from {len(episodes)} episodes...[/cyan]")
-
-    total_relations = 0
-    processed = 0
-    errors = 0
-
-    async def _extract():
-        nonlocal total_relations, processed, errors
-        for ep in episodes:
-            try:
-                count = await extractor.extract_and_store_relations_only(ep)
-                total_relations += count
-                processed += 1
-            except Exception as e:
-                console.print(f"[red]Error processing {ep.id}: {e}[/red]")
-                errors += 1
-
-    with console.status("[bold cyan]Extracting relationships..."):
-        run_async(_extract())
-
-    console.print(f"\n[green]✓ Relation extraction complete[/green]")
-    console.print(f"  Episodes processed: {processed}")
-    console.print(f"  Relations extracted: {total_relations}")
-    if errors:
-        console.print(f"  [yellow]Errors: {errors}[/yellow]")
-
-
 @main.command("entity-relations")
 @click.argument("entity_id")
 @click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
@@ -2172,10 +2044,12 @@ def ui(ctx, port: int, host: str, no_open: bool):
 @main.command("skill-install")
 @click.argument("names", nargs=-1)
 def skill_install(names: tuple):
-    """Install the Remind skill for Claude Code in the current project.
+    """Install the Remind skills for Claude Code in the current project.
 
-    Installs .claude/skills/remind/SKILL.md from the bundled package data,
-    keeping it in sync with the installed version.
+    Installs .claude/skills/<name>/SKILL.md from the bundled package data,
+    keeping them in sync with the installed version. Without arguments,
+    installs all skills (capture, context, curate) and removes the legacy
+    monolithic 'remind' skill if present.
     """
     to_install = list(names) if names else SKILL_NAMES
 
@@ -2194,8 +2068,20 @@ def skill_install(names: tuple):
 
         console.print(f"[green]✓[/green] Installed [cyan]{name}[/cyan] → {skill_file}")
 
+    if not names:
+        import shutil
+        for legacy in LEGACY_SKILL_NAMES:
+            legacy_dir = Path.cwd() / ".claude" / "skills" / legacy
+            if (legacy_dir / "SKILL.md").exists():
+                shutil.rmtree(legacy_dir)
+                console.print(f"[dim]Removed legacy skill: {legacy}[/dim]")
+
     console.print("\nClaude Code will now use Remind skills in this project.")
 
+
+# ============================================================================
+# Session-End Capture Hook
+# ============================================================================
 
 # ============================================================================
 # Update/Delete/Restore Commands
@@ -2214,7 +2100,7 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
                    episode_type: Optional[str], entities: tuple,
                    topic: Optional[str], clear_topic: bool):
     """Update an existing episode."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     if topic is not None and clear_topic:
         console.print("[red]Use either --topic or --clear-topic, not both.[/red]")
@@ -2261,7 +2147,7 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
 @click.pass_context
 def delete_episode(ctx, episode_id: str, yes: bool):
     """Soft delete an episode from memory."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     # Show episode content before deletion
     episode = memory.store.get_episode(episode_id)
@@ -2289,7 +2175,7 @@ def delete_episode(ctx, episode_id: str, yes: bool):
 @click.pass_context
 def restore_episode(ctx, episode_id: str):
     """Restore a deleted episode."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     if memory.restore_episode(episode_id):
         console.print(f"[green]✓[/green] Restored episode [cyan]{episode_id}[/cyan]")
@@ -2303,7 +2189,7 @@ def restore_episode(ctx, episode_id: str):
 @click.pass_context
 def purge_episode(ctx, episode_id: str, yes: bool):
     """Permanently delete an episode. This cannot be undone."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     if not yes:
         console.print(f"[red]WARNING: This will PERMANENTLY delete episode {episode_id}[/red]")
@@ -2332,7 +2218,7 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
                    topic: Optional[str], clear_topic: bool):
     """Update an existing concept."""
     import json as _json
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     if topic is not None and clear_topic:
         console.print("[red]Use either --topic or --clear-topic, not both.[/red]")
@@ -2392,7 +2278,7 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
 @click.pass_context
 def delete_concept(ctx, concept_id: str, yes: bool):
     """Soft delete a concept from memory."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     # Show concept content before deletion
     concept = memory.store.get_concept(concept_id)
@@ -2421,7 +2307,7 @@ def delete_concept(ctx, concept_id: str, yes: bool):
 @click.pass_context
 def restore_concept(ctx, concept_id: str):
     """Restore a deleted concept."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     if memory.restore_concept(concept_id):
         console.print(f"[green]✓[/green] Restored concept [cyan]{concept_id}[/cyan]")
@@ -2435,7 +2321,7 @@ def restore_concept(ctx, concept_id: str):
 @click.pass_context
 def purge_concept(ctx, concept_id: str, yes: bool):
     """Permanently delete a concept. This cannot be undone."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     if not yes:
         console.print(f"[red]WARNING: This will PERMANENTLY delete concept {concept_id}[/red]")
@@ -2459,7 +2345,7 @@ def purge_concept(ctx, concept_id: str, yes: bool):
 @click.pass_context
 def deleted(ctx, item_type: Optional[str], limit: int, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show soft-deleted episodes and concepts."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
     show_episodes = item_type in (None, "episodes")
@@ -2530,7 +2416,7 @@ def deleted(ctx, item_type: Optional[str], limit: int, as_json: bool, as_table: 
 @click.pass_context
 def purge_all(ctx, yes: bool):
     """Permanently delete all soft-deleted items. This cannot be undone."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["llm"], ctx.obj["embedding"])
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     # Count deleted items
     deleted_episodes = memory.get_deleted_episodes(limit=1000)

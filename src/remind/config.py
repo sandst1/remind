@@ -29,55 +29,42 @@ REMIND_DIR = Path.home() / ".remind"
 CONFIG_FILE = REMIND_DIR / "remind.config.json"
 
 # Default values
-DEFAULT_CONSOLIDATION_THRESHOLD = 5
-DEFAULT_CONCEPTS_PER_PASS = 64
-# Backward compatibility alias.
-DEFAULT_CONSOLIDATION_CONCEPTS_PER_PASS = DEFAULT_CONCEPTS_PER_PASS
-DEFAULT_LLM_PROVIDER = "anthropic"
-DEFAULT_EMBEDDING_PROVIDER = "openai"
-
-
-@dataclass
-class AnthropicConfig:
-    """Anthropic provider configuration."""
-
-    api_key: Optional[str] = None
-    model: str = "claude-sonnet-4-20250514"
-    ingest_model: Optional[str] = None
+DEFAULT_EMBEDDING_PROVIDER = "local"
 
 
 @dataclass
 class OpenAIConfig:
-    """OpenAI provider configuration."""
+    """OpenAI embedding provider configuration."""
 
     api_key: Optional[str] = None
     base_url: Optional[str] = None
-    model: str = "gpt-4.1"
     embedding_model: str = "text-embedding-3-small"
     embedding_size: int = 1536
-    ingest_model: Optional[str] = None
 
 
 @dataclass
 class AzureOpenAIConfig:
-    """Azure OpenAI provider configuration."""
+    """Azure OpenAI embedding provider configuration."""
 
     api_key: Optional[str] = None
     base_url: Optional[str] = None
-    deployment_name: Optional[str] = None
     embedding_deployment_name: Optional[str] = None
     embedding_size: int = 1536
-    ingest_deployment_name: Optional[str] = None
 
 
 @dataclass
 class OllamaConfig:
-    """Ollama provider configuration."""
+    """Ollama embedding provider configuration."""
 
     url: str = "http://localhost:11434"
-    llm_model: str = "llama3.2"
     embedding_model: str = "nomic-embed-text"
-    ingest_model: Optional[str] = None
+
+
+@dataclass
+class LocalConfig:
+    """Local embedding provider configuration."""
+
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 @dataclass
@@ -93,29 +80,16 @@ class DecayConfig:
 class RemindConfig:
     """Configuration settings for Remind."""
 
-    llm_provider: str = DEFAULT_LLM_PROVIDER
     embedding_provider: str = DEFAULT_EMBEDDING_PROVIDER
-    consolidation_threshold: int = DEFAULT_CONSOLIDATION_THRESHOLD
-    concepts_per_pass: int = DEFAULT_CONCEPTS_PER_PASS
-    auto_consolidate: bool = True
-    extraction_batch_size: int = 50
-    extraction_llm_batch_size: int = 10
-    consolidation_batch_size: int = 25
-    llm_concurrency: int = 3
 
-    # Provider-specific configs
-    anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
+    # Provider-specific configs (embedding only)
+    local: LocalConfig = field(default_factory=LocalConfig)
     openai: OpenAIConfig = field(default_factory=OpenAIConfig)
     azure_openai: AzureOpenAIConfig = field(default_factory=AzureOpenAIConfig)
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
 
     # Decay config
     decay: DecayConfig = field(default_factory=DecayConfig)
-
-    # Auto-ingest config
-    ingest_buffer_size: int = 4000
-    # Deprecated: no longer used. The LLM decides directly what to extract.
-    ingest_min_density: float = 0.0
 
     # Episode types
     episode_types: list[str] = field(default_factory=lambda: list(DEFAULT_EPISODE_TYPES))
@@ -141,31 +115,6 @@ class RemindConfig:
 
     # CLI browse commands: "table" (default), "json", or "compact-json" (minimal id/title/summary)
     cli_output_mode: str = "table"
-
-    # Backward-compat aliases for older config field names
-    @property
-    def consolidation_concepts_per_pass(self) -> int:
-        return self.concepts_per_pass
-
-    @consolidation_concepts_per_pass.setter
-    def consolidation_concepts_per_pass(self, value: int) -> None:
-        self.concepts_per_pass = int(value)
-
-    @property
-    def entity_extraction_batch_size(self) -> int:
-        return self.extraction_llm_batch_size
-
-    @entity_extraction_batch_size.setter
-    def entity_extraction_batch_size(self, value: int) -> None:
-        self.extraction_llm_batch_size = int(value)
-
-    @property
-    def consolidation_llm_concurrency(self) -> int:
-        return self.llm_concurrency
-
-    @consolidation_llm_concurrency.setter
-    def consolidation_llm_concurrency(self, value: int) -> None:
-        self.llm_concurrency = int(value)
 
 
 def normalize_cli_output_mode(value: str) -> str:
@@ -200,35 +149,11 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
     existing value untouched.  This allows layering global → project-local
     configs by calling the function twice.
     """
-    if "llm_provider" in file_config:
-        config.llm_provider = file_config["llm_provider"]
     if "embedding_provider" in file_config:
         config.embedding_provider = file_config["embedding_provider"]
-    if "consolidation_threshold" in file_config:
-        config.consolidation_threshold = int(file_config["consolidation_threshold"])
-    if "concepts_per_pass" in file_config:
-        config.concepts_per_pass = int(file_config["concepts_per_pass"])
-    elif "consolidation_concepts_per_pass" in file_config:
-        config.concepts_per_pass = int(file_config["consolidation_concepts_per_pass"])
-    if "auto_consolidate" in file_config:
-        config.auto_consolidate = bool(file_config["auto_consolidate"])
-    if "extraction_batch_size" in file_config:
-        config.extraction_batch_size = int(file_config["extraction_batch_size"])
-    if "extraction_llm_batch_size" in file_config:
-        config.extraction_llm_batch_size = int(file_config["extraction_llm_batch_size"])
-    elif "entity_extraction_batch_size" in file_config:
-        config.extraction_llm_batch_size = int(file_config["entity_extraction_batch_size"])
-    if "consolidation_batch_size" in file_config:
-        config.consolidation_batch_size = int(file_config["consolidation_batch_size"])
-    if "llm_concurrency" in file_config:
-        config.llm_concurrency = int(file_config["llm_concurrency"])
-    elif "consolidation_llm_concurrency" in file_config:
-        config.llm_concurrency = int(file_config["consolidation_llm_concurrency"])
-    elif "consolidation_workers" in file_config:
-        config.llm_concurrency = int(file_config["consolidation_workers"])
 
     # Provider-specific settings (overlay, not replace)
-    _apply_provider_config(config, file_config, "anthropic", AnthropicConfig)
+    _apply_provider_config(config, file_config, "local", LocalConfig)
     _apply_provider_config(config, file_config, "openai", OpenAIConfig)
     _apply_provider_config(config, file_config, "azure_openai", AzureOpenAIConfig)
     _apply_provider_config(config, file_config, "ollama", OllamaConfig)
@@ -242,10 +167,6 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
             config.decay.decay_interval = int(decay_data["decay_interval"])
         if "decay_rate" in decay_data:
             config.decay.decay_rate = float(decay_data["decay_rate"])
-
-    # Auto-ingest settings
-    if "ingest_buffer_size" in file_config:
-        config.ingest_buffer_size = int(file_config["ingest_buffer_size"])
 
     # Episode types
     if "episode_types" in file_config:
@@ -343,73 +264,18 @@ def load_config(project_dir: Optional[Path] = None) -> RemindConfig:
 def _apply_env_vars(config: RemindConfig) -> None:
     """Override config values from environment variables."""
     # Top-level
-    if llm := os.environ.get("LLM_PROVIDER"):
-        config.llm_provider = llm
     if embedding := os.environ.get("EMBEDDING_PROVIDER"):
         config.embedding_provider = embedding
-    if threshold := os.environ.get("CONSOLIDATION_THRESHOLD"):
-        try:
-            config.consolidation_threshold = int(threshold)
-        except ValueError:
-            logger.warning(f"Invalid CONSOLIDATION_THRESHOLD: {threshold}")
-    if auto_consolidate := os.environ.get("AUTO_CONSOLIDATE"):
-        config.auto_consolidate = auto_consolidate.lower() in ("true", "1", "yes")
-    if concepts_per_pass := os.environ.get("CONCEPTS_PER_PASS"):
-        try:
-            config.concepts_per_pass = int(concepts_per_pass)
-        except ValueError:
-            logger.warning(f"Invalid CONCEPTS_PER_PASS: {concepts_per_pass}")
-    elif concepts_per_pass := os.environ.get("CONSOLIDATION_CONCEPTS_PER_PASS"):
-        try:
-            config.concepts_per_pass = int(concepts_per_pass)
-        except ValueError:
-            logger.warning(f"Invalid CONSOLIDATION_CONCEPTS_PER_PASS: {concepts_per_pass}")
-    if extraction_batch := os.environ.get("EXTRACTION_BATCH_SIZE"):
-        try:
-            config.extraction_batch_size = int(extraction_batch)
-        except ValueError:
-            logger.warning(f"Invalid EXTRACTION_BATCH_SIZE: {extraction_batch}")
-    if extraction_llm_batch := os.environ.get("EXTRACTION_LLM_BATCH_SIZE"):
-        try:
-            config.extraction_llm_batch_size = int(extraction_llm_batch)
-        except ValueError:
-            logger.warning(f"Invalid EXTRACTION_LLM_BATCH_SIZE: {extraction_llm_batch}")
-    elif extraction_llm_batch := os.environ.get("ENTITY_EXTRACTION_BATCH_SIZE"):
-        try:
-            config.extraction_llm_batch_size = int(extraction_llm_batch)
-        except ValueError:
-            logger.warning(f"Invalid ENTITY_EXTRACTION_BATCH_SIZE: {extraction_llm_batch}")
-    if consolidation_batch := os.environ.get("CONSOLIDATION_BATCH_SIZE"):
-        try:
-            config.consolidation_batch_size = int(consolidation_batch)
-        except ValueError:
-            logger.warning(f"Invalid CONSOLIDATION_BATCH_SIZE: {consolidation_batch}")
-    if concurrency := os.environ.get("LLM_CONCURRENCY"):
-        try:
-            config.llm_concurrency = int(concurrency)
-        except ValueError:
-            logger.warning(f"Invalid LLM_CONCURRENCY: {concurrency}")
-    elif concurrency := os.environ.get("CONSOLIDATION_LLM_CONCURRENCY"):
-        try:
-            config.llm_concurrency = int(concurrency)
-        except ValueError:
-            logger.warning(f"Invalid CONSOLIDATION_LLM_CONCURRENCY: {concurrency}")
 
-    # Anthropic
-    if api_key := os.environ.get("ANTHROPIC_API_KEY"):
-        config.anthropic.api_key = api_key
-    if model := os.environ.get("ANTHROPIC_MODEL"):
-        config.anthropic.model = model
-    if ingest_model := os.environ.get("ANTHROPIC_INGEST_MODEL"):
-        config.anthropic.ingest_model = ingest_model
+    # Local embedding
+    if local_model := os.environ.get("LOCAL_EMBEDDING_MODEL"):
+        config.local.embedding_model = local_model
 
-    # OpenAI
+    # OpenAI (embedding only)
     if api_key := os.environ.get("OPENAI_API_KEY"):
         config.openai.api_key = api_key
     if base_url := os.environ.get("OPENAI_BASE_URL"):
         config.openai.base_url = base_url
-    if model := os.environ.get("OPENAI_MODEL"):
-        config.openai.model = model
     if embed_model := os.environ.get("OPENAI_EMBEDDING_MODEL"):
         config.openai.embedding_model = embed_model
     if embed_size := os.environ.get("OPENAI_EMBEDDING_SIZE"):
@@ -417,16 +283,12 @@ def _apply_env_vars(config: RemindConfig) -> None:
             config.openai.embedding_size = int(embed_size)
         except ValueError:
             pass
-    if ingest_model := os.environ.get("OPENAI_INGEST_MODEL"):
-        config.openai.ingest_model = ingest_model
 
-    # Azure OpenAI
+    # Azure OpenAI (embedding only)
     if api_key := os.environ.get("AZURE_OPENAI_API_KEY"):
         config.azure_openai.api_key = api_key
     if base_url := os.environ.get("AZURE_OPENAI_API_BASE_URL"):
         config.azure_openai.base_url = base_url
-    if deployment := os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"):
-        config.azure_openai.deployment_name = deployment
     if embed_deployment := os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"):
         config.azure_openai.embedding_deployment_name = embed_deployment
     if embed_size := os.environ.get("AZURE_OPENAI_EMBEDDING_SIZE"):
@@ -434,25 +296,13 @@ def _apply_env_vars(config: RemindConfig) -> None:
             config.azure_openai.embedding_size = int(embed_size)
         except ValueError:
             pass
-    if ingest_deployment := os.environ.get("AZURE_OPENAI_INGEST_DEPLOYMENT_NAME"):
-        config.azure_openai.ingest_deployment_name = ingest_deployment
 
-    # Ollama
+    # Ollama (embedding only)
     if url := os.environ.get("OLLAMA_URL"):
         config.ollama.url = url
-    if llm_model := os.environ.get("OLLAMA_LLM_MODEL"):
-        config.ollama.llm_model = llm_model
     if embed_model := os.environ.get("OLLAMA_EMBEDDING_MODEL"):
         config.ollama.embedding_model = embed_model
-    if ingest_model := os.environ.get("OLLAMA_INGEST_MODEL"):
-        config.ollama.ingest_model = ingest_model
 
-    # Auto-ingest
-    if buf_size := os.environ.get("INGEST_BUFFER_SIZE"):
-        try:
-            config.ingest_buffer_size = int(buf_size)
-        except ValueError:
-            logger.warning(f"Invalid INGEST_BUFFER_SIZE: {buf_size}")
     # Decay
     if decay_enabled := os.environ.get("REMIND_DECAY_ENABLED"):
         config.decay.enabled = decay_enabled.lower() in ("true", "1", "yes")
