@@ -37,7 +37,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from remind.models import (
-    Concept, Conflict, Episode, Fact, Relation, RelationType,
+    Concept, Conflict, Episode, Evidence, Fact, Relation, RelationType,
     Entity, EntityType, EntityRelation, EpisodeType,
     Topic, canonicalize_entity_name,
 )
@@ -282,6 +282,37 @@ class MemoryStore(ABC):
         """Find an open fact conflict involving this pair (order-insensitive)."""
         ...
 
+    # Evidence operations
+    @abstractmethod
+    def add_evidence(self, evidence: Evidence) -> str:
+        """Add an evidence link and return its ID."""
+        ...
+
+    @abstractmethod
+    def get_evidence(self, id: str) -> Optional[Evidence]:
+        """Get an evidence link by ID."""
+        ...
+
+    @abstractmethod
+    def get_evidence_for_concept(self, concept_id: str) -> list[Evidence]:
+        """Get all evidence links for a concept."""
+        ...
+
+    @abstractmethod
+    def get_evidence_for_episode(self, episode_id: str) -> list[Evidence]:
+        """Get all evidence links for an episode."""
+        ...
+
+    @abstractmethod
+    def delete_evidence(self, id: str) -> bool:
+        """Delete an evidence link. Returns True if found and deleted."""
+        ...
+
+    @abstractmethod
+    def delete_evidence_for_concept(self, concept_id: str) -> int:
+        """Delete all evidence links for a concept. Returns count deleted."""
+        ...
+
     # Embedding-based retrieval
     @abstractmethod
     def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
@@ -296,6 +327,24 @@ class MemoryStore(ABC):
     @abstractmethod
     def find_entities_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Entity, float]]:
         """Find entities by embedding similarity. Returns (entity, similarity) pairs."""
+        ...
+
+    @abstractmethod
+    def find_facts_by_embedding(
+        self,
+        embedding: list[float],
+        k: int = 10,
+        cluster_id: Optional[str] = None,
+        active_only: bool = True,
+    ) -> list[tuple[Fact, float]]:
+        """Find facts by embedding similarity. Returns (fact, similarity) pairs.
+        
+        Args:
+            embedding: Query embedding vector.
+            k: Maximum number of facts to return.
+            cluster_id: If set, only search within this fact cluster.
+            active_only: If True (default), only return facts with valid_to IS NULL.
+        """
         ...
 
     # Graph traversal
@@ -778,6 +827,7 @@ facts_table = Table(
     Column("source_ref", Text, nullable=True),
     Column("source_episode_id", String, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
+    Column("embedding", LargeBinary, nullable=True),
 )
 
 conflicts_table = Table(
@@ -796,6 +846,20 @@ conflicts_table = Table(
     Column("resolved_by", Text, nullable=True),
     Column("winning_fact_id", String, nullable=True),
 )
+
+evidence_table = Table(
+    "evidence", metadata_obj,
+    Column("id", String, primary_key=True),
+    Column("episode_id", String, ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False),
+    Column("concept_id", String, ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False),
+    Column("link_type", String, nullable=False, server_default="supports"),
+    Column("strength", Float, default=0.5),
+    Column("note", Text, nullable=True),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
+Index("idx_evidence_episode", evidence_table.c.episode_id)
+Index("idx_evidence_concept", evidence_table.c.concept_id)
 
 metadata_table = Table(
     "metadata", metadata_obj,
@@ -965,6 +1029,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
         self._init_vector_tables()
         self._backfill_facts_from_specifics()
         self._backfill_conflicts_from_concepts()
+        self._backfill_evidence_from_source_episodes()
 
     def _backfill_facts_from_specifics(self) -> None:
         """One-time backfill: turn legacy fact_cluster `specifics` strings
@@ -979,7 +1044,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
         facts: list[Fact] = []
         for concept in self.get_all_concepts():
-            if concept.concept_type != "fact_cluster" or not concept.specifics:
+            if concept.concept_type not in ("fact_cluster", "fact") or not concept.specifics:
                 continue
             if self.get_facts(cluster_id=concept.id, limit=1):
                 continue  # already has fact rows
@@ -1041,6 +1106,39 @@ class SQLAlchemyMemoryStore(MemoryStore):
             logger.info(f"Backfilled {migrated} conflicts from legacy concept conflict dicts")
 
         self.set_metadata("conflicts_backfill_v1", "done")
+
+    def _backfill_evidence_from_source_episodes(self) -> None:
+        """One-time backfill: convert legacy Concept.source_episodes lists
+        to Evidence links with type='supports' and default strength.
+        Guarded by a metadata flag so it runs once per database.
+        """
+        if self.get_metadata("evidence_backfill_v1"):
+            return
+
+        migrated = 0
+        for concept in self.get_all_concepts():
+            if not concept.source_episodes:
+                continue
+            # Check if evidence already exists for this concept
+            existing_evidence = self.get_evidence_for_concept(concept.id)
+            existing_episode_ids = {e.episode_id for e in existing_evidence}
+            
+            for episode_id in concept.source_episodes:
+                if episode_id in existing_episode_ids:
+                    continue
+                evidence = Evidence(
+                    episode_id=episode_id,
+                    concept_id=concept.id,
+                    link_type="supports",
+                    strength=0.5,
+                )
+                self.add_evidence(evidence)
+                migrated += 1
+
+        if migrated:
+            logger.info(f"Backfilled {migrated} evidence links from legacy source_episodes")
+
+        self.set_metadata("evidence_backfill_v1", "done")
 
     def _run_migrations(self):
         """Run additive schema migrations for backwards compatibility."""
@@ -1147,6 +1245,19 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 conn.commit()
                 logger.info(f"Created vec_episodes table ({dims} dims)")
 
+            existing = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_facts'")
+            ).fetchone()
+            if not existing:
+                conn.execute(text(
+                    f"CREATE VIRTUAL TABLE vec_facts USING vec0("
+                    f"fact_id TEXT PRIMARY KEY, "
+                    f"embedding float[{dims}] distance_metric=cosine)"
+                ))
+                self._backfill_sqlite_vec(conn, "facts")
+                conn.commit()
+                logger.info(f"Created vec_facts table ({dims} dims)")
+
     def _backfill_sqlite_vec(self, conn, table: str) -> None:
         """Populate a vec0 table from existing embeddings in the main table."""
         if table == "concepts":
@@ -1160,7 +1271,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     conn.execute(text(
                         "INSERT INTO vec_concepts(concept_id, embedding) VALUES (:id, :emb)"
                     ), {"id": row.id, "emb": vec.tobytes()})
-        else:
+        elif table == "episodes":
             rows = conn.execute(
                 select(episodes_table.c.id, episodes_table.c.embedding)
                 .where(episodes_table.c.embedding.isnot(None))
@@ -1170,6 +1281,17 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     vec = np.frombuffer(row.embedding, dtype=np.float32)
                     conn.execute(text(
                         "INSERT INTO vec_episodes(episode_id, embedding) VALUES (:id, :emb)"
+                    ), {"id": row.id, "emb": vec.tobytes()})
+        elif table == "facts":
+            rows = conn.execute(
+                select(facts_table.c.id, facts_table.c.embedding)
+                .where(facts_table.c.embedding.isnot(None))
+            ).fetchall()
+            for row in rows:
+                if row.embedding:
+                    vec = np.frombuffer(row.embedding, dtype=np.float32)
+                    conn.execute(text(
+                        "INSERT INTO vec_facts(fact_id, embedding) VALUES (:id, :emb)"
                     ), {"id": row.id, "emb": vec.tobytes()})
 
     # pgvector HNSW indexes support at most 2000 dimensions.
@@ -1189,7 +1311,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             insp = inspect(self.engine)
             dims = self._vec_dimensions
 
-            for table_name in ("concepts", "episodes"):
+            for table_name in ("concepts", "episodes", "facts"):
                 if _has_column_in_list(insp.get_columns(table_name), "embedding_vec"):
                     continue
                 if not dims:
@@ -1218,7 +1340,12 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def _backfill_pgvector(self, conn, table: str) -> None:
         """Convert existing LargeBinary embeddings to pgvector format."""
-        main_table = concepts_table if table == "concepts" else episodes_table
+        if table == "concepts":
+            main_table = concepts_table
+        elif table == "episodes":
+            main_table = episodes_table
+        else:
+            main_table = facts_table
         rows = conn.execute(
             select(main_table.c.id, main_table.c.embedding)
             .where(main_table.c.embedding.isnot(None))
@@ -1794,6 +1921,187 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:k]
+
+    # ------------------------------------------------------------------
+    # Fact embedding-based retrieval
+    # ------------------------------------------------------------------
+
+    def find_facts_by_embedding(
+        self,
+        embedding: list[float],
+        k: int = 10,
+        cluster_id: Optional[str] = None,
+        active_only: bool = True,
+    ) -> list[tuple[Fact, float]]:
+        if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
+            return self._find_facts_sqlite_vec(embedding, k, cluster_id, active_only)
+        elif self._vec_backend == "pgvector" and self._vec_dimensions:
+            return self._find_facts_pgvector(embedding, k, cluster_id, active_only)
+        return self._find_facts_brute_force(embedding, k, cluster_id, active_only)
+
+    def _find_facts_sqlite_vec(
+        self,
+        embedding: list[float],
+        k: int,
+        cluster_id: Optional[str],
+        active_only: bool,
+    ) -> list[tuple[Fact, float]]:
+        query_vec = np.array(embedding, dtype=np.float32)
+        with self._connect() as conn:
+            try:
+                rows = conn.execute(text(
+                    "SELECT fact_id, distance FROM vec_facts "
+                    "WHERE embedding MATCH :vec ORDER BY distance LIMIT :limit"
+                ), {"vec": query_vec.tobytes(), "limit": k * 3}).fetchall()
+            except Exception:
+                return self._find_facts_brute_force(embedding, k, cluster_id, active_only)
+
+            results = []
+            for row in rows:
+                fact = self.get_fact(row.fact_id)
+                if not fact:
+                    continue
+                if cluster_id and fact.cluster_id != cluster_id:
+                    continue
+                if active_only and not fact.is_active:
+                    continue
+                similarity = 1.0 - row.distance
+                results.append((fact, similarity))
+                if len(results) >= k:
+                    break
+
+            return results
+
+    def _find_facts_pgvector(
+        self,
+        embedding: list[float],
+        k: int,
+        cluster_id: Optional[str],
+        active_only: bool,
+    ) -> list[tuple[Fact, float]]:
+        vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+        with self._connect() as conn:
+            try:
+                base_query = (
+                    "SELECT id, cluster_id, statement, attribute, entity_ids, "
+                    "valid_from, valid_to, superseded_by, asserted_by, source_ref, "
+                    "source_episode_id, created_at, embedding, "
+                    "embedding_vec <=> :vec AS distance "
+                    "FROM facts WHERE embedding_vec IS NOT NULL "
+                )
+                conditions = []
+                params = {"vec": vec_str, "limit": k * 3}
+
+                if cluster_id:
+                    conditions.append("cluster_id = :cluster_id")
+                    params["cluster_id"] = cluster_id
+                if active_only:
+                    conditions.append("valid_to IS NULL")
+
+                if conditions:
+                    base_query += "AND " + " AND ".join(conditions) + " "
+
+                base_query += "ORDER BY embedding_vec <=> :vec LIMIT :limit"
+
+                rows = conn.execute(text(base_query), params).fetchall()
+            except Exception:
+                return self._find_facts_brute_force(embedding, k, cluster_id, active_only)
+
+            results = []
+            for row in rows:
+                fact = Fact(
+                    id=row.id,
+                    cluster_id=row.cluster_id,
+                    statement=row.statement,
+                    attribute=row.attribute,
+                    entity_ids=json.loads(row.entity_ids) if row.entity_ids else [],
+                    valid_from=row.valid_from,
+                    valid_to=row.valid_to,
+                    superseded_by=row.superseded_by,
+                    asserted_by=row.asserted_by,
+                    source_ref=row.source_ref,
+                    source_episode_id=row.source_episode_id,
+                    created_at=row.created_at,
+                    embedding=_bytes_to_embedding(row.embedding) if row.embedding else None,
+                )
+                similarity = 1.0 - row.distance
+                results.append((fact, similarity))
+
+            return results[:k]
+
+    def _find_facts_brute_force(
+        self,
+        embedding: list[float],
+        k: int,
+        cluster_id: Optional[str],
+        active_only: bool,
+    ) -> list[tuple[Fact, float]]:
+        with self._connect() as conn:
+            stmt = select(facts_table).where(facts_table.c.embedding.isnot(None))
+
+            if cluster_id:
+                stmt = stmt.where(facts_table.c.cluster_id == cluster_id)
+            if active_only:
+                stmt = stmt.where(facts_table.c.valid_to.is_(None))
+
+            rows = conn.execute(stmt).fetchall()
+
+            results = []
+            for row in rows:
+                if not row.embedding:
+                    continue
+                stored = _bytes_to_embedding(row.embedding)
+                sim = cosine_similarity(embedding, stored)
+                fact = Fact(
+                    id=row.id,
+                    cluster_id=row.cluster_id,
+                    statement=row.statement,
+                    attribute=row.attribute,
+                    entity_ids=json.loads(row.entity_ids) if row.entity_ids else [],
+                    valid_from=row.valid_from,
+                    valid_to=row.valid_to,
+                    superseded_by=row.superseded_by,
+                    asserted_by=row.asserted_by,
+                    source_ref=row.source_ref,
+                    source_episode_id=row.source_episode_id,
+                    created_at=row.created_at,
+                    embedding=stored,
+                )
+                results.append((fact, sim))
+
+            results.sort(key=lambda x: x[1], reverse=True)
+            return results[:k]
+
+    def _upsert_vec_fact(self, conn, fact_id: str, embedding: Optional[list[float]]) -> None:
+        """Sync a fact embedding to the vector index."""
+        if self._vec_backend is None or embedding is None:
+            return
+        self._ensure_vec_dimensions(embedding, conn=conn)
+
+        if self._vec_backend == "sqlite-vec":
+            vec = np.array(embedding, dtype=np.float32)
+            conn.execute(text(
+                "DELETE FROM vec_facts WHERE fact_id = :id"
+            ), {"id": fact_id})
+            conn.execute(text(
+                "INSERT INTO vec_facts(fact_id, embedding) VALUES (:id, :emb)"
+            ), {"id": fact_id, "emb": vec.tobytes()})
+        elif self._vec_backend == "pgvector":
+            vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+            conn.execute(text(
+                "UPDATE facts SET embedding_vec = :vec WHERE id = :id"
+            ), {"vec": vec_str, "id": fact_id})
+
+    def _delete_vec_fact(self, conn, fact_id: str) -> None:
+        """Remove a fact from the vector index."""
+        if self._vec_backend == "sqlite-vec":
+            conn.execute(text(
+                "DELETE FROM vec_facts WHERE fact_id = :id"
+            ), {"id": fact_id})
+        elif self._vec_backend == "pgvector":
+            conn.execute(text(
+                "UPDATE facts SET embedding_vec = NULL WHERE id = :id"
+            ), {"id": fact_id})
 
     # ------------------------------------------------------------------
     # Graph traversal
@@ -2663,7 +2971,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
         legacy_check_needed = []
         
         for concept in all_concepts:
-            if concept.concept_type != "fact_cluster":
+            if concept.concept_type not in ("fact_cluster", "fact"):
                 continue
             # Direct lookup via entity_ids field
             if entity_id in concept.entity_ids:
@@ -2712,6 +3020,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             "source_ref": fact.source_ref,
             "source_episode_id": fact.source_episode_id,
             "created_at": fact.created_at,
+            "embedding": _embedding_to_bytes(fact.embedding),
         }
 
     @staticmethod
@@ -2721,6 +3030,9 @@ class SQLAlchemyMemoryStore(MemoryStore):
             entity_ids = json.loads(entity_ids_raw) if isinstance(entity_ids_raw, str) else (entity_ids_raw or [])
         except (json.JSONDecodeError, TypeError):
             entity_ids = []
+        embedding = None
+        if hasattr(row, 'embedding') and row.embedding:
+            embedding = _bytes_to_embedding(row.embedding)
         return Fact(
             id=row.id,
             cluster_id=row.cluster_id,
@@ -2734,11 +3046,13 @@ class SQLAlchemyMemoryStore(MemoryStore):
             source_ref=row.source_ref,
             source_episode_id=row.source_episode_id,
             created_at=row.created_at or datetime.now(),
+            embedding=embedding,
         )
 
     def add_fact(self, fact: Fact) -> str:
         with self._connect() as conn:
             conn.execute(facts_table.insert().values(**self._fact_insert_values(fact)))
+            self._upsert_vec_fact(conn, fact.id, fact.embedding)
         return fact.id
 
     def add_facts_batch(self, facts: list[Fact]) -> list[str]:
@@ -2749,6 +3063,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 facts_table.insert(),
                 [self._fact_insert_values(f) for f in facts],
             )
+            for f in facts:
+                self._upsert_vec_fact(conn, f.id, f.embedding)
         return [f.id for f in facts]
 
     def get_fact(self, id: str) -> Optional[Fact]:
@@ -2792,6 +3108,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             conn.execute(
                 facts_table.update().where(facts_table.c.id == fact.id).values(**values)
             )
+            self._upsert_vec_fact(conn, fact.id, fact.embedding)
 
     def supersede_fact(
         self,
@@ -2920,6 +3237,74 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 )
             ).fetchone()
             return self._row_to_conflict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Evidence operations
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_evidence(row) -> Evidence:
+        return Evidence(
+            id=row.id,
+            episode_id=row.episode_id,
+            concept_id=row.concept_id,
+            link_type=row.link_type,
+            strength=row.strength or 0.5,
+            note=row.note,
+            created_at=row.created_at or datetime.now(),
+        )
+
+    def add_evidence(self, evidence: Evidence) -> str:
+        with self._connect() as conn:
+            conn.execute(evidence_table.insert().values(
+                id=evidence.id,
+                episode_id=evidence.episode_id,
+                concept_id=evidence.concept_id,
+                link_type=evidence.link_type,
+                strength=evidence.strength,
+                note=evidence.note,
+                created_at=evidence.created_at,
+            ))
+        return evidence.id
+
+    def get_evidence(self, id: str) -> Optional[Evidence]:
+        with self._connect() as conn:
+            row = conn.execute(
+                select(evidence_table).where(evidence_table.c.id == id)
+            ).fetchone()
+            return self._row_to_evidence(row) if row else None
+
+    def get_evidence_for_concept(self, concept_id: str) -> list[Evidence]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(evidence_table)
+                .where(evidence_table.c.concept_id == concept_id)
+                .order_by(evidence_table.c.created_at.desc())
+            ).fetchall()
+            return [self._row_to_evidence(row) for row in rows]
+
+    def get_evidence_for_episode(self, episode_id: str) -> list[Evidence]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(evidence_table)
+                .where(evidence_table.c.episode_id == episode_id)
+                .order_by(evidence_table.c.created_at.desc())
+            ).fetchall()
+            return [self._row_to_evidence(row) for row in rows]
+
+    def delete_evidence(self, id: str) -> bool:
+        with self._connect() as conn:
+            result = conn.execute(
+                evidence_table.delete().where(evidence_table.c.id == id)
+            )
+            return result.rowcount > 0
+
+    def delete_evidence_for_concept(self, concept_id: str) -> int:
+        with self._connect() as conn:
+            result = conn.execute(
+                evidence_table.delete().where(evidence_table.c.concept_id == concept_id)
+            )
+            return result.rowcount
 
     # ------------------------------------------------------------------
     # Entity relation operations

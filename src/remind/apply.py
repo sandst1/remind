@@ -15,9 +15,10 @@ from typing import Any, Optional, Union
 from uuid import uuid4
 
 from remind.models import (
-    Episode, Concept, Fact, Conflict, Topic, Relation, RelationType,
+    Episode, Concept, Evidence, Fact, Conflict, Topic, Relation, RelationType,
     EpisodeType, EntityType, Entity, EntityRelation,
     slugify, canonicalize_entity_name, strip_entity_label_prefix,
+    EVIDENCE_SUPPORTS,
 )
 from remind.store import MemoryStore
 from remind.providers.base import EmbeddingProvider
@@ -150,7 +151,7 @@ def parse_compact_line(line: str, line_num: int) -> tuple[Optional[dict], Option
     if trailing_string:
         if op_type in ("remember", "concept"):
             op["content"] = trailing_string
-        elif op_type in ("resolve", "dismiss"):
+        elif op_type in ("resolve", "dismiss", "evidence", "reshape", "merge", "split"):
             op["note"] = trailing_string
         elif op_type == "topic":
             op["name"] = trailing_string
@@ -338,6 +339,8 @@ class ApplyEngine:
             "remember", "supersede", "conflict", "resolve", "dismiss",
             "concept", "update", "link", "topic", "set_topic",
             "delete", "restore", "processed", "entity_relation",
+            "evidence", "unlink",
+            "reshape", "merge", "split",
         }
         
         for i, op in enumerate(ops):
@@ -433,6 +436,41 @@ class ApplyEngine:
                         line=None, op_index=i, op_type=op_type,
                         message="entity_relation requires 'source', 'target', and 'relation'",
                     ))
+            
+            elif op_type == "evidence":
+                if not op.get("concept") or not op.get("episode"):
+                    errors.append(OpError(
+                        line=None, op_index=i, op_type=op_type,
+                        message="evidence requires 'concept' and 'episode'",
+                    ))
+            
+            elif op_type == "unlink":
+                if not op.get("concept") or not op.get("episode"):
+                    errors.append(OpError(
+                        line=None, op_index=i, op_type=op_type,
+                        message="unlink requires 'concept' and 'episode'",
+                    ))
+            
+            elif op_type == "reshape":
+                if not op.get("id"):
+                    errors.append(OpError(
+                        line=None, op_index=i, op_type=op_type,
+                        message="reshape requires 'id'",
+                    ))
+            
+            elif op_type == "merge":
+                if not op.get("from") or not op.get("into"):
+                    errors.append(OpError(
+                        line=None, op_index=i, op_type=op_type,
+                        message="merge requires 'from' and 'into'",
+                    ))
+            
+            elif op_type == "split":
+                if not op.get("id") or not op.get("into"):
+                    errors.append(OpError(
+                        line=None, op_index=i, op_type=op_type,
+                        message="split requires 'id' and 'into'",
+                    ))
         
         return errors
     
@@ -476,6 +514,16 @@ class ApplyEngine:
                 return self._op_processed(index, op, refs, ref_name)
             elif op_type == "entity_relation":
                 return self._op_entity_relation(index, op, refs, ref_name)
+            elif op_type == "evidence":
+                return self._op_evidence(index, op, refs, ref_name)
+            elif op_type == "unlink":
+                return self._op_unlink(index, op, refs, ref_name)
+            elif op_type == "reshape":
+                return self._op_reshape(index, op, refs, ref_name)
+            elif op_type == "merge":
+                return self._op_merge(index, op, refs, ref_name)
+            elif op_type == "split":
+                return self._op_split(index, op, refs, ref_name)
             else:
                 return OpResult(
                     op_index=index, op_type=op_type, success=False,
@@ -967,5 +1015,219 @@ class ApplyEngine:
             op_index=index,
             op_type="entity_relation",
             success=True,
+            ref=ref_name,
+        )
+    
+    def _op_evidence(
+        self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
+    ) -> OpResult:
+        """Execute an evidence operation to link an episode to a concept."""
+        concept_id = self._resolve_ref(op.get("concept", ""), refs)
+        episode_id = self._resolve_ref(op.get("episode", ""), refs)
+        link_type = op.get("type") or op.get("t", EVIDENCE_SUPPORTS)
+        strength = float(op.get("strength", 0.5))
+        note = op.get("note")
+        
+        # Trailing string becomes note if not set
+        if not note:
+            for key, value in op.items():
+                if key not in ("op", "concept", "episode", "type", "t", "strength", "as"):
+                    note = str(value)
+                    break
+        
+        evidence = Evidence(
+            episode_id=episode_id,
+            concept_id=concept_id,
+            link_type=link_type,
+            strength=strength,
+            note=note,
+        )
+        
+        evidence_id = self.store.add_evidence(evidence)
+        
+        return OpResult(
+            op_index=index,
+            op_type="evidence",
+            success=True,
+            id=evidence_id,
+            ref=ref_name,
+        )
+    
+    def _op_unlink(
+        self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
+    ) -> OpResult:
+        """Execute an unlink operation to remove evidence links between an episode and concept."""
+        concept_id = self._resolve_ref(op.get("concept", ""), refs)
+        episode_id = self._resolve_ref(op.get("episode", ""), refs)
+        
+        # Find and delete all evidence links between this episode and concept
+        evidence_links = self.store.get_evidence_for_concept(concept_id)
+        deleted_count = 0
+        for ev in evidence_links:
+            if ev.episode_id == episode_id:
+                self.store.delete_evidence(ev.id)
+                deleted_count += 1
+        
+        return OpResult(
+            op_index=index,
+            op_type="unlink",
+            success=True,
+            ref=ref_name,
+        )
+    
+    def _op_reshape(
+        self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
+    ) -> OpResult:
+        """Change a concept's type while preserving its identity and history."""
+        concept_id = self._resolve_ref(op.get("id", ""), refs)
+        new_type = op.get("type") or op.get("t")
+        note = op.get("note")
+        
+        concept = self.store.get_concept(concept_id)
+        if not concept:
+            return OpResult(
+                op_index=index, op_type="reshape", success=False,
+                error=f"Concept not found: {concept_id}",
+            )
+        
+        old_type = concept.concept_type
+        concept.concept_type = new_type or old_type
+        concept.lineage_note = note or f"reshaped from {old_type}"
+        concept.updated_at = datetime.now()
+        
+        self.store.update_concept(concept)
+        
+        return OpResult(
+            op_index=index,
+            op_type="reshape",
+            success=True,
+            id=concept_id,
+            ref=ref_name,
+        )
+    
+    def _op_merge(
+        self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
+    ) -> OpResult:
+        """Merge multiple concepts into a new one."""
+        from_ids_raw = op.get("from", [])
+        if isinstance(from_ids_raw, str):
+            from_ids_raw = [f.strip() for f in from_ids_raw.split(",")]
+        from_ids = [self._resolve_ref(fid, refs) for fid in from_ids_raw]
+        
+        into_id = self._resolve_ref(op.get("into", ""), refs)
+        note = op.get("note")
+        
+        # Get source concepts
+        source_concepts = []
+        for cid in from_ids:
+            c = self.store.get_concept(cid)
+            if c:
+                source_concepts.append(c)
+        
+        if not source_concepts:
+            return OpResult(
+                op_index=index, op_type="merge", success=False,
+                error="No source concepts found",
+            )
+        
+        # Create merged concept if it doesn't exist
+        merged = self.store.get_concept(into_id)
+        if not merged:
+            # Combine data from source concepts
+            merged = Concept(
+                id=into_id,
+                title=source_concepts[0].title,
+                summary=" | ".join(c.summary for c in source_concepts if c.summary),
+                confidence=max(c.confidence for c in source_concepts),
+                concept_type=source_concepts[0].concept_type,
+                parent_id=source_concepts[0].id,
+                lineage_note=note or f"merged from {', '.join(from_ids)}",
+            )
+            
+            # Combine entity_ids
+            all_entities: set[str] = set()
+            for c in source_concepts:
+                all_entities.update(c.entity_ids or [])
+            merged.entity_ids = list(all_entities)
+            
+            # Combine source_episodes
+            all_episodes: set[str] = set()
+            for c in source_concepts:
+                all_episodes.update(c.source_episodes or [])
+            merged.source_episodes = list(all_episodes)
+            
+            self.store.add_concept(merged)
+        else:
+            merged.lineage_note = note or f"merged from {', '.join(from_ids)}"
+            merged.updated_at = datetime.now()
+            self.store.update_concept(merged)
+        
+        # Soft-delete source concepts
+        for c in source_concepts:
+            c.deleted_at = datetime.now()
+            c.lineage_note = f"merged into {into_id}"
+            self.store.update_concept(c)
+        
+        return OpResult(
+            op_index=index,
+            op_type="merge",
+            success=True,
+            id=into_id,
+            ref=ref_name,
+        )
+    
+    def _op_split(
+        self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
+    ) -> OpResult:
+        """Split a concept into multiple new concepts."""
+        source_id = self._resolve_ref(op.get("id", ""), refs)
+        into_ids_raw = op.get("into", [])
+        if isinstance(into_ids_raw, str):
+            into_ids_raw = [i.strip() for i in into_ids_raw.split(",")]
+        into_ids = [self._resolve_ref(iid, refs) for iid in into_ids_raw]
+        
+        note = op.get("note")
+        
+        source = self.store.get_concept(source_id)
+        if not source:
+            return OpResult(
+                op_index=index, op_type="split", success=False,
+                error=f"Source concept not found: {source_id}",
+            )
+        
+        if not into_ids:
+            return OpResult(
+                op_index=index, op_type="split", success=False,
+                error="No target IDs specified for split",
+            )
+        
+        created_ids = []
+        for new_id in into_ids:
+            new_concept = self.store.get_concept(new_id)
+            if not new_concept:
+                # Create new concept derived from source
+                new_concept = Concept(
+                    id=new_id,
+                    title=f"{source.title or source.id} (split)",
+                    summary=source.summary,
+                    confidence=source.confidence,
+                    concept_type=source.concept_type,
+                    parent_id=source_id,
+                    lineage_note=note or f"split from {source_id}",
+                    entity_ids=list(source.entity_ids or []),
+                )
+                self.store.add_concept(new_concept)
+                created_ids.append(new_id)
+        
+        # Mark source as split
+        source.lineage_note = f"split into {', '.join(into_ids)}"
+        source.updated_at = datetime.now()
+        self.store.update_concept(source)
+        
+        return OpResult(
+            op_index=index,
+            op_type="split",
+            success=True,
+            id=",".join(created_ids) if created_ids else source_id,
             ref=ref_name,
         )

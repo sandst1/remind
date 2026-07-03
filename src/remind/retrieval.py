@@ -157,6 +157,37 @@ class MemoryRetriever:
             RelationType.SUPERSEDES: 0.1,    # Very weak — superseded concepts shouldn't dominate
         }
     
+    def _compute_evidence_weight(self, concept_id: str) -> float:
+        """Compute net evidence strength for a concept.
+        
+        Returns a multiplier based on the balance of supporting vs contradicting
+        evidence. Default is 1.0 (no evidence or balanced evidence).
+        
+        - More supporting evidence -> weight > 1.0 (up to 1.5)
+        - More contradicting evidence -> weight < 1.0 (down to 0.5)
+        """
+        evidence_links = self.store.get_evidence_for_concept(concept_id)
+        if not evidence_links:
+            return 1.0
+        
+        net_strength = 0.0
+        for ev in evidence_links:
+            if ev.link_type == "supports":
+                net_strength += ev.strength
+            elif ev.link_type == "contradicts":
+                net_strength -= ev.strength
+            elif ev.link_type == "exemplifies":
+                net_strength += ev.strength * 0.5
+            elif ev.link_type == "qualifies":
+                net_strength += ev.strength * 0.3
+            elif ev.link_type == "supersedes":
+                net_strength -= ev.strength * 0.7
+        
+        # Clamp to reasonable range [0.5, 1.5]
+        # positive net -> boost, negative net -> penalty
+        weight = 1.0 + (net_strength * 0.2)
+        return max(0.5, min(1.5, weight))
+    
     async def retrieve(
         self,
         query: str,
@@ -225,13 +256,14 @@ class MemoryRetriever:
 
             weighted_activation = fused * concept.confidence
             decay_factor = max(0.0, min(1.0, concept.decay_factor))
-            final_activation = weighted_activation * decay_factor
+            evidence_weight = self._compute_evidence_weight(concept.id)
+            final_activation = weighted_activation * decay_factor * evidence_weight
 
             if final_activation > self.activation_threshold:
                 activation_map[concept.id] = (final_activation, "embedding", 0)
                 concept_cache[concept.id] = concept
-                if decay_factor < 0.5:
-                    logger.debug(f"Concept {concept.id} activation reduced by decay_factor {decay_factor:.2f}: {weighted_activation:.3f} -> {final_activation:.3f}")
+                if decay_factor < 0.5 or evidence_weight < 0.8:
+                    logger.debug(f"Concept {concept.id} activation adjusted: decay={decay_factor:.2f}, evidence={evidence_weight:.2f}")
         t_initial_activation_ms = (time.perf_counter() - t_initial_activation_start) * 1000.0
         
         logger.debug(f"Initial activation: {len(activation_map)} concepts (topic={topic})")
@@ -251,8 +283,9 @@ class MemoryRetriever:
                 for related_concept, relation in related:
                     # Calculate spread activation, weighted by target concept's confidence
                     relation_weight = self.relation_weights.get(relation.type, 0.5)
-                    # Apply decay factor to target concept
+                    # Apply decay factor and evidence weight to target concept
                     target_decay = max(0.0, min(1.0, related_concept.decay_factor))
+                    target_evidence = self._compute_evidence_weight(related_concept.id)
                     spread_activation = (
                         activation
                         * relation.strength
@@ -260,6 +293,7 @@ class MemoryRetriever:
                         * (self.spread_decay ** (hop + 1))
                         * related_concept.confidence  # Weight by target's reliability
                         * target_decay  # Weight by target's decay factor
+                        * target_evidence  # Weight by net evidence strength
                     )
 
                     if topic and related_concept.topic_id and related_concept.topic_id != topic:
@@ -648,15 +682,16 @@ class MemoryRetriever:
 
             weighted_activation = fused * concept.confidence
             decay_factor = max(0.0, min(1.0, concept.decay_factor))
-            final_activation = weighted_activation * decay_factor
+            evidence_weight = self._compute_evidence_weight(concept.id)
+            final_activation = weighted_activation * decay_factor * evidence_weight
 
             if final_activation > self.activation_threshold:
                 activation_map[concept.id] = (final_activation, "embedding", 0)
                 concept_cache[concept.id] = concept
-                if decay_factor < 0.5:
+                if decay_factor < 0.5 or evidence_weight < 0.8:
                     logger.debug(
-                        f"Concept {concept.id} activation reduced by decay_factor "
-                        f"{decay_factor:.2f}: {weighted_activation:.3f} -> {final_activation:.3f}"
+                        f"Concept {concept.id} activation adjusted: "
+                        f"decay={decay_factor:.2f}, evidence={evidence_weight:.2f}"
                     )
         t_initial_activation_ms = (time.perf_counter() - t_initial_activation_start) * 1000.0
 
@@ -675,6 +710,7 @@ class MemoryRetriever:
                 for related_concept, relation in related:
                     relation_weight = self.relation_weights.get(relation.type, 0.5)
                     target_decay = max(0.0, min(1.0, related_concept.decay_factor))
+                    target_evidence = self._compute_evidence_weight(related_concept.id)
                     spread_activation = (
                         activation
                         * relation.strength
@@ -682,6 +718,7 @@ class MemoryRetriever:
                         * (self.spread_decay ** (hop + 1))
                         * related_concept.confidence
                         * target_decay
+                        * target_evidence
                     )
 
                     if topic and related_concept.topic_id and related_concept.topic_id != topic:
@@ -1142,11 +1179,12 @@ class MemoryRetriever:
         updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
 
         # Include concept type badge for non-legacy concepts
+        # Supports any string type (freeform concept types)
         type_badge = ""
-        if c.concept_type == "pattern":
-            type_badge = "[pattern] "
-        elif c.concept_type == "fact_cluster":
+        if c.concept_type == "fact_cluster" or c.concept_type == "fact":
             type_badge = "[facts] "
+        elif c.concept_type and c.concept_type != "legacy":
+            type_badge = f"[{c.concept_type}] "
 
         if c.title:
             header = f"[{c.id}] {type_badge}{c.title} (confidence: {c.confidence:.2f}, last updated: {updated}"
@@ -1160,7 +1198,8 @@ class MemoryRetriever:
         lines.append(header)
 
         # Format differently based on concept type
-        if c.concept_type == "fact_cluster" and (c.specifics or as_of):
+        # "fact" and "fact_cluster" both show validity windows
+        if c.concept_type in ("fact_cluster", "fact") and (c.specifics or as_of):
             def _fact_line(fact) -> str:
                 meta = []
                 if fact.asserted_by:
@@ -1288,7 +1327,7 @@ class MemoryRetriever:
             # Fact clusters render their fact rows (with provenance and
             # validity) above; repeating raw episodes would resurface
             # superseded values as if current.
-            if c.concept_type != "fact_cluster":
+            if c.concept_type not in ("fact_cluster", "fact"):
                 lines.append("")
                 lines.append("  Source episodes:")
                 for episode in source_eps:

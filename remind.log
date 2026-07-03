@@ -1,0 +1,3 @@
+2026-07-03 20:33:14,614 - remind.config - INFO - File logging enabled: remind.log
+2026-07-03 20:33:18,703 - remind.store - INFO - Vector backend: sqlite-vec
+2026-07-03 20:33:18,711 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions

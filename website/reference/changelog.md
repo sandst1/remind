@@ -2,6 +2,26 @@
 
 All notable changes to Remind.
 
+## [0.12.0] - 2026-07-03
+
+### Added
+
+- **Fact embeddings** — Facts now have vector embeddings for semantic collision detection. Collisions are detected via both entity overlap AND embedding similarity.
+
+- **Evidence-based episode links** — Episodes link to concepts with typed relationships (`supports`, `contradicts`, `exemplifies`, `qualifies`, `supersedes`). New apply operations: `evidence` and `unlink`.
+
+- **Freeform concept types** — Concepts can have any type string. Well-known types: `fact`, `pattern`, `rule`, `procedure`, `hypothesis`.
+
+- **Concept evolution operations** — `reshape`, `merge`, `split` for evolving concepts as living documents.
+
+### Changed
+
+- **Collision detection combines Jaccard + embedding similarity** — Facts sharing entities OR with similar embeddings are flagged.
+
+- **Evidence-weighted retrieval** — Concepts with more supporting evidence rank higher; contradicting evidence reduces activation.
+
+- **ConceptType enum deprecated** — Use `CONCEPT_TYPE_*` constants instead.
+
 ## [0.11.5] - 2026-07-03
 
 ### Fixed

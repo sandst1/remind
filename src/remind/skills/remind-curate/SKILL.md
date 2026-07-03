@@ -91,6 +91,62 @@ Both facts stay active — use when the conflict is apparent not real (different
 
 Use provenance (who asserted each fact, when, source links) to decide. If the information is genuinely contested and you can't determine the truth, ask rather than guess.
 
+## Managing evidence links
+
+Episodes link to concepts with typed relationships. During curation:
+
+```bash
+remind apply << 'EOF'
+# Add supporting evidence to a concept
+evidence concept=c-123 episode=ep-456 type=supports strength=0.8 "confirms the pattern"
+
+# Mark an episode as contradicting a concept
+evidence concept=c-123 episode=ep-789 type=contradicts strength=0.6 "edge case failure"
+
+# Add a qualifying condition
+evidence concept=c-123 episode=ep-abc type=qualifies strength=0.5 "only when feature flag enabled"
+
+# Remove an evidence link (episode no longer relevant to concept)
+unlink concept=c-123 episode=ep-old
+EOF
+```
+
+**Link types:**
+- `supports` — episode confirms/strengthens the concept
+- `contradicts` — episode challenges/weakens the concept
+- `exemplifies` — episode is a specific instance
+- `qualifies` — episode adds conditions/exceptions
+
+Concepts with more supporting evidence rank higher in recall; contradicting evidence reduces activation.
+
+## Evolving concepts
+
+Concepts are living documents. Use these operations when knowledge evolves:
+
+### Reshape: Change type
+
+```
+reshape id=c-123 type=hypothesis "Changed from pattern after failed testing"
+```
+
+Use when the nature of knowledge changes (e.g., a pattern becomes a hypothesis when it fails in new contexts).
+
+### Merge: Combine overlapping concepts
+
+```
+merge from=c-123,c-456 into=c-new "Combined overlapping caching concepts"
+```
+
+Use when two concepts describe the same thing. Source concepts are soft-deleted with lineage preserved.
+
+### Split: Separate distinct concerns
+
+```
+split id=c-123 into=c-new1,c-new2 "Separated read vs write caching"
+```
+
+Use when a concept covers multiple distinct things. Creates new concepts linked to the parent.
+
 ## Correcting mistakes
 
 ```bash
@@ -131,8 +187,13 @@ remind topics update architecture -n "System Architecture" -d "Updated descripti
 remember as=<ref> t=<type> e=<entities> by=<who> ref=<url> "content"
 supersede old=<fact_id> new=<fact_id_or_$ref>
 entity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context="optional"
-concept as=<ref> from=<ep_ids> title="Title" "Summary"
+evidence concept=<id> episode=<id> type=<supports|contradicts|qualifies> strength=<0-1> "note"
+unlink concept=<id> episode=<id>
+concept as=<ref> from=<ep_ids> type=<type> title="Title" "Summary"
 link from=<concept_id_or_$ref> to=<concept_id> type=<relation_type>
+reshape id=<concept_id> type=<new_type> "reason for type change"
+merge from=<id1>,<id2> into=<new_id> "reason for merge"
+split id=<id> into=<new_id1>,<new_id2> "reason for split"
 resolve id=<conflict_id> winner=<fact_id> by=<who> "resolution note"
 dismiss id=<conflict_id> "dismissal note"
 processed ids=<ep_id1>,<ep_id2>

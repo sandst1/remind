@@ -177,7 +177,7 @@ async def get_concept_detail(request: Request) -> JSONResponse:
                 result["conditions_refs"] = condition_refs
 
         # For fact clusters, include the fact rows (active + superseded history)
-        if concept.concept_type == "fact_cluster":
+        if concept.concept_type in ("fact_cluster", "fact"):
             facts = memory.store.get_facts(cluster_id=concept.id)
             result["facts"] = [f.to_dict() for f in facts]
 

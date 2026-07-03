@@ -427,7 +427,7 @@ async def tool_inspect(
             lines.append(f"  Type: {concept.concept_type}")
 
         # Format differently based on concept type
-        if concept.concept_type == "fact_cluster" and concept.specifics:
+        if concept.concept_type in ("fact_cluster", "fact") and concept.specifics:
             lines.append(f"  Facts ({len(concept.specifics)}):")
             for specific in concept.specifics:
                 lines.append(f"    • {specific}")
@@ -474,12 +474,12 @@ async def tool_inspect(
     for c in concepts[:limit]:
         tags = f" [{', '.join(c.tags)}]" if c.tags else ""
         title_display = c.title or c.summary[:50] + ("..." if len(c.summary) > 50 else "")
-        # Show concept type badge for non-legacy concepts
+        # Show concept type badge for non-legacy concepts (freeform types supported)
         type_badge = ""
-        if c.concept_type == "pattern":
-            type_badge = " [pattern]"
-        elif c.concept_type == "fact_cluster":
+        if c.concept_type in ("fact_cluster", "fact"):
             type_badge = " [facts]"
+        elif c.concept_type and c.concept_type != "legacy":
+            type_badge = f" [{c.concept_type}]"
         lines.append(f"  [{c.id}]{type_badge} {title_display} (conf: {c.confidence:.2f}, n={c.instance_count}){tags}")
     
     if len(concepts) > limit:

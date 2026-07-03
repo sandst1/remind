@@ -139,27 +139,44 @@ def detect_collisions(
     
     Uses two heuristics:
     1. Entity overlap: facts sharing entities with the new fact
-    2. Embedding similarity: facts with high semantic similarity
+    2. Embedding similarity: facts with high semantic similarity (cosine > threshold)
     
     Returns list of potentially conflicting facts for the agent to review.
     """
-    active_facts = store.get_facts(cluster_id=cluster_id, active_only=True)
+    seen_ids: set[str] = {new_fact.id}
+    collisions: list[Fact] = []
     
-    collisions = []
+    # 1. Entity overlap detection
+    active_facts = store.get_facts(cluster_id=cluster_id, active_only=True)
     new_entity_set = set(entity_ids)
     
     for fact in active_facts:
-        if fact.id == new_fact.id:
+        if fact.id in seen_ids:
             continue
         
-        # Check entity overlap
         fact_entities = set(fact.entity_ids or [])
         if new_entity_set & fact_entities:
             collisions.append(fact)
-            continue
-        
-        # Embedding similarity check is not available since facts don't store embeddings
-        # Could be added in the future if needed
+            seen_ids.add(fact.id)
+    
+    # 2. Embedding similarity detection
+    if embedding:
+        similar_facts = store.find_facts_by_embedding(
+            embedding,
+            k=10,
+            cluster_id=cluster_id,
+            active_only=True,
+        )
+        for fact, similarity in similar_facts:
+            if fact.id in seen_ids:
+                continue
+            if similarity >= similarity_threshold:
+                collisions.append(fact)
+                seen_ids.add(fact.id)
+                logger.debug(
+                    f"Semantic collision: {new_fact.id} <-> {fact.id} "
+                    f"(cosine={similarity:.3f})"
+                )
     
     return collisions
 
@@ -200,7 +217,7 @@ def create_fact_from_episode(
         cluster = create_fact_cluster(store, entity_ids, episode.content)
         cluster_created = True
     
-    # Create the Fact row
+    # Create the Fact row with embedding for semantic collision detection
     fact = Fact(
         id=str(uuid4())[:8],
         cluster_id=cluster.id,
@@ -210,6 +227,7 @@ def create_fact_from_episode(
         asserted_by=episode.asserted_by,
         source_ref=episode.source_ref,
         valid_from=episode.created_at,
+        embedding=embedding,
     )
     store.add_fact(fact)
     

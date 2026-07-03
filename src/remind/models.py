@@ -51,11 +51,28 @@ class EntityType(Enum):
 
 
 class ConceptType(Enum):
-    """Types of concepts in the dual-track system."""
+    """Types of concepts in the dual-track system.
+    
+    DEPRECATED: Use CONCEPT_TYPE_* string constants instead.
+    The concept_type field on Concept now accepts any string, allowing
+    agents to define domain-specific types like "rule", "hypothesis",
+    "procedure", etc. This enum is kept for backward compatibility only.
+    """
 
     LEGACY = "legacy"             # Existing concepts (backward compat)
     PATTERN = "pattern"           # Generalizations from observations/decisions/outcomes
     FACT_CLUSTER = "fact_cluster" # Grouped related facts, preserving verbatim content
+
+
+# Well-known concept types with special handling
+# Agents can use any string, but these have built-in behavior
+CONCEPT_TYPE_FACT = "fact"  # Has validity windows, shows active facts
+CONCEPT_TYPE_FACT_CLUSTER = "fact_cluster"  # Legacy alias for fact
+CONCEPT_TYPE_PATTERN = "pattern"  # Generalizations, shows evidence
+CONCEPT_TYPE_RULE = "rule"  # If-then with conditions/exceptions
+CONCEPT_TYPE_PROCEDURE = "procedure"  # Ordered steps/workflow
+CONCEPT_TYPE_HYPOTHESIS = "hypothesis"  # Uncertain, testable belief
+CONCEPT_TYPE_LEGACY = "legacy"  # Backward compat, treated as pattern
 
 
 def slugify(name: str) -> str:
@@ -337,6 +354,9 @@ class Fact:
 
     created_at: datetime = field(default_factory=datetime.now)
 
+    # For semantic collision detection
+    embedding: Optional[list[float]] = None
+
     @property
     def is_active(self) -> bool:
         """True while this fact has not been superseded/expired."""
@@ -356,6 +376,7 @@ class Fact:
             "source_ref": self.source_ref,
             "source_episode_id": self.source_episode_id,
             "created_at": self.created_at.isoformat(),
+            "embedding": self.embedding,
         }
 
     @classmethod
@@ -373,6 +394,7 @@ class Fact:
             source_ref=data.get("source_ref"),
             source_episode_id=data.get("source_episode_id"),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+            embedding=data.get("embedding"),
         )
 
 
@@ -450,6 +472,55 @@ class Conflict:
         )
 
 
+# Evidence link types
+EVIDENCE_SUPPORTS = "supports"  # Episode confirms/strengthens the concept
+EVIDENCE_CONTRADICTS = "contradicts"  # Episode challenges/weakens the concept
+EVIDENCE_EXEMPLIFIES = "exemplifies"  # Episode is a specific instance of the concept
+EVIDENCE_QUALIFIES = "qualifies"  # Episode adds conditions/exceptions
+EVIDENCE_SUPERSEDES = "supersedes"  # Episode invalidates old info in concept
+
+
+@dataclass
+class Evidence:
+    """
+    A link between an episode and a concept with typed relationship.
+    
+    Replaces the old source_episodes list with richer semantics:
+    episodes can support, contradict, exemplify, or qualify concepts.
+    """
+    
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    episode_id: str = ""
+    concept_id: str = ""
+    link_type: str = EVIDENCE_SUPPORTS  # supports, contradicts, exemplifies, qualifies, supersedes
+    strength: float = 0.5  # 0.0 - 1.0
+    note: Optional[str] = None  # Why this evidence matters
+    created_at: datetime = field(default_factory=datetime.now)
+    
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "episode_id": self.episode_id,
+            "concept_id": self.concept_id,
+            "link_type": self.link_type,
+            "strength": self.strength,
+            "note": self.note,
+            "created_at": self.created_at.isoformat(),
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "Evidence":
+        return cls(
+            id=data["id"],
+            episode_id=data.get("episode_id", ""),
+            concept_id=data.get("concept_id", ""),
+            link_type=data.get("link_type", EVIDENCE_SUPPORTS),
+            strength=data.get("strength", 0.5),
+            note=data.get("note"),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+        )
+
+
 @dataclass
 class Concept:
     """
@@ -519,6 +590,10 @@ class Concept:
     # Entity IDs linked to this concept (union of all source episodes' entities)
     entity_ids: list[str] = field(default_factory=list)
 
+    # Lineage tracking for concept evolution (splits, merges, reshapes)
+    parent_id: Optional[str] = None  # ID of concept this was derived from
+    lineage_note: Optional[str] = None  # "split from X", "merged Y+Z", "reshaped from pattern"
+
     def to_dict(self) -> dict:
         """Serialize to dictionary for storage."""
         return {
@@ -546,6 +621,8 @@ class Concept:
             "actionable": self.actionable,
             "conflicts": self.conflicts,
             "entity_ids": self.entity_ids,
+            "parent_id": self.parent_id,
+            "lineage_note": self.lineage_note,
         }
     
     @classmethod
@@ -576,6 +653,8 @@ class Concept:
             actionable=data.get("actionable", True),
             conflicts=data.get("conflicts", []),
             entity_ids=data.get("entity_ids", []),
+            parent_id=data.get("parent_id"),
+            lineage_note=data.get("lineage_note"),
         )
     
     def add_relation(self, relation: Relation) -> None:

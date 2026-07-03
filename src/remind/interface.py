@@ -683,7 +683,7 @@ class MemoryInterface:
         # Refresh concept specifics if it's a fact cluster
         for cid in (conflict.concept_ids or []):
             concept = self.store.get_concept(cid)
-            if concept and concept.concept_type == "fact_cluster":
+            if concept and concept.concept_type in ("fact_cluster", "fact"):
                 facts = self.store.get_facts(cluster_id=concept.id, active_only=True)
                 concept.specifics = [f.statement for f in facts]
                 concept.conflicts = []  # Clear conflicts from cluster
@@ -713,7 +713,7 @@ class MemoryInterface:
         # Clear conflicts from affected clusters
         for cid in (conflict.concept_ids or []):
             concept = self.store.get_concept(cid)
-            if concept and concept.concept_type == "fact_cluster":
+            if concept and concept.concept_type in ("fact_cluster", "fact"):
                 concept.conflicts = []
                 self.store.update_concept(concept)
 

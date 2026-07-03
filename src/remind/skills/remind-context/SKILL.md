@@ -34,8 +34,18 @@ remind recall --as-of 2026-01-15 "cache configuration" # What we believed then
 ## Reading recall output
 
 - **RELEVANT EPISODES** — direct episode matches (embedding similarity), with type, date, and provenance (who asserted it).
-- **RELEVANT MEMORY** — concept matches via spreading activation. Fact clusters list currently-valid facts with provenance and since-dates; superseded values are hidden (retrieve history with `--as-of` or `remind inspect <concept_id>`).
+- **RELEVANT MEMORY** — concept matches via spreading activation. Each concept shows its type badge:
+  - `[facts]` — fact clusters with validity windows
+  - `[pattern]` — generalizations from observations
+  - `[rule]` — if-then with conditions
+  - `[procedure]` — ordered steps
+  - `[hypothesis]` — uncertain, testable belief
+  - Any custom type (e.g., `[strategy]`, `[constraint]`)
 - **OPEN CONFLICTS** warning — memory holds contradicting claims about what you retrieved. Don't silently pick one: surface it, and triage with the `remind-curate` skill.
+
+**Evidence-weighted ranking**: Concepts with more supporting evidence rank higher in recall; concepts with contradicting evidence are penalized. A concept's activation score factors in its net evidence strength.
+
+**Semantic collision warnings**: When a new fact is remembered with high semantic similarity to existing facts (not just entity overlap), recall may surface both as potential conflicts.
 
 Trust currently-valid facts over your assumptions; they carry provenance and supersession history.
 

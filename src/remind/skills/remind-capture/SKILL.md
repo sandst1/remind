@@ -42,7 +42,11 @@ Write clear standalone statements: "User prefers tabs" not "tabs". A memory is r
 
 ### Handling fact collisions
 
-For `fact` type episodes, `remember` returns potential collisions — active facts in the same cluster that may conflict. The output looks like:
+For `fact` type episodes, `remember` returns potential collisions — active facts in the same cluster that may conflict. Collisions are detected via:
+1. **Entity overlap**: facts sharing any entity IDs
+2. **Semantic similarity**: facts with similar embeddings (cosine > 0.7)
+
+The output looks like:
 
 ```
 Remembered as episode ep-abc123
@@ -50,7 +54,8 @@ Remembered as episode ep-abc123
   Fact ID: f-xyz789
   Cluster: c-12345
   ⚠ 1 potential collision(s):
-  - f-old456: Cache TTL is 300 seconds...
+  - f-old456: Cache TTL is 300 seconds... (entity overlap)
+  - f-old789: Default timeout is 5 minutes... (semantic similarity)
 ```
 
 When you see collisions:
@@ -98,12 +103,57 @@ The `entity_relation` operation accepts:
 - Authorship: `person:X authored file:Y`
 - Domain relationships: `concept:parliament elects concept:president`
 
+## Evidence links
+
+Episodes can provide evidence for/against concepts with typed relationships. Use this when an experience supports, contradicts, or qualifies an existing concept:
+
+```bash
+remind apply << 'EOF'
+evidence concept=c-123 episode=ep-456 type=supports strength=0.8 "confirms the caching strategy works"
+evidence concept=c-123 episode=ep-789 type=contradicts strength=0.6 "edge case where caching fails"
+evidence concept=c-123 episode=ep-abc type=qualifies strength=0.5 "only applies when feature flag enabled"
+unlink concept=c-123 episode=ep-old
+EOF
+```
+
+**Link types:**
+- `supports` — episode confirms/strengthens the concept (default)
+- `contradicts` — episode challenges/weakens the concept
+- `exemplifies` — episode is a specific instance
+- `qualifies` — episode adds conditions/exceptions
+- `supersedes` — episode invalidates old info
+
+Concepts with more supporting evidence rank higher in recall; contradicting evidence reduces activation.
+
+## Freeform concept types
+
+Concepts can have any type string, not just `pattern` or `fact`. Use domain-specific types:
+
+```bash
+remind apply << 'EOF'
+concept type=hypothesis "Sharding at 10M rows will solve latency issues"
+concept type=rule "If latency > 100ms, enable circuit breaker"
+concept type=procedure "Deploy process: staging → canary → production"
+EOF
+```
+
+**Well-known types with special handling:**
+- `fact` / `fact_cluster` — shows validity windows, active facts
+- `pattern` — shows evidence quotes, confidence
+- `rule` — if-then with conditions
+- `procedure` — ordered steps
+- `hypothesis` — uncertain, testable belief
+
+Any other string is valid and displays as a badge.
+
 ### Compact format reference
 
 ```
 remember as=<ref> t=<type> e=<entity1>,<entity2> by=<who> ref=<url> "content"
 supersede old=<fact_id> new=<fact_id_or_$ref>
 entity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context="optional"
-concept as=<ref> from=<ep1>,<ep2> title="Title" "Summary text"
+evidence concept=<id> episode=<id> type=<supports|contradicts|qualifies> strength=<0-1> "note"
+unlink concept=<id> episode=<id>
+concept as=<ref> from=<ep1>,<ep2> type=<type> title="Title" "Summary text"
 processed ids=<ep1>,<ep2>
 ```

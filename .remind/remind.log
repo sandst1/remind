@@ -1,0 +1,65 @@
+2026-03-24 13:08:41,130 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-24 13:08:41,130 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-03-24 13:08:41,139 - remind.store - INFO - Migration: Added title column to episodes table
+2026-03-24 13:08:41,140 - remind.store - INFO - Migration: Added episode_count column to entity_relations table
+2026-03-24 13:08:41,140 - remind.store - INFO - Migration: Added source_episode_ids column to entity_relations table
+2026-03-24 13:08:41,141 - remind.store - INFO - Migration: Added embedding column to episodes table
+2026-03-24 13:08:41,141 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions
+2026-03-24 15:15:01,437 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-24 15:15:01,438 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-03-24 15:15:01,440 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions
+2026-03-24 15:15:02,033 - remind.retrieval - DEBUG - Initial activation: 0 concepts
+2026-03-24 15:15:02,033 - remind.retrieval - DEBUG - After hop 1: 0 concepts
+2026-03-24 15:15:02,033 - remind.retrieval - DEBUG - After hop 2: 0 concepts
+2026-03-24 15:16:00,770 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-24 15:16:00,771 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-03-24 15:16:00,772 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions
+2026-03-24 15:16:01,252 - remind.retrieval - DEBUG - Initial activation: 0 concepts
+2026-03-24 15:16:01,253 - remind.retrieval - DEBUG - After hop 1: 0 concepts
+2026-03-24 15:16:01,253 - remind.retrieval - DEBUG - After hop 2: 0 concepts
+2026-03-24 15:16:04,099 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-24 15:16:04,099 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-03-24 15:16:04,100 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions
+2026-03-30 12:54:12,906 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-30 12:54:18,720 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-30 12:54:19,241 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-30 20:32:44,623 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-30 21:03:22,950 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-31 13:09:57,873 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-31 15:41:24,990 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-31 15:41:27,615 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-31 15:41:27,616 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-03-31 18:16:13,896 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-03-31 18:16:14,285 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-03-31 18:16:14,316 - remind.mcp_server - INFO - Remind MCP server starting on 127.0.0.1:8765
+2026-03-31 18:16:15,140 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-03-31 18:16:15,141 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-03-31 18:16:15,141 - remind.mcp_server - INFO - Creating MemoryInterface for database: sqlite:////Users/topi/proj/ai-experiments/remind/.remind/remind.db
+2026-03-31 18:16:15,142 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-03-31 18:16:15,157 - remind.store - INFO - Migration: Added topic_id column to episodes table
+2026-03-31 18:16:15,158 - remind.store - INFO - Migration: Added topic_id column to concepts table
+2026-03-31 18:16:15,158 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions
+2026-03-31 18:16:16,382 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-04-07 14:29:24,256 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-04-07 14:29:24,256 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-04-07 14:29:24,269 - remind.store - INFO - Vector backend: sqlite-vec
+2026-04-07 14:29:24,282 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions
+2026-04-07 19:05:55,134 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-04-07 19:05:55,134 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-04-07 19:05:55,135 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-04-07 19:05:55,143 - remind.store - INFO - Vector backend: sqlite-vec
+2026-04-07 19:05:55,155 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions
+2026-04-07 19:10:34,041 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-04-07 19:10:34,045 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-04-07 19:10:34,052 - remind.store - INFO - Vector backend: sqlite-vec
+2026-04-07 19:10:34,057 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions
+2026-04-07 19:10:34,062 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-04-16 11:53:40,975 - remind.config - INFO - File logging enabled: /Users/topi/proj/ai-experiments/remind/.remind/remind.log
+2026-04-16 11:53:40,976 - remind.config - DEBUG - Loaded config from /Users/topi/.remind/remind.config.json
+2026-04-16 11:53:40,981 - remind.store - INFO - Vector backend: sqlite-vec
+2026-04-16 11:53:40,985 - remind.store - DEBUG - Schema v2: 0 entities, 0 mentions
+2026-07-03 14:59:36,773 - remind.config - INFO - File logging enabled: /Users/topi/proj/remind/.remind/remind.log
+2026-07-03 15:45:18,387 - remind.config - INFO - File logging enabled: /Users/topi/proj/remind/.remind/remind.log
+2026-07-03 15:56:40,842 - remind.config - INFO - File logging enabled: /Users/topi/proj/remind/.remind/remind.log
+2026-07-03 18:39:16,773 - remind.config - INFO - File logging enabled: /Users/topi/proj/remind/.remind/remind.log
+2026-07-03 18:39:16,988 - remind.config - INFO - File logging enabled: /Users/topi/proj/remind/.remind/remind.log

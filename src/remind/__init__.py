@@ -24,7 +24,7 @@ Basic usage:
     response = await llm.complete(f"{context}\\n\\nUser: {message}")
 """
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 # Core models
 from remind.models import (
@@ -32,6 +32,7 @@ from remind.models import (
     ConceptType,
     Conflict,
     Episode,
+    Evidence,
     Fact,
     Relation,
     RelationType,
@@ -40,6 +41,20 @@ from remind.models import (
     EntityType,
     EntityRelation,
     EpisodeType,
+    # Freeform concept type constants (new in 0.12.0)
+    CONCEPT_TYPE_FACT,
+    CONCEPT_TYPE_FACT_CLUSTER,
+    CONCEPT_TYPE_PATTERN,
+    CONCEPT_TYPE_RULE,
+    CONCEPT_TYPE_PROCEDURE,
+    CONCEPT_TYPE_HYPOTHESIS,
+    CONCEPT_TYPE_LEGACY,
+    # Evidence link type constants (new in 0.12.0)
+    EVIDENCE_SUPPORTS,
+    EVIDENCE_CONTRADICTS,
+    EVIDENCE_EXEMPLIFIES,
+    EVIDENCE_QUALIFIES,
+    EVIDENCE_SUPERSEDES,
 )
 
 # Storage
@@ -76,6 +91,7 @@ __all__ = [
     "ConceptType",
     "Conflict",
     "Episode",
+    "Evidence",
     "Fact",
     "Relation",
     "RelationType",
@@ -84,6 +100,20 @@ __all__ = [
     "EntityRelation",
     "EpisodeType",
     "Topic",
+    # Freeform concept type constants
+    "CONCEPT_TYPE_FACT",
+    "CONCEPT_TYPE_FACT_CLUSTER",
+    "CONCEPT_TYPE_PATTERN",
+    "CONCEPT_TYPE_RULE",
+    "CONCEPT_TYPE_PROCEDURE",
+    "CONCEPT_TYPE_HYPOTHESIS",
+    "CONCEPT_TYPE_LEGACY",
+    # Evidence link type constants
+    "EVIDENCE_SUPPORTS",
+    "EVIDENCE_CONTRADICTS",
+    "EVIDENCE_EXEMPLIFIES",
+    "EVIDENCE_QUALIFIES",
+    "EVIDENCE_SUPERSEDES",
     # Storage
     "MemoryStore",
     "SQLiteMemoryStore",

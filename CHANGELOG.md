@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-03
+
+### Added
+
+- **Fact embeddings** — Facts now have vector embeddings for semantic collision detection. When a new fact is remembered, collisions are detected via both entity overlap AND embedding similarity (cosine > 0.7).
+
+- **Evidence-based episode links** — Episodes link to concepts with typed relationships:
+  - `supports` — episode confirms/strengthens the concept
+  - `contradicts` — episode challenges/weakens the concept
+  - `exemplifies` — episode is a specific instance
+  - `qualifies` — episode adds conditions/exceptions
+  - `supersedes` — episode invalidates old info
+  
+  New apply operations: `evidence concept=<id> episode=<id> type=<type> strength=<0-1>` and `unlink concept=<id> episode=<id>`.
+
+- **Freeform concept types** — Concepts can now have any type string, not just `pattern` or `fact_cluster`. Well-known types with special handling:
+  - `fact` / `fact_cluster` — shows validity windows, active facts
+  - `pattern` — shows evidence quotes, confidence
+  - `rule` — if-then with conditions
+  - `procedure` — ordered steps
+  - `hypothesis` — uncertain, testable belief
+  
+  Any other string is valid and displays as a type badge.
+
+- **Concept evolution operations** — Concepts are living documents:
+  - `reshape id=<id> type=<new_type>` — change a concept's type
+  - `merge from=<id1>,<id2> into=<new_id>` — combine overlapping concepts
+  - `split id=<id> into=<id1>,<id2>` — separate distinct concerns
+  
+  All evolution operations preserve lineage via `parent_id` and `lineage_note` fields.
+
+### Changed
+
+- **Collision detection now combines Jaccard + embedding similarity** — Facts that share entities OR have similar embeddings (cosine > 0.7) are flagged as potential collisions.
+
+- **Evidence-weighted retrieval** — Concepts with more supporting evidence rank higher in recall; contradicting evidence reduces activation score.
+
+- **ConceptType enum deprecated** — Use `CONCEPT_TYPE_*` string constants instead (`CONCEPT_TYPE_FACT`, `CONCEPT_TYPE_PATTERN`, `CONCEPT_TYPE_RULE`, `CONCEPT_TYPE_PROCEDURE`, `CONCEPT_TYPE_HYPOTHESIS`).
+
 ## [0.11.5] - 2026-07-03
 
 ### Fixed

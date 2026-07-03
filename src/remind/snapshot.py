@@ -79,7 +79,7 @@ def _concept_to_dict(concept: Concept) -> dict:
     }
     if concept.topic_id:
         d["topic_id"] = concept.topic_id
-    if concept.concept_type == "fact_cluster":
+    if concept.concept_type in ("fact_cluster", "fact"):
         d["specifics"] = concept.specifics
     return d
 
@@ -311,7 +311,7 @@ class SnapshotEngine:
         result["source_episodes"] = source_episodes_list
         
         # For fact clusters, include all facts (active and superseded)
-        if concept.concept_type == "fact_cluster":
+        if concept.concept_type in ("fact_cluster", "fact"):
             all_facts = self.store.get_facts(cluster_id=concept_id, active_only=False)
             active_facts = [f for f in all_facts if f.valid_to is None]
             superseded_facts = [f for f in all_facts if f.valid_to is not None]
