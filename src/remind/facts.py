@@ -6,7 +6,7 @@ All curation decisions are delegated to the calling agent.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 from uuid import uuid4
@@ -36,7 +36,8 @@ class FactResult:
     cluster_id: str
     cluster_created: bool
     episode_id: str
-    collisions: list[Fact]  # Active facts that may conflict
+    collisions: list[Fact]  # Active facts that may conflict (same cluster)
+    related_facts: list[Fact] = field(default_factory=list)  # Cross-cluster candidates
 
 
 @dataclass
@@ -181,11 +182,76 @@ def detect_collisions(
     return collisions
 
 
+def find_related_facts(
+    store: MemoryStore,
+    entity_ids: list[str],
+    own_cluster_id: str,
+    exclude_fact_ids: set[str],
+    embedding: Optional[list[float]] = None,
+    similarity_threshold: float = 0.6,
+    max_results: int = 10,
+) -> list[Fact]:
+    """Find active facts in other clusters that share a subject with the new fact.
+
+    Uses two complementary heuristics:
+    1. Bare-name entity match — strips the type prefix (``person:alice`` →
+       ``alice``) and queries all clusters for facts mentioning the same name.
+    2. Global embedding similarity — finds facts across all clusters with cosine
+       similarity ≥ *similarity_threshold*.
+
+    Results are deduplicated, *exclude_fact_ids* are removed, and the list is
+    capped at *max_results*.  Returned to the caller for conflict triage; no
+    ``Conflict`` rows are created here.
+    """
+    seen_ids: set[str] = set(exclude_fact_ids)
+    related: list[Fact] = []
+
+    # 1. Bare-name entity match across all other clusters
+    for entity_id in entity_ids:
+        # Strip type prefix: "person:alice" → "alice"
+        bare_name = entity_id.split(":", 1)[-1] if ":" in entity_id else entity_id
+        if not bare_name:
+            continue
+        candidates = store.find_facts_by_entity_name(
+            bare_name,
+            active_only=True,
+            exclude_cluster_id=own_cluster_id,
+        )
+        for fact in candidates:
+            if fact.id not in seen_ids:
+                related.append(fact)
+                seen_ids.add(fact.id)
+
+    # 2. Global embedding similarity (cross-cluster)
+    if embedding:
+        similar = store.find_facts_by_embedding(
+            embedding,
+            k=20,
+            cluster_id=None,
+            active_only=True,
+        )
+        for fact, similarity in similar:
+            if fact.id in seen_ids:
+                continue
+            if fact.cluster_id == own_cluster_id:
+                continue
+            if similarity >= similarity_threshold:
+                related.append(fact)
+                seen_ids.add(fact.id)
+                logger.debug(
+                    f"Cross-cluster related fact: {fact.id} (cosine={similarity:.3f})"
+                )
+
+    return related[:max_results]
+
+
 def create_fact_from_episode(
     store: MemoryStore,
     episode: Episode,
     embedding: Optional[list[float]] = None,
     jaccard_threshold: float = 0.5,
+    related_similarity_threshold: float = 0.6,
+    related_max_results: int = 10,
 ) -> FactResult:
     """Create a Fact from a fact-type episode with cluster assignment.
     
@@ -196,11 +262,12 @@ def create_fact_from_episode(
     1. Find matching cluster via Jaccard similarity on entities
     2. Create new cluster if no match found
     3. Create Fact row linked to cluster
-    4. Detect collisions with existing active facts
-    5. Update cluster's specifics cache
-    6. Mark episode as processed
+    4. Detect collisions with existing active facts (same cluster)
+    5. Find related facts in other clusters (cross-cluster conflict candidates)
+    6. Update cluster's specifics cache
+    7. Mark episode as processed
     
-    Returns FactResult with collision information for agent review.
+    Returns FactResult with collision and related_facts information for agent review.
     """
     entity_ids = episode.entity_ids or []
     
@@ -231,9 +298,20 @@ def create_fact_from_episode(
     )
     store.add_fact(fact)
     
-    # Detect collisions
+    # Detect collisions (same cluster, exact entity match + embedding similarity)
     collisions = detect_collisions(
         store, cluster.id, fact, entity_ids, embedding
+    )
+
+    # Find related facts in other clusters (cross-cluster conflict candidates)
+    related = find_related_facts(
+        store,
+        entity_ids,
+        own_cluster_id=cluster.id,
+        exclude_fact_ids={fact.id} | {c.id for c in collisions},
+        embedding=embedding,
+        similarity_threshold=related_similarity_threshold,
+        max_results=related_max_results,
     )
     
     # Update cluster specifics cache (all active facts)
@@ -249,7 +327,7 @@ def create_fact_from_episode(
     
     logger.info(
         f"Created fact {fact.id} in cluster {cluster.id} "
-        f"(new={cluster_created}, collisions={len(collisions)})"
+        f"(new={cluster_created}, collisions={len(collisions)}, related={len(related)})"
     )
     
     return FactResult(
@@ -258,4 +336,5 @@ def create_fact_from_episode(
         cluster_created=cluster_created,
         episode_id=episode.id,
         collisions=collisions,
+        related_facts=related,
     )

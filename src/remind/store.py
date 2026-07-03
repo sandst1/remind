@@ -347,6 +347,28 @@ class MemoryStore(ABC):
         """
         ...
 
+    @abstractmethod
+    def find_facts_by_entity_name(
+        self,
+        bare_name: str,
+        active_only: bool = True,
+        exclude_cluster_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[Fact]:
+        """Find active facts whose entity_ids contain a bare entity name.
+
+        Matches any entity ID of the form ``<type>:<bare_name>`` regardless of
+        type prefix, so ``person:alice``, ``concept:alice``, and
+        ``project:alice`` are all returned when *bare_name* is ``alice``.
+
+        Args:
+            bare_name: Name without type prefix (e.g. ``"alice"``).
+            active_only: Only facts with an open validity window (valid_to IS NULL).
+            exclude_cluster_id: Skip facts belonging to this cluster.
+            limit: Maximum number of facts to return.
+        """
+        ...
+
     # Graph traversal
     @abstractmethod
     def get_related(
@@ -3095,6 +3117,29 @@ class SQLAlchemyMemoryStore(MemoryStore):
             )
         elif active_only:
             query = query.where(facts_table.c.valid_to.is_(None))
+        query = query.order_by(facts_table.c.valid_from.desc()).limit(limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(query).fetchall()
+            return [self._row_to_fact(row) for row in rows]
+
+    def find_facts_by_entity_name(
+        self,
+        bare_name: str,
+        active_only: bool = True,
+        exclude_cluster_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[Fact]:
+        # Match any entity ID of the form "<type>:<bare_name>" inside the JSON array.
+        # The array is stored as text like '["person:alice","concept:alice"]', so
+        # matching '%:<bare_name>"%' catches all type prefixes.
+        query = select(facts_table).where(
+            facts_table.c.entity_ids.like(f'%:{bare_name}"%')
+        )
+        if active_only:
+            query = query.where(facts_table.c.valid_to.is_(None))
+        if exclude_cluster_id is not None:
+            query = query.where(facts_table.c.cluster_id != exclude_cluster_id)
         query = query.order_by(facts_table.c.valid_from.desc()).limit(limit)
 
         with self._connect() as conn:

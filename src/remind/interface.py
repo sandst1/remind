@@ -38,9 +38,13 @@ class RememberResult:
     cluster_id: Optional[str] = None
     cluster_created: bool = False
     collisions: list[Fact] = field(default_factory=list)
+    related_facts: list[Fact] = field(default_factory=list)
     
     def has_collisions(self) -> bool:
         return len(self.collisions) > 0
+
+    def has_related(self) -> bool:
+        return len(self.related_facts) > 0
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +94,9 @@ class MemoryInterface:
         reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
         # Fact clustering
         fact_cluster_jaccard_threshold: float = 0.5,
+        # Cross-cluster related facts
+        fact_related_similarity_threshold: float = 0.6,
+        fact_related_max_results: int = 10,
     ):
         self.embedding = embedding
         if store:
@@ -115,6 +122,8 @@ class MemoryInterface:
         
         self.episode_types: list[str] = episode_types or list(DEFAULT_EPISODE_TYPES)
         self.fact_cluster_jaccard_threshold = fact_cluster_jaccard_threshold
+        self.fact_related_similarity_threshold = fact_related_similarity_threshold
+        self.fact_related_max_results = fact_related_max_results
         
         # Settings
         self.default_recall_k = default_recall_k
@@ -241,6 +250,8 @@ class MemoryInterface:
                 episode,
                 embedding=embedding,
                 jaccard_threshold=self.fact_cluster_jaccard_threshold,
+                related_similarity_threshold=self.fact_related_similarity_threshold,
+                related_max_results=self.fact_related_max_results,
             )
             return RememberResult(
                 episode_id=episode_id,
@@ -248,6 +259,7 @@ class MemoryInterface:
                 cluster_id=fact_result.cluster_id,
                 cluster_created=fact_result.cluster_created,
                 collisions=fact_result.collisions,
+                related_facts=fact_result.related_facts,
             )
         
         return RememberResult(episode_id=episode_id)
@@ -984,6 +996,10 @@ def create_memory(
         kwargs["reranking_model"] = config.reranking_model
     if "fact_cluster_jaccard_threshold" not in kwargs:
         kwargs["fact_cluster_jaccard_threshold"] = config.fact_cluster_jaccard_threshold
+    if "fact_related_similarity_threshold" not in kwargs:
+        kwargs["fact_related_similarity_threshold"] = config.fact_related_similarity_threshold
+    if "fact_related_max_results" not in kwargs:
+        kwargs["fact_related_max_results"] = config.fact_related_max_results
 
     # Create embedding provider with config values
     if embedding_provider == "local":

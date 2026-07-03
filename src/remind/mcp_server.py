@@ -157,9 +157,19 @@ async def tool_remember(
         
         if result.has_collisions():
             lines.append("")
-            lines.append(f"⚠ {len(result.collisions)} potential collision(s):")
+            lines.append(f"⚠ {len(result.collisions)} potential collision(s) in same cluster:")
             for collision in result.collisions:
                 lines.append(f"  - {collision.id}: {collision.statement[:80]}...")
+
+        if result.has_related():
+            lines.append("")
+            lines.append(f"Related facts — check for conflicts ({len(result.related_facts)}):")
+            for rf in result.related_facts:
+                entities_str = ", ".join(rf.entity_ids or [])
+                asserted = rf.asserted_by or "unknown"
+                date_str = rf.valid_from.strftime("%Y-%m-%d") if rf.valid_from else "?"
+                stmt = rf.statement[:80] + ("..." if len(rf.statement) > 80 else "")
+                lines.append(f"  [{rf.id}] \"{stmt}\" · {entities_str} · {asserted} · {date_str}")
     
     return "\n".join(lines)
 
