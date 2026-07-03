@@ -1235,6 +1235,40 @@ class MemoryRetriever:
                 for conflict in open_conflicts:
                     lines.append(f"    • [{conflict.id}] {conflict.description}")
                     lines.append(f"      (detected: {conflict.created_at.strftime('%Y-%m-%d')}, severity: {conflict.severity})")
+
+            # Show recent resolved conflicts — provides provenance context so the
+            # calling agent can challenge a prior resolution if it has newer info.
+            resolved_conflicts = self.store.get_conflicts(status="resolved", concept_id=c.id)
+            if resolved_conflicts:
+                # Most-recently-resolved first, cap at 3
+                resolved_conflicts = sorted(
+                    resolved_conflicts,
+                    key=lambda x: x.resolved_at or datetime.min,
+                    reverse=True,
+                )[:3]
+                lines.append(f"  Conflict history ({len(resolved_conflicts)} shown):")
+                for conflict in resolved_conflicts:
+                    winner = self.store.get_fact(conflict.winning_fact_id) if conflict.winning_fact_id else None
+                    loser_id = (
+                        conflict.fact_b_id
+                        if conflict.winning_fact_id == conflict.fact_a_id
+                        else conflict.fact_a_id
+                    )
+                    loser = self.store.get_fact(loser_id) if loser_id else None
+
+                    date_str = conflict.resolved_at.strftime("%Y-%m-%d") if conflict.resolved_at else "?"
+                    by_str = f" by {conflict.resolved_by}" if conflict.resolved_by else ""
+                    note_str = f" — \"{conflict.resolution_note}\"" if conflict.resolution_note else ""
+
+                    def _truncate(s: str, n: int = 60) -> str:
+                        return (s[:n] + "...") if len(s) > n else s
+
+                    winner_stmt = _truncate(winner.statement) if winner else "?"
+                    loser_stmt = _truncate(loser.statement) if loser else "?"
+                    lines.append(
+                        f"    • [resolved {date_str}{by_str}]"
+                        f" \"{winner_stmt}\" replaced \"{loser_stmt}\"{note_str}"
+                    )
         else:
             # Standard summary for patterns and legacy concepts
             lines.append(f"  {c.summary}")
