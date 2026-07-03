@@ -176,6 +176,16 @@ async def tool_remember(
                 date_str = rf.valid_from.strftime("%Y-%m-%d") if rf.valid_from else "?"
                 stmt = rf.statement[:80] + ("..." if len(rf.statement) > 80 else "")
                 lines.append(f"  [{rf.id}] \"{stmt}\" · {entities_str} · {asserted} · {date_str}")
+
+    if result.has_nearby():
+        if result.nearby_episodes or result.nearby_concepts:
+            lines.append("")
+            lines.append(f"Nearby ({len(result.nearby_episodes)} episodes, {len(result.nearby_concepts)} concepts) — review for conflicts:")
+        for ep, score in result.nearby_episodes:
+            snippet = ep.content[:100] + ("..." if len(ep.content) > 100 else "")
+            lines.append(f"  [ep:{ep.id[:8]}] ({score:.2f}) {snippet}")
+        for concept, score in result.nearby_concepts:
+            lines.append(f"  [concept:{concept.id}] ({score:.2f}) {concept.title}")
     
     return "\n".join(lines)
 

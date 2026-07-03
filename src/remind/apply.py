@@ -293,6 +293,17 @@ class ApplyEngine:
                         except Exception as e:
                             logger.warning(f"Failed to embed concept for op {i}: {e}")
         
+        # Pre-initialize vector dimensions *outside* the transaction.
+        # _ensure_vec_dimensions() runs DDL (CREATE VIRTUAL TABLE) via a
+        # separate fresh connection.  Calling it inside engine.begin() would
+        # require conn.commit() mid-transaction, which SQLAlchemy 2.x forbids
+        # inside a context-manager transaction and raises
+        # "Can't operate on closed transaction inside context manager".
+        if embeddings_cache:
+            first_emb = next(iter(embeddings_cache.values()))
+            if getattr(self.store, '_vec_dimensions', None) != len(first_emb):
+                self.store._ensure_vec_dimensions(first_emb)  # conn=None → fresh connection + DDL
+        
         # Execute in transaction (sync operations only)
         results = []
         refs: dict[str, str] = {}  # Local reference names -> IDs

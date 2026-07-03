@@ -381,6 +381,14 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
                 stmt = collision.statement[:60] + "..." if len(collision.statement) > 60 else collision.statement
                 console.print(f"  - {collision.id}: {stmt}")
 
+    if result.has_nearby():
+        console.print(f"\n[dim]Nearby ({len(result.nearby_episodes)} episodes, {len(result.nearby_concepts)} concepts):[/dim]")
+        for ep, score in result.nearby_episodes:
+            snippet = ep.content[:70] + "..." if len(ep.content) > 70 else ep.content
+            console.print(f"  [dim]ep {ep.id[:8]} ({score:.2f}): {snippet}[/dim]")
+        for concept, score in result.nearby_concepts:
+            console.print(f"  [dim]concept {concept.id} ({score:.2f}): {concept.title}[/dim]")
+
 
 @main.command()
 @click.argument("changeset", required=False, default=None)

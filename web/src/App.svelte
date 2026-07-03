@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentDb, currentView, databases, hasDatabase, type View, theme, sidebarCollapsed, configuredEpisodeTypes, openConflictCount } from './lib/stores';
-  import { fetchDatabases, fetchConfig, fetchConflicts, getDbParam } from './lib/api';
+  import { currentDb, currentView, databases, hasDatabase, type View, theme, sidebarCollapsed, configuredEpisodeTypes } from './lib/stores';
+  import { fetchDatabases, fetchConfig, getDbParam } from './lib/api';
   import Dashboard from './components/Dashboard.svelte';
   import EntityList from './components/EntityList.svelte';
   import ConceptList from './components/ConceptList.svelte';
@@ -9,12 +9,11 @@
   import MemoryHealth from './components/MemoryHealth.svelte';
   import EntityGraph from './components/EntityGraph.svelte';
   import TopicList from './components/TopicList.svelte';
-  import ConflictsInbox from './components/ConflictsInbox.svelte';
   import DatabaseSelector from './components/DatabaseSelector.svelte';
   import TopicSelector from './components/TopicSelector.svelte';
 
   // Icons
-  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Activity, Network, PanelLeftClose, PanelLeft, FolderOpen, AlertTriangle } from 'lucide-svelte';
+  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Activity, Network, PanelLeftClose, PanelLeft, FolderOpen } from 'lucide-svelte';
 
   let initialized = false;
 
@@ -72,7 +71,6 @@
     { view: 'entities', label: 'Entities', icon: Tag },
     { view: 'concepts', label: 'Concepts', icon: Lightbulb },
     { view: 'topics', label: 'Topics', icon: FolderOpen },
-    { view: 'conflicts', label: 'Conflicts', icon: AlertTriangle },
     { view: 'memory-health', label: 'Memory Status', icon: Activity },
     { view: 'entity-graph', label: 'Entity Graph', icon: Network },
   ];
@@ -94,12 +92,7 @@
     sidebarCollapsed.update(v => !v);
   }
 
-  // Keep the conflicts badge fresh when the database changes
-  $: if (initialized && $currentDb) {
-    fetchConflicts({ status: 'open' })
-      .then((res) => openConflictCount.set(res.open_count))
-      .catch(() => openConflictCount.set(0));
-  }
+
 </script>
 
 <div class="app">
@@ -138,15 +131,9 @@
           >
             <span class="nav-icon">
               <svelte:component this={item.icon} size={18} />
-              {#if item.view === 'conflicts' && $openConflictCount > 0 && $sidebarCollapsed}
-                <span class="nav-badge-dot"></span>
-              {/if}
             </span>
             {#if !$sidebarCollapsed}
               <span class="nav-label">{item.label}</span>
-              {#if item.view === 'conflicts' && $openConflictCount > 0}
-                <span class="nav-badge">{$openConflictCount}</span>
-              {/if}
             {/if}
           </button>
         {/each}
@@ -188,8 +175,6 @@
         <ConceptList />
       {:else if $currentView === 'topics'}
         <TopicList />
-      {:else if $currentView === 'conflicts'}
-        <ConflictsInbox />
       {:else if $currentView === 'memory-health'}
         <MemoryHealth />
       {:else if $currentView === 'entity-graph'}
@@ -353,27 +338,6 @@
   .nav-label {
     font-size: var(--font-size-sm);
     text-transform: capitalize;
-  }
-
-  .nav-badge {
-    margin-left: auto;
-    background: var(--color-warning, #e6a23c);
-    color: white;
-    border-radius: 999px;
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 0.05rem 0.4rem;
-    line-height: 1.5;
-  }
-
-  .nav-badge-dot {
-    position: absolute;
-    top: -2px;
-    right: -2px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--color-warning, #e6a23c);
   }
 
   .main {

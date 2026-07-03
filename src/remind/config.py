@@ -117,6 +117,11 @@ class RemindConfig:
     # Same-cluster collision cap (ranked by embedding similarity)
     fact_collision_max_results: int = 5
 
+    # Nearest-neighbor surfacing on remember() — agent decides if conflicts exist
+    # Returns top-k similar episodes and concepts in RememberResult.nearby_*
+    # Set to 0 to disable.
+    remember_nearby_k: int = 5
+
     # Logging
     logging_enabled: bool = False
 
@@ -210,6 +215,10 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         config.fact_related_max_results = int(file_config["fact_related_max_results"])
     if "fact_collision_max_results" in file_config:
         config.fact_collision_max_results = int(file_config["fact_collision_max_results"])
+
+    # Nearest-neighbor surfacing on remember()
+    if "remember_nearby_k" in file_config:
+        config.remember_nearby_k = int(file_config["remember_nearby_k"])
 
     # Logging
     if "logging_enabled" in file_config:
@@ -375,6 +384,13 @@ def _apply_env_vars(config: RemindConfig) -> None:
             logger.warning(
                 f"Invalid REMIND_FACT_CLUSTER_JACCARD_THRESHOLD: {jaccard_threshold}"
             )
+
+    # Nearest-neighbor surfacing on remember()
+    if nearby_k := os.environ.get("REMIND_REMEMBER_NEARBY_K"):
+        try:
+            config.remember_nearby_k = int(nearby_k)
+        except ValueError:
+            logger.warning(f"Invalid REMIND_REMEMBER_NEARBY_K: {nearby_k}")
 
     # Logging
     if logging_enabled := os.environ.get("REMIND_LOGGING_ENABLED"):

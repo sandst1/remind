@@ -1385,6 +1385,16 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
         When called from within an existing connection context, pass *conn* to
         avoid opening a nested connection (which deadlocks on SQLite).
+
+        When *conn* is the active transaction connection (inside
+        ``store.transaction()``), this method persists dims to metadata but
+        intentionally skips ``_init_vector_tables()`` and never calls
+        ``conn.commit()``.  Calling ``commit()`` inside a SQLAlchemy
+        ``engine.begin()`` context manager closes the transaction and causes
+        all subsequent operations to raise "Can't operate on closed
+        transaction inside context manager".  The caller (``apply()``) must
+        pre-initialise vector tables *before* opening the transaction via
+        ``_ensure_vec_dimensions(emb, conn=None)``.
         """
         dims = len(embedding)
         if self._vec_dimensions == dims:
@@ -1399,22 +1409,36 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
         self._vec_dimensions = dims
 
+        # Detect whether conn is the outer transaction connection.
+        # Regular _connect() connections must still commit; only the
+        # engine.begin() transaction connection must not.
+        inside_transaction = (conn is not None and
+                              getattr(self._local, 'tx_conn', None) is conn)
+
         if conn is not None:
-            try:
-                conn.execute(
-                    metadata_table.insert().values(key="embedding_dimensions", value=str(dims))
-                )
-            except IntegrityError:
+            # Use SELECT-first to avoid IntegrityError, which would deactivate
+            # the transaction in SQLAlchemy 2.x (same problem as conn.rollback()).
+            existing = conn.execute(
+                select(metadata_table.c.value)
+                .where(metadata_table.c.key == "embedding_dimensions")
+            ).fetchone()
+            if existing:
                 conn.execute(
                     metadata_table.update()
                     .where(metadata_table.c.key == "embedding_dimensions")
                     .values(value=str(dims))
                 )
-            conn.commit()
+            else:
+                conn.execute(
+                    metadata_table.insert().values(key="embedding_dimensions", value=str(dims))
+                )
+            if not inside_transaction:
+                conn.commit()
         else:
             self.set_metadata("embedding_dimensions", str(dims))
 
-        self._init_vector_tables()
+        if not inside_transaction:
+            self._init_vector_tables()
 
     def _drop_vector_tables(self, conn=None) -> None:
         """Drop vector index tables for recreation."""
@@ -1425,7 +1449,10 @@ class SQLAlchemyMemoryStore(MemoryStore):
             elif self._vec_backend == "pgvector":
                 conn.execute(text("ALTER TABLE concepts DROP COLUMN IF EXISTS embedding_vec"))
                 conn.execute(text("ALTER TABLE episodes DROP COLUMN IF EXISTS embedding_vec"))
-            conn.commit()
+            # Only commit if we're not inside the outer transaction.
+            inside_transaction = (getattr(self._local, 'tx_conn', None) is conn)
+            if not inside_transaction:
+                conn.commit()
             return
 
         with self.engine.connect() as fresh_conn:
@@ -2538,19 +2565,10 @@ class SQLAlchemyMemoryStore(MemoryStore):
     def add_entity(self, entity: Entity) -> str:
         embedding_bytes = _embedding_to_bytes(entity.embedding) if entity.embedding else None
         with self._connect() as conn:
-            try:
-                conn.execute(
-                    entities_table.insert().values(
-                        id=entity.id,
-                        type=entity.type.value,
-                        display_name=entity.display_name,
-                        data=_dump_json(entity.to_dict()),
-                        created_at=entity.created_at,
-                        embedding=embedding_bytes,
-                    )
-                )
-            except IntegrityError:
-                conn.rollback()
+            existing = conn.execute(
+                select(entities_table.c.id).where(entities_table.c.id == entity.id)
+            ).fetchone()
+            if existing:
                 conn.execute(
                     entities_table.update()
                     .where(entities_table.c.id == entity.id)
@@ -2558,6 +2576,17 @@ class SQLAlchemyMemoryStore(MemoryStore):
                         type=entity.type.value,
                         display_name=entity.display_name,
                         data=_dump_json(entity.to_dict()),
+                        embedding=embedding_bytes,
+                    )
+                )
+            else:
+                conn.execute(
+                    entities_table.insert().values(
+                        id=entity.id,
+                        type=entity.type.value,
+                        display_name=entity.display_name,
+                        data=_dump_json(entity.to_dict()),
+                        created_at=entity.created_at,
                         embedding=embedding_bytes,
                     )
                 )
@@ -2824,15 +2853,18 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def add_mention(self, episode_id: str, entity_id: str) -> None:
         with self._connect() as conn:
-            try:
+            existing = conn.execute(
+                select(mentions_table.c.episode_id)
+                .where(mentions_table.c.episode_id == episode_id)
+                .where(mentions_table.c.entity_id == entity_id)
+            ).fetchone()
+            if not existing:
                 conn.execute(
                     mentions_table.insert().values(
                         episode_id=episode_id,
                         entity_id=entity_id,
                     )
                 )
-            except IntegrityError:
-                conn.rollback()
 
     def get_episodes_mentioning(self, entity_id: str, limit: int = 50) -> list[Episode]:
         with self._connect() as conn:
@@ -3682,16 +3714,18 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def set_metadata(self, key: str, value: str) -> None:
         with self._connect() as conn:
-            try:
-                conn.execute(
-                    metadata_table.insert().values(key=key, value=value)
-                )
-            except IntegrityError:
-                conn.rollback()
+            existing = conn.execute(
+                select(metadata_table.c.value).where(metadata_table.c.key == key)
+            ).fetchone()
+            if existing:
                 conn.execute(
                     metadata_table.update()
                     .where(metadata_table.c.key == key)
                     .values(value=value)
+                )
+            else:
+                conn.execute(
+                    metadata_table.insert().values(key=key, value=value)
                 )
 
     # ------------------------------------------------------------------

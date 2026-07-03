@@ -40,6 +40,9 @@ class RememberResult:
     collisions: list[Fact] = field(default_factory=list)
     related_facts: list[Fact] = field(default_factory=list)
     entity_resolutions: list[str] = field(default_factory=list)
+    # Nearest-neighbor episodes and concepts — agent decides if any conflict
+    nearby_episodes: list[tuple["Episode", float]] = field(default_factory=list)
+    nearby_concepts: list[tuple["Concept", float]] = field(default_factory=list)
 
     def has_collisions(self) -> bool:
         return len(self.collisions) > 0
@@ -49,6 +52,9 @@ class RememberResult:
 
     def has_entity_resolutions(self) -> bool:
         return len(self.entity_resolutions) > 0
+
+    def has_nearby(self) -> bool:
+        return bool(self.nearby_episodes or self.nearby_concepts)
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +109,8 @@ class MemoryInterface:
         fact_related_max_results: int = 10,
         # Same-cluster collision cap
         fact_collision_max_results: int = 5,
+        # Nearest-neighbor surfacing on remember() — agent decides if conflicts exist
+        remember_nearby_k: int = 5,
     ):
         self.embedding = embedding
         if store:
@@ -131,6 +139,7 @@ class MemoryInterface:
         self.fact_related_similarity_threshold = fact_related_similarity_threshold
         self.fact_related_max_results = fact_related_max_results
         self.fact_collision_max_results = fact_collision_max_results
+        self.remember_nearby_k = remember_nearby_k
         
         # Settings
         self.default_recall_k = default_recall_k
@@ -256,7 +265,15 @@ class MemoryInterface:
             self.store.update_episode(episode)
         
         logger.debug(f"Remembered episode {episode_id}: {content[:50]}...")
-        
+
+        # Surface nearest-neighbor episodes and concepts for agent conflict triage
+        nearby_episodes: list[tuple[Episode, float]] = []
+        nearby_concepts: list[tuple[Concept, float]] = []
+        if embedding and self.remember_nearby_k > 0:
+            raw_eps = self.store.find_episodes_by_embedding(embedding, k=self.remember_nearby_k + 1)
+            nearby_episodes = [(ep, score) for ep, score in raw_eps if ep.id != episode_id][: self.remember_nearby_k]
+            nearby_concepts = self.store.find_by_embedding(embedding, k=self.remember_nearby_k)
+
         # For fact-type episodes, create Fact row with cluster assignment
         if episode.episode_type == "fact":
             fact_result = create_fact_from_episode(
@@ -276,9 +293,16 @@ class MemoryInterface:
                 collisions=fact_result.collisions,
                 related_facts=fact_result.related_facts,
                 entity_resolutions=entity_resolutions,
+                nearby_episodes=nearby_episodes,
+                nearby_concepts=nearby_concepts,
             )
 
-        return RememberResult(episode_id=episode_id, entity_resolutions=entity_resolutions)
+        return RememberResult(
+            episode_id=episode_id,
+            entity_resolutions=entity_resolutions,
+            nearby_episodes=nearby_episodes,
+            nearby_concepts=nearby_concepts,
+        )
     
     async def remember_batch(
         self,
@@ -1018,6 +1042,8 @@ def create_memory(
         kwargs["fact_related_max_results"] = config.fact_related_max_results
     if "fact_collision_max_results" not in kwargs:
         kwargs["fact_collision_max_results"] = config.fact_collision_max_results
+    if "remember_nearby_k" not in kwargs:
+        kwargs["remember_nearby_k"] = config.remember_nearby_k
 
     # Create embedding provider with config values
     if embedding_provider == "local":
