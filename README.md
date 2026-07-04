@@ -30,7 +30,9 @@ Remind stores **episodes** (raw experiences) and **concepts** (generalized knowl
 For **facts** (`-t fact`), Remind automatically:
 1. Creates a `Fact` row with validity tracking
 2. Assigns it to a cluster based on entity overlap (Jaccard similarity)
-3. Detects potential collisions with existing facts (returned for your review)
+3. Detects potential collisions with existing facts — same-cluster collisions and cross-cluster related facts are returned with ready-to-paste `apply` commands
+
+For any `remember` call, the output also surfaces the **top-5 nearest episodes and concepts** semantically, so you can catch contradictions before they go unnoticed.
 
 For **patterns and concepts**, you use `remind apply` to create them from episodes:
 
@@ -46,12 +48,37 @@ EOF
 ### `remind snapshot` — Read state
 
 ```bash
-remind snapshot stats pending conflicts              # Memory overview
-remind snapshot entity:concept:caching               # Everything about an entity
-remind snapshot concept:abc123                       # Concept detail with history
+remind snapshot stats pending conflicts health        # Full overview
+remind snapshot entity:concept:caching                # Everything about an entity
+remind snapshot concept:abc123                        # Concept detail with history
+
+# Browse scopes (for exploring memory)
+remind snapshot concepts                              # All concepts
+remind snapshot episodes:20                           # Recent 20 episodes
+remind snapshot entities:person                       # Entities filtered by type
+remind snapshot topics                                # All topics with stats
+remind snapshot decisions questions                   # Episodes by type
 ```
 
-Returns JSON. Combinable scopes: `pending`, `conflicts`, `entity:<id>`, `topic:<id>`, `concept:<id>`, `recent:<n>`, `stats`, `query:<text>`.
+Returns JSON. Combinable scopes:
+
+| Scope | Description |
+|-------|-------------|
+| `pending` | Unprocessed episodes with their entities |
+| `conflicts[:<status>]` | Open conflicts (or `resolved`/`dismissed`/`all`) |
+| `health` | Actionable issues: pending episodes, open conflicts, orphan concepts |
+| `stats` | Memory statistics |
+| `concepts[:<n>]` | All concepts (default 50) |
+| `episodes[:<n>]` | Recent episodes (default 20) |
+| `entities[:<type>]` | All entities with mention counts, filterable by type |
+| `topics` | All topics with episode and concept counts |
+| `decisions[:<n>]` | Recent decision episodes |
+| `questions[:<n>]` | Recent question episodes |
+| `entity:<id>` | Episodes and concepts for a specific entity |
+| `topic:<id>` | All episodes and concepts for a topic |
+| `concept:<id>` | Concept detail with facts and supersession history |
+| `recent:<n>` | N most recent episodes |
+| `query:<text>` | Semantic search results |
 
 ### `remind apply` — Write changes
 
@@ -59,15 +86,37 @@ Returns JSON. Combinable scopes: `pending`, `conflicts`, `entity:<id>`, `topic:<
 remind apply << 'EOF'
 remember as=f1 t=fact e=concept:cache "Cache TTL is 600 seconds"
 supersede old=fact:old123 new=$f1
-concept from=ep:1,ep:2 title="Pattern name" "Summary"
+concept as=c1 from=ep:1,ep:2 title="Pattern name" "Summary"
+evidence concept=$c1 episode=ep:3 type=supports strength=0.8 "confirms pattern"
 resolve id=conflict:7 winner=fact:abc "confirmed by alice"
 processed ids=ep:1,ep:2
 EOF
 ```
 
-Operations: `remember`, `supersede`, `conflict`, `resolve`, `dismiss`, `concept`, `update`, `link`, `topic`, `set_topic`, `delete`, `restore`, `processed`.
-
 All operations run in a single transaction. `--dry-run` validates without executing.
+
+**Operations:**
+
+| Op | Description |
+|----|-------------|
+| `remember` | Store episode (same params as CLI `remember`) |
+| `supersede old=<fact> new=<fact>` | Replace old fact — auto-records resolved conflict |
+| `conflict fact_a=<id> fact_b=<id>` | Flag contradiction for triage |
+| `resolve id=<conflict> winner=<fact>` | Resolve conflict; losing fact is superseded |
+| `dismiss id=<conflict>` | Dismiss conflict (both facts stay active) |
+| `concept from=<eps> title="..." "summary"` | Create concept from episodes |
+| `link from=<concept> to=<concept> type=<relation>` | Add concept relation |
+| `evidence concept=<id> episode=<id> type=<supports\|contradicts\|qualifies>` | Link episode evidence to concept |
+| `unlink concept=<id> episode=<id>` | Remove evidence link |
+| `entity_relation source=<id> target=<id> relation=<type>` | Create entity graph edge |
+| `reshape id=<concept> type=<new_type>` | Change concept type |
+| `merge from=<id1>,<id2> into=<new_id>` | Combine overlapping concepts |
+| `split id=<concept> into=<id1>,<id2>` | Separate distinct concerns |
+| `update id=<id> [field=value...]` | Update episode or concept fields |
+| `topic name="Name"` | Create topic |
+| `set_topic id=<id> topic=<topic_id>` | Assign episode/concept to topic |
+| `delete id=<id>` / `restore id=<id>` | Soft delete / restore |
+| `processed ids=<ep1>,<ep2>` | Mark episodes as reviewed |
 
 ## Agent skills
 
@@ -78,8 +127,8 @@ remind skill-install
 ```
 
 Three skills:
-- **remind-capture** — When and how to write memories
-- **remind-context** — When and how to recall before acting
+- **remind-capture** — When and how to write memories (includes decision tree and entity type guide)
+- **remind-context** — When and how to recall before acting (includes output interpretation guide)
 - **remind-curate** — How to process pending episodes into concepts, resolve conflicts, maintain quality
 
 ## MCP Server
@@ -108,14 +157,18 @@ Web UI at `http://127.0.0.1:8765/ui/`, REST API at `/api/v1/`.
 
 - **Zero-config embeddings** — Local fastembed by default (no API key required)
 - **Temporal facts** — Validity windows, structural supersession, time-travel queries (`--as-of`)
-- **Conflict detection** — Collisions reported on write for your disposition
+- **Collision detection** — Same-cluster and cross-cluster collisions reported on write with ready-to-paste `apply` commands
+- **Nearby surfacing** — Every `remember` call returns the top-k semantically nearest episodes and concepts for immediate conflict triage
+- **Evidence-weighted retrieval** — Episodes link to concepts with typed relationships (`supports`, `contradicts`, `qualifies`); more evidence = higher recall rank
+- **Freeform concept types** — Concepts can have any type string: `pattern`, `rule`, `procedure`, `hypothesis`, or any domain-specific label
+- **Concept evolution** — `reshape` (change type), `merge` (combine overlapping), `split` (separate concerns), all with lineage tracking
 - **Transactional writes** — `apply` runs all operations atomically
 - **Spreading activation retrieval** — Queries activate related concepts through the knowledge graph
 - **Native vector indexes** — sqlite-vec (SQLite), pgvector (PostgreSQL)
-- **Entity graph** — Files, functions, people, tools linked to episodes and concepts
+- **Entity graph** — Files, functions, people, tools linked to episodes and concepts via `entity_relation`
 - **Memory decay** — Rarely-recalled concepts fade
 - **Soft delete / restore** — With permanent purge as a separate step
-- **Web UI** — Dashboard, concept graph, entity explorer, conflicts inbox
+- **Web UI** — Dashboard, concept graph, entity explorer
 
 ## Embedding providers
 
@@ -159,7 +212,7 @@ Inspection
   inspect      List or detail concepts; use --episodes for episodes
   stats        Memory statistics
   entities     List entities or show details
-  
+
 Episode types
   decisions    Show decision episodes
   questions    Show open question episodes
@@ -188,6 +241,8 @@ Skills
 UI
   ui           Launch the web UI
 ```
+
+**Entity types**: `file`, `function`, `class`, `module`, `subject`, `person`, `project`, `tool` — format is `type:name` (e.g., `file:src/auth.ts`, `person:alice`, `tool:redis`, `concept:caching`)
 
 ## Documentation
 
