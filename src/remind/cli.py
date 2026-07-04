@@ -376,18 +376,29 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
         console.print(f"  Cluster: [cyan]{result.cluster_id}[/cyan]{cluster_suffix}")
         
         if result.has_collisions():
-            console.print(f"\n[yellow]⚠ {len(result.collisions)} potential collision(s):[/yellow]")
+            console.print(f"\n[yellow]⚠ {len(result.collisions)} potential collision(s) in same cluster:[/yellow]")
             for collision in result.collisions:
                 stmt = collision.statement[:60] + "..." if len(collision.statement) > 60 else collision.statement
                 console.print(f"  - {collision.id}: {stmt}")
+            console.print(f"\n[dim]→ If new fact supersedes an old one:[/dim]")
+            for collision in result.collisions:
+                console.print(f'[dim]  remind apply \'supersede old={collision.id} new={result.fact_id} note="reason"\'[/dim]')
+            console.print(f"[dim]→ If both valid in different contexts: no action needed[/dim]")
 
     if result.has_nearby():
-        console.print(f"\n[dim]Nearby ({len(result.nearby_episodes)} episodes, {len(result.nearby_concepts)} concepts):[/dim]")
+        console.print(f"\n[dim]Nearby ({len(result.nearby_episodes)} episodes, {len(result.nearby_concepts)} concepts) — review for conflicts:[/dim]")
+        high_similarity_eps = []
         for ep, score in result.nearby_episodes:
             snippet = ep.content[:70] + "..." if len(ep.content) > 70 else ep.content
-            console.print(f"  [dim]ep {ep.id[:8]} ({score:.2f}): {snippet}[/dim]")
+            console.print(f"  [dim][ep:{ep.id[:8]}] ({score:.2f}) {snippet}[/dim]")
+            if score > 0.85:
+                high_similarity_eps.append((ep, score))
         for concept, score in result.nearby_concepts:
-            console.print(f"  [dim]concept {concept.id} ({score:.2f}): {concept.title}[/dim]")
+            console.print(f"  [dim][concept:{concept.id}] ({score:.2f}) {concept.title}[/dim]")
+        if high_similarity_eps:
+            console.print(f"[dim]→ If nearby episode contradicts what you just stored:[/dim]")
+            for ep, score in high_similarity_eps:
+                console.print(f'[dim]  remind apply \'conflict a={ep.id} b={result.episode_id} note="reason"\'[/dim]')
 
 
 @main.command()
@@ -491,20 +502,32 @@ def snapshot(ctx, scopes: tuple, pretty: bool):
     Output is always JSON (machine-readable).
     
     \b
-    Scopes:
-        pending      - Unprocessed episodes with their entities
-        conflicts    - Open conflicts with full fact details
-        entity:<id>  - Episodes and concepts for an entity
-        topic:<id>   - Episodes and concepts for a topic
-        concept:<id> - Concept detail with facts and supersession history
-        recent:<n>   - N most recent episodes (default: 10)
-        stats        - Memory statistics
-        query:<text> - Semantic search results
+    Core scopes:
+        pending          - Unprocessed episodes with their entities
+        conflicts        - Open conflicts with full fact details
+        health           - Actionable memory issues summary
+        stats            - Memory statistics
+    \b
+    Browse scopes:
+        concepts[:<n>]   - All concepts (default 50)
+        episodes[:<n>]   - Recent episodes (default 20)
+        entities[:<type>]- All entities with mention counts
+        topics           - All topics with stats
+        decisions[:<n>]  - Recent decision episodes (default 20)
+        questions[:<n>]  - Recent question episodes (default 20)
+    \b
+    Detail scopes:
+        entity:<id>      - Episodes and concepts for an entity
+        topic:<id>       - Episodes and concepts for a topic
+        concept:<id>     - Concept detail with facts and supersession history
+        recent:<n>       - N most recent episodes (default: 10)
+        query:<text>     - Semantic search results
     
     Examples:
-        remind snapshot pending conflicts
+        remind snapshot pending conflicts health
         remind snapshot entity:concept:caching
-        remind snapshot recent:20 stats
+        remind snapshot concepts episodes:10
+        remind snapshot topics entities:person
         remind snapshot "query:authentication issues"
     """
     from remind.snapshot import SnapshotEngine

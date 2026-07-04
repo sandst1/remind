@@ -24,6 +24,32 @@ Store experiences in the external memory layer so they survive across sessions. 
 
 **Skip**: trivial info, already-captured knowledge.
 
+## Should I capture this?
+
+```
+Is it worth remembering?
+├─ Concrete fact (number, name, date, config value)?
+│  └─ Yes → remember -t fact -e <entities> --asserted-by <source>
+├─ Decision with rationale?
+│  └─ Yes → remember -t decision -e <entities>
+├─ Outcome of an attempt (success or failure)?
+│  └─ Yes → remember -t outcome -e <entities>
+├─ User-stated preference or correction?
+│  └─ Yes → remember -t preference
+├─ Open question or uncertainty?
+│  └─ Yes → remember -t question
+├─ Notable observation about code/project?
+│  └─ Maybe → remember -t observation
+└─ Trivial, transient, or already captured?
+   └─ Skip
+```
+
+**Examples of what to skip:**
+- "I'll use the search tool" (transient action)
+- "The file has 100 lines" (trivial, queryable)
+- Things you just recalled from memory (already captured)
+- Speculative thoughts not grounded in evidence
+
 ## Single item: remember
 
 ```bash
@@ -151,6 +177,25 @@ The `entity_relation` operation accepts:
 - Hierarchy: `concept:X part_of concept:Y`
 - Authorship: `person:X authored file:Y`
 - Domain relationships: `concept:parliament elects concept:president`
+
+## Entity type reference
+
+| Type | Use for | Example |
+|------|---------|---------|
+| `file` | Source files, configs, docs | `file:src/auth.ts` |
+| `function` | Functions, methods, endpoints | `function:handleLogin` |
+| `class` | Classes, interfaces, types | `class:UserService` |
+| `module` | Packages, directories, namespaces | `module:authentication` |
+| `person` | Human actors, team members | `person:alice` |
+| `concept` | Abstract ideas, domains | `concept:caching` |
+| `tool` | External tools, services, libraries | `tool:redis`, `tool:pytest` |
+| `project` | Projects, repositories, services | `project:backend-api` |
+
+**Guidelines:**
+- Use the most specific type. `person:alice` not `concept:alice` for a human.
+- Prefer lowercase names: `file:readme.md` not `file:README.md`
+- For ambiguous names, add context: `function:auth.handleLogin` not `function:handleLogin`
+- Entity names are normalized: `Alice Smith` becomes `alice-smith`
 
 ## Evidence links
 

@@ -49,17 +49,56 @@ remind recall --as-of 2026-01-15 "cache configuration" # What we believed then
 
 Trust currently-valid facts over your assumptions; they carry provenance and supersession history.
 
+## Understanding recall output
+
+### RELEVANT EPISODES (similarity score 0.0-1.0)
+- Higher score = closer embedding match to your query
+- Episodes are raw captures — may contain noise or duplicates
+- **Use for**: recent context, exact quotes, provenance checking
+- Score >0.9: very close match; >0.8: related; <0.7: tangential
+
+### RELEVANT MEMORY (activation score 0.0-1.0)
+- Higher score = more relevant via spreading activation through the concept graph
+- Concepts are curated knowledge — higher signal than raw episodes
+- **Use for**: established patterns, decisions, generalizations
+
+### Concept type badges
+- `[facts]` — Fact cluster with temporal validity; check valid_from/valid_to
+- `[pattern]` — Generalized observation from multiple episodes
+- `[rule]` — If-then relationship with conditions
+- `[hypothesis]` — Uncertain belief, testable
+- Any other badge — Custom concept type
+
+### When you see OPEN CONFLICTS
+Memory contains contradicting claims about the retrieved topic. **Do not silently pick one.**
+1. Surface the conflict to the user, OR
+2. Run the curation workflow to resolve it:
+   - `remind snapshot conflicts` to see details
+   - `remind apply 'resolve id=<conflict_id> winner=<fact_id> note="reason"'`
+
 ## snapshot (structured reads)
 
 For machine-readable memory state, use `snapshot` with combinable scopes:
 
 ```bash
+# Core scopes
 remind snapshot stats                         # Memory statistics
 remind snapshot pending conflicts             # Pending episodes + open conflicts
+remind snapshot health                        # Actionable issues summary
+
+# Browsing scopes (for exploring memory)
+remind snapshot concepts                      # All concepts
+remind snapshot episodes:20                   # Recent 20 episodes
+remind snapshot entities                      # All entities with mention counts
+remind snapshot entities:person               # Filter entities by type
+remind snapshot topics                        # All topics with stats
+remind snapshot decisions:10                  # Recent 10 decision episodes
+remind snapshot questions                     # Open question episodes
+
+# Detail scopes
 remind snapshot entity:concept:caching        # All data for an entity
 remind snapshot topic:architecture            # All data for a topic
 remind snapshot concept:abc123                # Concept detail with facts, history
-remind snapshot recent:20                     # Recent episodes
 remind snapshot "query:authentication issues" # Semantic search as JSON
 ```
 
@@ -69,9 +108,9 @@ remind snapshot "query:authentication issues" # Semantic search as JSON
 
 ```bash
 remind snapshot stats                        # Memory size/health overview
-remind inspect                               # List all concepts
-remind inspect <concept_id>                  # Concept detail: facts, history, sources
-remind entities                              # Entities available for --entity recall
+remind snapshot health                       # Actionable issues needing attention
+remind snapshot concepts                     # List all concepts
+remind snapshot entities                     # Entities available for --entity recall
 ```
 
-**Explore workflow**: `snapshot stats` → `recall "<query>"` → `snapshot concept:<id>` for details.
+**Explore workflow**: `snapshot stats health` → `recall "<query>"` → `snapshot concept:<id>` for details.

@@ -220,6 +220,24 @@ class SnapshotEngine:
                 result["stats"] = self._scope_stats()
             elif scope.scope_type == "query":
                 result["query"] = await self._scope_query(scope.value)
+            elif scope.scope_type == "concepts":
+                n = int(scope.value) if scope.value else 50
+                result["concepts"] = self._scope_concepts(n)
+            elif scope.scope_type == "episodes":
+                n = int(scope.value) if scope.value else 20
+                result["episodes"] = self._scope_episodes(n)
+            elif scope.scope_type == "entities":
+                result["entities"] = self._scope_entities(scope.value)
+            elif scope.scope_type == "topics":
+                result["topics"] = self._scope_topics()
+            elif scope.scope_type == "decisions":
+                n = int(scope.value) if scope.value else 20
+                result["decisions"] = self._scope_by_type("decision", n)
+            elif scope.scope_type == "questions":
+                n = int(scope.value) if scope.value else 20
+                result["questions"] = self._scope_by_type("question", n)
+            elif scope.scope_type == "health":
+                result["health"] = self._scope_health()
             else:
                 result[f"error:{scope.scope_type}"] = f"Unknown scope type: {scope.scope_type}"
         
@@ -385,4 +403,122 @@ class SnapshotEngine:
         return {
             "query": query_text,
             "concepts": [_concept_to_dict(concept) for concept, score in results],
+        }
+
+    def _scope_concepts(self, n: int) -> dict[str, Any]:
+        """List all concepts with basic info."""
+        concepts = self.store.get_all_concepts()
+        if n and len(concepts) > n:
+            concepts = concepts[:n]
+        return {
+            "count": len(concepts),
+            "concepts": [_concept_to_dict(c) for c in concepts],
+        }
+
+    def _scope_episodes(self, n: int) -> dict[str, Any]:
+        """List recent episodes."""
+        episodes = self.store.get_recent_episodes(limit=n)
+        return {
+            "count": len(episodes),
+            "episodes": [_episode_to_dict(ep) for ep in episodes],
+        }
+
+    def _scope_entities(self, type_filter: Optional[str] = None) -> dict[str, Any]:
+        """List entities with mention counts, optionally filtered by type."""
+        all_entities = self.store.get_all_entities()
+        
+        if type_filter:
+            all_entities = [e for e in all_entities 
+                           if (e.type.value if hasattr(e.type, "value") else str(e.type)).lower() == type_filter.lower()]
+        
+        # Build mention counts from episodes
+        entity_mention_counts: dict[str, int] = {}
+        for ep in self.store.get_all_episodes():
+            for eid in (ep.entity_ids or []):
+                entity_mention_counts[eid] = entity_mention_counts.get(eid, 0) + 1
+        
+        entity_dicts = []
+        for entity in all_entities:
+            d = _entity_to_dict(entity)
+            d["mention_count"] = entity_mention_counts.get(entity.id, 0)
+            entity_dicts.append(d)
+        
+        entity_dicts.sort(key=lambda x: x["mention_count"], reverse=True)
+        
+        return {
+            "count": len(entity_dicts),
+            "type_filter": type_filter,
+            "entities": entity_dicts,
+        }
+
+    def _scope_topics(self) -> dict[str, Any]:
+        """List all topics with episode and concept counts."""
+        topics = self.store.get_all_topics()
+        
+        # Count episodes and concepts per topic
+        topic_episode_counts: dict[str, int] = {}
+        for ep in self.store.get_all_episodes():
+            if ep.topic_id:
+                topic_episode_counts[ep.topic_id] = topic_episode_counts.get(ep.topic_id, 0) + 1
+        
+        topic_concept_counts: dict[str, int] = {}
+        for concept in self.store.get_all_concepts():
+            if concept.topic_id:
+                topic_concept_counts[concept.topic_id] = topic_concept_counts.get(concept.topic_id, 0) + 1
+        
+        topic_dicts = []
+        for topic in topics:
+            d = _topic_to_dict(topic)
+            d["episode_count"] = topic_episode_counts.get(topic.id, 0)
+            d["concept_count"] = topic_concept_counts.get(topic.id, 0)
+            topic_dicts.append(d)
+        
+        return {
+            "count": len(topic_dicts),
+            "topics": topic_dicts,
+        }
+
+    def _scope_by_type(self, episode_type: str, n: int) -> dict[str, Any]:
+        """Filter episodes by type."""
+        episodes = self.store.get_episodes_by_type(episode_type, limit=n)
+        return {
+            "count": len(episodes),
+            "episode_type": episode_type,
+            "episodes": [_episode_to_dict(ep) for ep in episodes],
+        }
+
+    def _scope_health(self) -> dict[str, Any]:
+        """Get memory health indicators — things that may need attention."""
+        pending_count = self.store.count_unconsolidated_episodes()
+        open_conflicts = self.store.get_conflicts(status="open")
+        
+        all_concepts = self.store.get_all_concepts()
+        orphan_concepts = [c for c in all_concepts if not c.source_episodes]
+        stale_concepts = [c for c in all_concepts
+                         if getattr(c, "decay_factor", 1.0) < 0.3]
+        
+        # Topic distribution
+        topic_counts: dict[str, int] = {}
+        for ep in self.store.get_all_episodes():
+            t = ep.topic_id or "(no topic)"
+            topic_counts[t] = topic_counts.get(t, 0) + 1
+        
+        issues = []
+        if pending_count:
+            issues.append(f"{pending_count} episodes pending curation")
+        if open_conflicts:
+            issues.append(f"{len(open_conflicts)} unresolved conflicts")
+        if orphan_concepts:
+            issues.append(f"{len(orphan_concepts)} orphan concepts (no source episodes)")
+        if stale_concepts:
+            issues.append(f"{len(stale_concepts)} stale concepts (decay < 0.3)")
+        
+        return {
+            "healthy": len(issues) == 0,
+            "issues": issues,
+            "pending_episodes": pending_count,
+            "open_conflicts": len(open_conflicts),
+            "orphan_concepts": len(orphan_concepts),
+            "stale_concepts": len(stale_concepts),
+            "topic_distribution": topic_counts,
         }

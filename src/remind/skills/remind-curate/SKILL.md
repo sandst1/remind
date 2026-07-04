@@ -23,12 +23,13 @@ At session boundaries or when cleaning up memory:
 ### 1. Read current state
 
 ```bash
-remind snapshot pending conflicts
+remind snapshot pending conflicts health
 ```
 
 This returns JSON with:
 - **pending.episodes**: Unprocessed episodes with their entities
 - **conflicts.conflicts**: Open conflicts with full fact details
+- **health**: Summary of issues needing attention (pending count, open conflicts, orphan concepts)
 
 ### 2. Find contradictions before forming concepts
 

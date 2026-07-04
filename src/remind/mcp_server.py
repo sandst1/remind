@@ -165,7 +165,13 @@ async def tool_remember(
             lines.append("")
             lines.append(f"⚠ {len(result.collisions)} potential collision(s) in same cluster:")
             for collision in result.collisions:
-                lines.append(f"  - {collision.id}: {collision.statement[:80]}...")
+                stmt = collision.statement[:80] + ("..." if len(collision.statement) > 80 else "")
+                lines.append(f"  - {collision.id}: {stmt}")
+            lines.append("")
+            lines.append("→ If new fact supersedes an old one:")
+            for collision in result.collisions:
+                lines.append(f'  supersede old={collision.id} new={result.fact_id} note="reason"')
+            lines.append("→ If both valid in different contexts: no action needed")
 
         if result.has_related():
             lines.append("")
@@ -181,11 +187,19 @@ async def tool_remember(
         if result.nearby_episodes or result.nearby_concepts:
             lines.append("")
             lines.append(f"Nearby ({len(result.nearby_episodes)} episodes, {len(result.nearby_concepts)} concepts) — review for conflicts:")
+        high_similarity_eps = []
         for ep, score in result.nearby_episodes:
             snippet = ep.content[:100] + ("..." if len(ep.content) > 100 else "")
             lines.append(f"  [ep:{ep.id[:8]}] ({score:.2f}) {snippet}")
+            if score > 0.85:
+                high_similarity_eps.append((ep, score))
         for concept, score in result.nearby_concepts:
             lines.append(f"  [concept:{concept.id}] ({score:.2f}) {concept.title}")
+        if high_similarity_eps:
+            lines.append("")
+            lines.append("→ If a nearby episode contradicts what you just stored:")
+            for ep, score in high_similarity_eps:
+                lines.append(f'  conflict a={ep.id} b={result.episode_id} note="reason"')
     
     return "\n".join(lines)
 

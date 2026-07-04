@@ -88,23 +88,38 @@ Batch read returning current memory state as JSON. Combine scopes in a single ca
 snapshot(scopes="pending")                    # Unprocessed episodes with entities
 snapshot(scopes="conflicts")                  # Open conflicts with fact context
 snapshot(scopes="pending,conflicts")          # Both at once
+snapshot(scopes="health")                     # Actionable issues summary
 snapshot(scopes="entity:tool:redis")          # All data for an entity
 snapshot(scopes="topic:architecture")         # All data for a topic
 snapshot(scopes="concept:abc123")             # Concept detail with facts/history
 snapshot(scopes="recent:20")                  # 20 most recent episodes
 snapshot(scopes="stats")                      # Memory statistics
 snapshot(scopes="query:cache config")         # Semantic search (concepts only)
+snapshot(scopes="concepts")                   # All concepts (up to 50)
+snapshot(scopes="episodes:20")                # Recent 20 episodes
+snapshot(scopes="entities")                   # All entities with mention counts
+snapshot(scopes="entities:person")            # Filter entities by type
+snapshot(scopes="topics")                     # All topics with stats
+snapshot(scopes="decisions:10")               # Recent 10 decision episodes
+snapshot(scopes="questions")                  # Open question episodes
 ```
 
 **Scopes**:
 - `pending` — Episodes not yet processed, with their entities
 - `conflicts` — Open conflicts with both facts and provenance
+- `health` — Actionable memory issues (pending episodes, conflicts, orphans)
 - `entity:<id>` — Entity detail with episodes and fact clusters
 - `topic:<id>` — Topic detail with all episodes and concepts
 - `concept:<id>` — Concept detail including superseded fact history
 - `recent:<n>` — N most recent episodes
 - `stats` — Memory statistics
 - `query:<text>` — Semantic search for concepts
+- `concepts[:<n>]` — All concepts (default 50)
+- `episodes[:<n>]` — Recent episodes (default 20)
+- `entities[:<type>]` — All entities with mention counts, optionally filtered by type
+- `topics` — All topics with episode and concept counts
+- `decisions[:<n>]` — Recent decision episodes (default 20)
+- `questions[:<n>]` — Recent question episodes (default 20)
 
 Use `snapshot` to inspect memory state before curating with `apply`.
 

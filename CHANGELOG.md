@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Capture decision tree in `remind-capture` skill** — New "Should I capture this?" section with a visual decision tree and examples of what to skip, making it easier for agents to decide when to write memories.
+- **Entity type reference guide in `remind-capture` skill** — Table of all entity types (`file`, `function`, `class`, `module`, `person`, `concept`, `tool`, `project`) with examples and naming guidelines.
+- **Recall output interpretation guide in `remind-context` skill** — New "Understanding recall output" section explaining similarity scores, concept type badges, and what to do when OPEN CONFLICTS appear.
+- **Actionable collision output in `remember`** — CLI and MCP tools now append ready-to-paste `apply` commands when collisions are detected (`supersede` for same-cluster collisions, `conflict` for high-similarity nearby episodes).
+- **Browse snapshot scopes** — Seven new scopes for exploring memory without a specific query: `concepts[:<n>]`, `episodes[:<n>]`, `entities[:<type>]`, `topics`, `decisions[:<n>]`, `questions[:<n>]`. Maps to existing CLI commands but returns JSON for agent workflows.
+- **`health` snapshot scope** — Returns actionable memory issues: pending episode count, open conflict count, orphan concepts, and stale concepts. Use `remind snapshot health` or `remind snapshot pending conflicts health` for a full picture before curation.
+- **Updated `remind-curate` skill** — Curation loop now starts with `remind snapshot pending conflicts health` to surface all issues at once.
+
 ## [0.12.2] - 2026-07-04
 
 ### Added
