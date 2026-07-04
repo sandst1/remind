@@ -2,6 +2,12 @@
 
 All notable changes to Remind.
 
+## [0.12.4] - 2026-07-04
+
+### Fixed
+
+- **Entity parsing in JSON apply format** — Comma-separated entity IDs are now correctly split in both the string and list cases, matching the behaviour of the compact line format.
+
 ## [0.12.3] - 2026-07-04
 
 ### Added
