@@ -8,6 +8,8 @@ Agent-driven memory layer for LLMs. Remind is a deterministic memory substrate w
 
 **[Documentation](https://sandst1.github.io/remind/)** · **[Examples](https://sandst1.github.io/remind/examples/)** · **[Changelog](https://sandst1.github.io/remind/reference/changelog)**
 
+![Remind Architecture](docs/architecture.png)
+
 ## Quick start
 
 ```bash
