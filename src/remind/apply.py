@@ -555,7 +555,17 @@ class ApplyEngine:
         episode_type = op.get("t") or op.get("type", "observation")
         entities_raw = op.get("e") or op.get("entities", [])
         if isinstance(entities_raw, str):
-            entities_raw = [entities_raw]
+            # JSON path: split comma-separated string just like compact format does
+            entities_raw = [e.strip() for e in entities_raw.split(",") if e.strip()]
+        elif isinstance(entities_raw, list):
+            # Expand any comma-joined strings within list elements
+            expanded: list[str] = []
+            for item in entities_raw:
+                if isinstance(item, str) and "," in item:
+                    expanded.extend(e.strip() for e in item.split(",") if e.strip())
+                else:
+                    expanded.append(item)
+            entities_raw = expanded
         asserted_by = op.get("by") or op.get("asserted_by")
         source_ref = op.get("ref") or op.get("source_ref")
         
