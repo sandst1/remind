@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-07-04
+
 ### Added
 
 - **Capture decision tree in `remind-capture` skill** — New "Should I capture this?" section with a visual decision tree and examples of what to skip, making it easier for agents to decide when to write memories.
@@ -13,6 +15,10 @@ All notable changes to this project will be documented in this file.
 - **Browse snapshot scopes** — Seven new scopes for exploring memory without a specific query: `concepts[:<n>]`, `episodes[:<n>]`, `entities[:<type>]`, `topics`, `decisions[:<n>]`, `questions[:<n>]`. Maps to existing CLI commands but returns JSON for agent workflows.
 - **`health` snapshot scope** — Returns actionable memory issues: pending episode count, open conflict count, orphan concepts, and stale concepts. Use `remind snapshot health` or `remind snapshot pending conflicts health` for a full picture before curation.
 - **Updated `remind-curate` skill** — Curation loop now starts with `remind snapshot pending conflicts health` to surface all issues at once.
+
+### Changed
+
+- **README** — Fully updated to reflect post-0.11 architecture: apply ops table with all operations, snapshot scopes table, key features updated with nearby surfacing, evidence-weighted retrieval, freeform concept types, and concept evolution.
 
 ## [0.12.2] - 2026-07-04
 
