@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/sandst1-remind-badge.png)](https://mseep.ai/app/sandst1-remind)
+
 # Remind
 
 [![PyPI version](https://img.shields.io/pypi/v/remind-mcp.svg)](https://pypi.org/project/remind-mcp/)
