@@ -70,6 +70,21 @@ class TestSQLiteMemoryStore:
         assert store.delete_concept(concept.id) == True
         assert store.get_concept(concept.id) is None
         assert store.delete_concept(concept.id) == False  # Already deleted
+
+    def test_soft_delete_restore_and_purge_concept(self, store):
+        concept = Concept(summary="To delete permanently")
+        store.add_concept(concept)
+
+        assert store.delete_concept(concept.id)
+        assert [item.id for item in store.get_deleted_concepts(limit=1)] == [concept.id]
+        assert store.restore_concept(concept.id)
+        assert store.get_concept(concept.id) is not None
+        assert store.get_deleted_concepts() == []
+
+        assert store.delete_concept(concept.id)
+        assert store.purge_concept(concept.id)
+        assert store.get_concept(concept.id, include_deleted=True) is None
+        assert store.get_deleted_concepts() == []
     
     def test_get_all_concepts(self, store):
         for i in range(3):
@@ -187,6 +202,22 @@ class TestSQLiteMemoryStore:
         
         recent = store.get_recent_episodes(limit=3)
         assert len(recent) == 3
+
+    def test_soft_delete_restore_and_purge_episode(self, store):
+        episode = Episode(content="To delete permanently")
+        store.add_episode(episode)
+
+        assert store.delete_episode(episode.id)
+        assert store.get_episode(episode.id) is None
+        assert store.get_episode(episode.id, include_deleted=True) is not None
+        assert [item.id for item in store.get_deleted_episodes(limit=1)] == [episode.id]
+        assert store.restore_episode(episode.id)
+        assert store.get_episode(episode.id) is not None
+
+        assert store.delete_episode(episode.id)
+        assert store.purge_episode(episode.id)
+        assert store.get_episode(episode.id, include_deleted=True) is None
+        assert store.get_deleted_episodes() == []
     
     def test_get_stats(self, store):
         store.add_concept(Concept(summary="Test"))

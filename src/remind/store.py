@@ -155,7 +155,7 @@ class MemoryStore(ABC):
         ...
 
     @abstractmethod
-    def get_deleted_concepts(self) -> list[Concept]:
+    def get_deleted_concepts(self, limit: Optional[int] = None) -> list[Concept]:
         """Get soft-deleted concepts."""
         ...
 
@@ -410,7 +410,7 @@ class MemoryStore(ABC):
         ...
 
     @abstractmethod
-    def get_episode(self, id: str) -> Optional[Episode]:
+    def get_episode(self, id: str, include_deleted: bool = False) -> Optional[Episode]:
         """Get an episode by ID."""
         ...
 
@@ -1506,14 +1506,14 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def _delete_vec_concept(self, conn, concept_id: str) -> None:
         """Remove a concept from the vector index."""
-        if self._vec_backend == "sqlite-vec":
+        if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
             conn.execute(text(
                 "DELETE FROM vec_concepts WHERE concept_id = :id"
             ), {"id": concept_id})
 
     def _delete_vec_episode(self, conn, episode_id: str) -> None:
         """Remove an episode from the vector index."""
-        if self._vec_backend == "sqlite-vec":
+        if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
             conn.execute(text(
                 "DELETE FROM vec_episodes WHERE episode_id = :id"
             ), {"id": episode_id})
@@ -1662,7 +1662,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             )
             return result.rowcount > 0
 
-    def get_deleted_concepts(self) -> list[Concept]:
+    def get_deleted_concepts(self, limit: Optional[int] = None) -> list[Concept]:
         with self._connect() as conn:
             rows = conn.execute(
                 select(concepts_table.c.data, concepts_table.c.embedding)
@@ -1676,7 +1676,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     data["embedding"] = _bytes_to_embedding(row.embedding)
                 concepts.append(Concept.from_dict(data))
             concepts.sort(key=lambda c: c.deleted_at or "", reverse=True)
-            return concepts
+            return concepts[:limit] if limit is not None else concepts
 
     def get_all_concepts(self) -> list[Concept]:
         with self._connect() as conn:
@@ -2301,7 +2301,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 ids.append(episode.id)
             return ids
 
-    def get_episode(self, id: str) -> Optional[Episode]:
+    def get_episode(self, id: str, include_deleted: bool = False) -> Optional[Episode]:
         with self._connect() as conn:
             row = conn.execute(
                 select(episodes_table.c.data, episodes_table.c.embedding)
@@ -2310,7 +2310,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             if not row:
                 return None
             data = _parse_json(row.data)
-            if data.get("deleted_at"):
+            if data.get("deleted_at") and not include_deleted:
                 return None
             ep = Episode.from_dict(data)
             if row.embedding:

@@ -251,6 +251,19 @@ class TestApplyEngineExecution:
         assert result.success
         assert memory_store.get_episode(ep1.id).consolidated
         assert memory_store.get_episode(ep2.id).consolidated
+
+    @pytest.mark.asyncio
+    async def test_delete_and_restore_soft_deleted_episode(self, engine, memory_store):
+        episode = Episode(content="Delete and restore")
+        memory_store.add_episode(episode)
+
+        deleted = await engine.apply([{"op": "delete", "id": episode.id}])
+        assert deleted.success
+        assert memory_store.get_episode(episode.id) is None
+
+        restored = await engine.apply([{"op": "restore", "id": episode.id}])
+        assert restored.success
+        assert memory_store.get_episode(episode.id) is not None
     
     @pytest.mark.asyncio
     async def test_dry_run_validates_without_executing(self, engine, memory_store):

@@ -160,3 +160,83 @@ def test_types_compact_json_output(monkeypatch):
     if data["configured"]:
         row = data["configured"][0]
         assert set(row.keys()) == {"id", "title", "summary"}
+
+
+def test_export_writes_interface_payload(monkeypatch, tmp_path):
+    class FileMemory:
+        def export_memory(self):
+            return {"version": 3, "concepts": [{"id": "concept-1"}], "episodes": [{"id": "episode-1"}]}
+
+    _patch_cli_config(monkeypatch)
+    monkeypatch.setattr("remind.cli.get_memory", lambda *_args, **_kwargs: FileMemory())
+    export_path = tmp_path / "backup.json"
+
+    result = CliRunner().invoke(
+        main,
+        ["--db", "test", "--embedding", "openai", "export", str(export_path)],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(export_path.read_text())["concepts"] == [{"id": "concept-1"}]
+    assert "Exported 1 concepts and 1 episodes" in result.output
+
+
+def test_import_reads_file_before_calling_interface(monkeypatch, tmp_path):
+    class FileMemory:
+        imported_data = None
+
+        def import_memory(self, data):
+            self.imported_data = data
+            return {"concepts_imported": 1, "episodes_imported": 1}
+
+    memory = FileMemory()
+    _patch_cli_config(monkeypatch)
+    monkeypatch.setattr("remind.cli.get_memory", lambda *_args, **_kwargs: memory)
+    import_path = tmp_path / "backup.json"
+    import_path.write_text(json.dumps({"concepts": [], "episodes": []}))
+
+    result = CliRunner().invoke(
+        main,
+        ["--db", "test", "--embedding", "openai", "import", str(import_path)],
+    )
+
+    assert result.exit_code == 0
+    assert memory.imported_data == {"concepts": [], "episodes": []}
+
+
+def test_deleted_json_and_purge_episode_use_storage_compatible_api(monkeypatch):
+    class DeletedMemory:
+        def __init__(self):
+            self.episode_limits = []
+            self.purged_episode_ids = []
+
+        def get_deleted_episodes(self, limit):
+            self.episode_limits.append(limit)
+            return []
+
+        def get_deleted_concepts(self):
+            return []
+
+        def purge_episode(self, episode_id):
+            self.purged_episode_ids.append(episode_id)
+            return True
+
+    memory = DeletedMemory()
+    _patch_cli_config(monkeypatch)
+    monkeypatch.setattr("remind.cli.get_memory", lambda *_args, **_kwargs: memory)
+    runner = CliRunner()
+
+    deleted = runner.invoke(
+        main,
+        ["--db", "test", "--embedding", "openai", "deleted", "--json"],
+    )
+    purged = runner.invoke(
+        main,
+        ["--db", "test", "--embedding", "openai", "purge-episode", "-y", "episode-1"],
+    )
+
+    assert deleted.exit_code == 0
+    assert json.loads(deleted.output) == {"episodes": [], "concepts": []}
+    assert memory.episode_limits == [20]
+    assert purged.exit_code == 0
+    assert memory.purged_episode_ids == ["episode-1"]

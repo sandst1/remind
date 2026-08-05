@@ -1551,9 +1551,13 @@ def status(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
 def export_cmd(ctx, file: str):
     """Export memory to JSON file."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
-    
-    data = memory.export_memory(file)
-    console.print(f"[green]✓[/green] Exported {data['stats']['concepts']} concepts and {data['stats']['episodes']} episodes to [cyan]{file}[/cyan]")
+
+    data = memory.export_memory()
+    Path(file).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    console.print(
+        f"[green]✓[/green] Exported {len(data['concepts'])} concepts and "
+        f"{len(data['episodes'])} episodes to [cyan]{file}[/cyan]"
+    )
 
 
 @main.command("import")
@@ -1562,8 +1566,9 @@ def export_cmd(ctx, file: str):
 def import_cmd(ctx, file: str):
     """Import memory from JSON file."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
-    
-    result = memory.import_memory(file)
+
+    data = json.loads(Path(file).read_text(encoding="utf-8"))
+    result = memory.import_memory(data)
     console.print(f"[green]✓[/green] Imported {result['concepts_imported']} concepts, {result['episodes_imported']} episodes from [cyan]{file}[/cyan]")
 
 

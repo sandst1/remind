@@ -820,29 +820,13 @@ class MemoryInterface:
         return episode
 
     def delete_episode(self, id: str) -> bool:
-        episode = self.store.get_episode(id)
-        if not episode:
-            return False
-        episode.deleted = True
-        episode.deleted_at = datetime.now()
-        self.store.update_episode(episode)
-        return True
+        return self.store.delete_episode(id)
 
     def restore_episode(self, id: str) -> bool:
-        episode = self.store.get_episode(id, include_deleted=True)
-        if not episode or not episode.deleted:
-            return False
-        episode.deleted = False
-        episode.deleted_at = None
-        self.store.update_episode(episode)
-        return True
+        return self.store.restore_episode(id)
 
     def purge_episode(self, id: str) -> bool:
-        episode = self.store.get_episode(id, include_deleted=True)
-        if not episode:
-            return False
-        self.store.delete_episode(id)
-        return True
+        return self.store.purge_episode(id)
 
     def get_deleted_episodes(self, limit: int = 100) -> list[Episode]:
         return self.store.get_deleted_episodes(limit=limit)
@@ -901,29 +885,13 @@ class MemoryInterface:
         return concept
 
     def delete_concept(self, id: str) -> bool:
-        concept = self.store.get_concept(id)
-        if not concept:
-            return False
-        concept.deleted = True
-        concept.deleted_at = datetime.now()
-        self.store.update_concept(concept)
-        return True
+        return self.store.delete_concept(id)
 
     def restore_concept(self, id: str) -> bool:
-        concept = self.store.get_concept(id, include_deleted=True)
-        if not concept or not concept.deleted:
-            return False
-        concept.deleted = False
-        concept.deleted_at = None
-        self.store.update_concept(concept)
-        return True
+        return self.store.restore_concept(id)
 
     def purge_concept(self, id: str) -> bool:
-        concept = self.store.get_concept(id, include_deleted=True)
-        if not concept:
-            return False
-        self.store.delete_concept(id)
-        return True
+        return self.store.purge_concept(id)
 
     def get_deleted_concepts(self, limit: int = 100) -> list[Concept]:
         return self.store.get_deleted_concepts(limit=limit)

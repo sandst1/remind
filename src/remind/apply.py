@@ -985,23 +985,12 @@ class ApplyEngine:
         """Execute a delete operation."""
         target_id = self._resolve_ref(op.get("id", ""), refs)
         
-        # Try episode first, then concept
-        episode = self.store.get_episode(target_id)
-        if episode:
-            episode.deleted = True
-            episode.deleted_at = datetime.now()
-            self.store.update_episode(episode)
-        else:
-            concept = self.store.get_concept(target_id)
-            if concept:
-                concept.deleted = True
-                concept.deleted_at = datetime.now()
-                self.store.update_concept(concept)
-            else:
-                return OpResult(
-                    op_index=index, op_type="delete", success=False,
-                    error=f"Target not found: {target_id}",
-                )
+        # Try episode first, then concept.
+        if not self.store.delete_episode(target_id) and not self.store.delete_concept(target_id):
+            return OpResult(
+                op_index=index, op_type="delete", success=False,
+                error=f"Target not found: {target_id}",
+            )
         
         return OpResult(
             op_index=index,
@@ -1017,23 +1006,12 @@ class ApplyEngine:
         """Execute a restore operation."""
         target_id = self._resolve_ref(op.get("id", ""), refs)
         
-        # Try episode first, then concept
-        episode = self.store.get_episode(target_id, include_deleted=True)
-        if episode and episode.deleted:
-            episode.deleted = False
-            episode.deleted_at = None
-            self.store.update_episode(episode)
-        else:
-            concept = self.store.get_concept(target_id, include_deleted=True)
-            if concept and concept.deleted:
-                concept.deleted = False
-                concept.deleted_at = None
-                self.store.update_concept(concept)
-            else:
-                return OpResult(
-                    op_index=index, op_type="restore", success=False,
-                    error=f"Deleted item not found: {target_id}",
-                )
+        # Try episode first, then concept.
+        if not self.store.restore_episode(target_id) and not self.store.restore_concept(target_id):
+            return OpResult(
+                op_index=index, op_type="restore", success=False,
+                error=f"Deleted item not found: {target_id}",
+            )
         
         return OpResult(
             op_index=index,

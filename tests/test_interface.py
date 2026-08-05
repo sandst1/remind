@@ -522,6 +522,30 @@ class TestMemoryInterface:
     # get_stats tests
     # =========================================================================
 
+    def test_delete_restore_and_purge_lifecycle(self, memory):
+        """Soft-deleted records can be listed, restored, and permanently purged."""
+        episode = Episode(content="Delete me")
+        concept = Concept(summary="Delete me too")
+        memory.store.add_episode(episode)
+        memory.store.add_concept(concept)
+
+        assert memory.delete_episode(episode.id)
+        assert memory.delete_concept(concept.id)
+        assert [item.id for item in memory.get_deleted_episodes()] == [episode.id]
+        assert [item.id for item in memory.get_deleted_concepts()] == [concept.id]
+
+        assert memory.restore_episode(episode.id)
+        assert memory.restore_concept(concept.id)
+        assert memory.get_episode(episode.id) is not None
+        assert memory.get_concept(concept.id) is not None
+
+        assert memory.delete_episode(episode.id)
+        assert memory.delete_concept(concept.id)
+        assert memory.purge_episode(episode.id)
+        assert memory.purge_concept(concept.id)
+        assert memory.store.get_episode(episode.id, include_deleted=True) is None
+        assert memory.store.get_concept(concept.id, include_deleted=True) is None
+
     @pytest.mark.asyncio
     async def test_get_stats(self, memory, mock_embedding):
         """Test get_stats method."""
