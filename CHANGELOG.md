@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-08-05
+
+### Fixed
+
+- **CLI storage maintenance commands** — Restored deleted-item listing, episode lookup for soft-deleted records, and permanent concept and episode purging by aligning the CLI, interface, and SQLAlchemy store APIs.
+- **CLI JSON backups** — `remind export` now writes the current interface payload to its requested file and `remind import` reads that file before importing it.
+- **Purge without vector tables** — Permanent deletion no longer fails when sqlite-vec is available but an embedding index has not yet been initialized.
+
 ## [0.12.4] - 2026-07-04
 
 ### Fixed
