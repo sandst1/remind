@@ -25,9 +25,9 @@ Remind ships three skills, each with its own behavioral trigger:
 
 | Skill | Triggers when... | Teaches |
 |-------|------------------|---------|
-| **`remind-capture`** | A decision is made, an approach succeeds/fails, the user states a preference or corrects the agent, a concrete fact surfaces | What to remember: episode types (outcomes are highest-value), entities, topics, provenance, handling fact collisions |
-| **`remind-context`** | Session start, questions about prior decisions/preferences/history, starting work on a familiar area | How to recall: semantic, entity, topic-scoped, and `--as-of` time-travel queries; reading output including `OPEN CONFLICTS` warning |
-| **`remind-curate`** | Recall warns about conflicts, stored info is corrected or outdated, topics need reorganizing | Using `snapshot` and `apply` for batch curation: conflict resolution, supersession, concept creation |
+| **`remind-capture`** | A decision is made, an approach succeeds/fails, the user states a preference or corrects the agent, a concrete fact surfaces | What to remember: episode types (outcomes are highest-value), entities, labels, provenance, handling fact collisions |
+| **`remind-context`** | Session start, questions about prior decisions/preferences/history, starting work on a familiar area | How to recall: semantic, entity, label-scoped, and `--as-of` time-travel queries; reading output including `OPEN CONFLICTS` warning |
+| **`remind-curate`** | Recall warns about conflicts, stored info is corrected or outdated, labels need reorganizing | Using `snapshot` and `apply` for batch curation: conflict resolution, supersession, concept creation |
 
 Example workflow:
 

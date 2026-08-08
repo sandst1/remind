@@ -6,12 +6,11 @@
     episodesLoading,
     episodesError,
     currentDb,
-    topics,
-    selectedTopic,
+    selectedLabel,
     configuredEpisodeTypes,
   } from '../lib/stores';
-  import { fetchEpisodes, updateEpisode, fetchTopics } from '../lib/api';
-  import type { Episode, EpisodeType, Topic } from '../lib/types';
+  import { fetchEpisodes, updateEpisode } from '../lib/api';
+  import type { Episode, EpisodeType } from '../lib/types';
   import { Search, Filter, Circle, Play, CheckCircle2, Ban, Trash2, Pencil } from 'lucide-svelte';
   import { deleteEpisode } from '../lib/api';
   import { getTypeLabel, getTypePluralLabel, getTypeIcon } from '../lib/episode-types';
@@ -23,16 +22,14 @@
   const pageSize = 20;
   let mounted = false;
 
-  $: topicMap = Object.fromEntries(($topics || []).map((t: Topic) => [t.id, t.name]));
-
   onMount(() => {
     mounted = true;
   });
 
-  // React to database and topic filter. ($selectedTopic must be read here — Svelte
+  // React to database and label filter. ($selectedLabel must be read here — Svelte
   // does not treat store subscriptions inside loadEpisodes() as dependencies.)
   $: if (mounted && $currentDb) {
-    void $selectedTopic;
+    void $selectedLabel;
     page = 0;
     loadEpisodes();
   }
@@ -50,7 +47,7 @@
         type: filterType || undefined,
         consolidated: filterConsolidated ?? undefined,
         search: search || undefined,
-        topic: $selectedTopic || undefined,
+        label: $selectedLabel ? `${$selectedLabel.key}:${$selectedLabel.value}` : undefined,
       });
       episodes.set(response.episodes);
       episodesTotal.set(response.total);
@@ -226,9 +223,11 @@
               {#if !episode.consolidated}
                 <span class="pending-badge">Pending</span>
               {/if}
-              {#if episode.topic_id}
-                <span class="topic-badge">{topicMap[episode.topic_id] || episode.topic_id}</span>
-              {/if}
+              {#each Object.entries(episode.labels || {}) as [key, values]}
+                {#each values as value}
+                  <span class="label-chip">{key}={value}</span>
+                {/each}
+              {/each}
             </div>
             {#if episode.episode_type === 'task' && episode.metadata?.status}
               <div class="task-status status-{episode.metadata.status}">
@@ -545,7 +544,7 @@
     font-weight: 500;
   }
 
-  .topic-badge {
+  .label-chip {
     font-size: var(--font-size-xs);
     padding: 2px 8px;
     background: var(--color-accent-bg, rgba(99, 102, 241, 0.1));

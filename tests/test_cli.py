@@ -240,3 +240,36 @@ def test_deleted_json_and_purge_episode_use_storage_compatible_api(monkeypatch):
     assert memory.episode_limits == [20]
     assert purged.exit_code == 0
     assert memory.purged_episode_ids == ["episode-1"]
+
+
+def test_events_command_polls_change_feed(monkeypatch):
+    class EventsStore:
+        def __init__(self):
+            self.calls = []
+
+        def get_events(self, since_seq=0, limit=100, kind=None):
+            self.calls.append({"since_seq": since_seq, "limit": limit, "kind": kind})
+            return [
+                {"seq": 43, "ts": "2026-01-01T00:00:00", "kind": "remembered",
+                 "subject_type": "episode", "subject_id": "ep1", "payload": None},
+            ]
+
+    class EventsMemory:
+        def __init__(self):
+            self.store = EventsStore()
+
+    memory = EventsMemory()
+    _patch_cli_config(monkeypatch)
+    monkeypatch.setattr("remind.cli.get_memory", lambda *_args, **_kwargs: memory)
+
+    result = CliRunner().invoke(
+        main,
+        ["--db", "test", "--embedding", "openai", "events", "--since", "42"],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["since_seq"] == 42
+    assert data["count"] == 1
+    assert data["next_since_seq"] == 43
+    assert memory.store.calls == [{"since_seq": 42, "limit": 200, "kind": None}]

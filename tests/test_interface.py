@@ -648,38 +648,34 @@ class TestMemoryInterface:
         assert result["episodes_imported"] == 1
 
     # =========================================================================
-    # Topic tests
+    # Label tests
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_update_episode_topic_reassign_and_clear(self, memory):
-        ta = memory.create_topic("TopicAlpha", "")
-        tb = memory.create_topic("TopicBeta", "")
-        result = await memory.remember("hello", topic=ta.id)
+    async def test_update_episode_labels_reassign_and_clear(self, memory):
+        result = await memory.remember("hello", labels={"topic": "alpha"})
         ep = memory.store.get_episode(result.episode_id)
-        assert ep.topic_id == ta.id
+        assert ep.labels == {"topic": ["alpha"]}
 
-        memory.update_episode(result.episode_id, topic=tb.name)
+        memory.update_episode(result.episode_id, labels={"topic": "beta"})
         ep = memory.store.get_episode(result.episode_id)
-        assert ep.topic_id == tb.id
+        assert ep.labels == {"topic": ["beta"]}
 
-        memory.update_episode(result.episode_id, topic="")
+        memory.update_episode(result.episode_id, labels={})
         ep = memory.store.get_episode(result.episode_id)
-        assert ep.topic_id is None
+        assert ep.labels == {}
 
-    def test_update_concept_topic_reassign_and_clear(self, memory):
-        ta = memory.create_topic("TopicAlpha", "")
-        tb = memory.create_topic("TopicBeta", "")
-        c = Concept(summary="concept body", topic_id=ta.id)
+    def test_update_concept_labels_reassign_and_clear(self, memory):
+        c = Concept(summary="concept body", labels={"topic": ["alpha"]})
         memory.store.add_concept(c)
 
-        updated = memory.update_concept(c.id, topic=tb.name)
+        updated = memory.update_concept(c.id, labels={"topic": "beta"})
         assert updated is not None
-        assert updated.topic_id == tb.id
+        assert updated.labels == {"topic": ["beta"]}
 
-        updated = memory.update_concept(c.id, topic="")
+        updated = memory.update_concept(c.id, labels={})
         assert updated is not None
-        assert updated.topic_id is None
+        assert updated.labels == {}
 
 
 class TestMemoryInterfaceInitialization:

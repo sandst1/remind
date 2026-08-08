@@ -101,6 +101,17 @@ class RemindConfig:
     hybrid_keyword_weight: float = 0.3
     recall_initial_candidates: int = 10
 
+    # Lexical (keyword/BM25) recall channel, fused with vector search via RRF.
+    # Auto-detected per-database (FTS5/tsvector/FULLTEXT); this only lets you
+    # opt out even when a backend is available.
+    lexical_enabled: bool = True
+    rrf_k: int = 60
+
+    # Recall budget controls
+    recall_max_chars: Optional[int] = None
+    recall_min_score: Optional[float] = None
+    recall_timeout_ms: Optional[int] = None
+
     # Reranking (requires `pip install "remind-mcp[rerank]"`)
     reranking_enabled: bool = False
     reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -195,6 +206,20 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
         config.hybrid_keyword_weight = float(file_config["hybrid_keyword_weight"])
     if "recall_initial_candidates" in file_config:
         config.recall_initial_candidates = int(file_config["recall_initial_candidates"])
+
+    # Lexical recall channel
+    if "lexical_enabled" in file_config:
+        config.lexical_enabled = bool(file_config["lexical_enabled"])
+    if "rrf_k" in file_config:
+        config.rrf_k = int(file_config["rrf_k"])
+
+    # Recall budget controls
+    if "recall_max_chars" in file_config:
+        config.recall_max_chars = int(file_config["recall_max_chars"])
+    if "recall_min_score" in file_config:
+        config.recall_min_score = float(file_config["recall_min_score"])
+    if "recall_timeout_ms" in file_config:
+        config.recall_timeout_ms = int(file_config["recall_timeout_ms"])
 
     # Reranking
     if "reranking_enabled" in file_config:
@@ -360,6 +385,32 @@ def _apply_env_vars(config: RemindConfig) -> None:
             config.recall_initial_candidates = int(initial_candidates)
         except ValueError:
             logger.warning(f"Invalid REMIND_RECALL_INITIAL_CANDIDATES: {initial_candidates}")
+
+    # Lexical recall channel
+    if lexical_enabled := os.environ.get("REMIND_LEXICAL_ENABLED"):
+        config.lexical_enabled = lexical_enabled.lower() in ("true", "1", "yes")
+    if rrf_k := os.environ.get("REMIND_RRF_K"):
+        try:
+            config.rrf_k = int(rrf_k)
+        except ValueError:
+            logger.warning(f"Invalid REMIND_RRF_K: {rrf_k}")
+
+    # Recall budget controls
+    if max_chars := os.environ.get("REMIND_RECALL_MAX_CHARS"):
+        try:
+            config.recall_max_chars = int(max_chars)
+        except ValueError:
+            logger.warning(f"Invalid REMIND_RECALL_MAX_CHARS: {max_chars}")
+    if min_score := os.environ.get("REMIND_RECALL_MIN_SCORE"):
+        try:
+            config.recall_min_score = float(min_score)
+        except ValueError:
+            logger.warning(f"Invalid REMIND_RECALL_MIN_SCORE: {min_score}")
+    if timeout_ms := os.environ.get("REMIND_RECALL_TIMEOUT_MS"):
+        try:
+            config.recall_timeout_ms = int(timeout_ms)
+        except ValueError:
+            logger.warning(f"Invalid REMIND_RECALL_TIMEOUT_MS: {timeout_ms}")
 
     # Reranking
     if reranking_enabled := os.environ.get("REMIND_RERANKING_ENABLED"):

@@ -22,6 +22,27 @@ def _normalize_entity_param(raw: str) -> str:
     type_str, name = Entity.parse_id(entity_id)
     return Entity.make_id(type_str, normalize_entity_name(name))
 
+
+def _parse_label_query_params(request: Request) -> Optional[dict]:
+    """Parse repeated ?label=key:value query params into a single-value filter dict."""
+    raw_values = request.query_params.getlist("label")
+    if not raw_values:
+        return None
+    result: dict = {}
+    for item in raw_values:
+        if ":" not in item:
+            continue
+        key, _, value = item.partition(":")
+        key, value = key.strip(), value.strip()
+        if key and value:
+            result[key] = value
+    return result or None
+
+
+def _matches_labels(labels: dict, label_filter: dict) -> bool:
+    """True if *labels* (subject.labels dict) carries every key/value in *label_filter*."""
+    return all(value in (labels or {}).get(key, []) for key, value in label_filter.items())
+
 # Import config and memory instance cache
 from remind.config import (
     load_config,
@@ -89,12 +110,12 @@ async def get_concepts(request: Request) -> JSONResponse:
         offset = int(request.query_params.get("offset", 0))
         limit = int(request.query_params.get("limit", 50))
         search = request.query_params.get("search", "")
-        topic_id = request.query_params.get("topic")
+        label_filter = _parse_label_query_params(request)
 
         all_concepts = memory.store.get_all_concepts()
 
-        if topic_id:
-            all_concepts = [c for c in all_concepts if c.topic_id == topic_id]
+        if label_filter:
+            all_concepts = [c for c in all_concepts if _matches_labels(c.labels, label_filter)]
 
         if search:
             search_lower = search.lower()
@@ -205,10 +226,9 @@ async def update_concept(request: Request) -> JSONResponse:
         tags = body.get("tags")
         relations = body.get("relations")
 
-        topic_arg = None
-        if "topic" in body:
-            t = body["topic"]
-            topic_arg = "" if (t is None or t == "") else str(t).strip()
+        labels_arg = None
+        if "labels" in body:
+            labels_arg = body["labels"] if isinstance(body["labels"], dict) else {}
 
         updated = memory.update_concept(
             concept_id,
@@ -219,7 +239,7 @@ async def update_concept(request: Request) -> JSONResponse:
             exceptions=exceptions,
             tags=tags,
             relations=relations,
-            topic=topic_arg,
+            labels=labels_arg,
         )
 
         if not updated:
@@ -349,7 +369,7 @@ async def get_episodes(request: Request) -> JSONResponse:
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
         search = request.query_params.get("search", "")
-        topic_filter = request.query_params.get("topic")
+        label_filter = _parse_label_query_params(request)
 
         if episode_type:
             all_episodes = memory.store.get_episodes_by_type(episode_type, limit=1000)
@@ -366,8 +386,8 @@ async def get_episodes(request: Request) -> JSONResponse:
             is_consolidated = consolidated.lower() == "true"
             all_episodes = [e for e in all_episodes if e.consolidated == is_consolidated]
 
-        if topic_filter:
-            all_episodes = [e for e in all_episodes if e.topic_id == topic_filter]
+        if label_filter:
+            all_episodes = [e for e in all_episodes if _matches_labels(e.labels, label_filter)]
 
         if search:
             search_lower = search.lower()
@@ -425,10 +445,9 @@ async def update_episode(request: Request) -> JSONResponse:
         if metadata is not None and not isinstance(metadata, dict):
             return JSONResponse({"error": "metadata must be an object"}, status_code=400)
 
-        topic_arg = None
-        if "topic" in body:
-            t = body["topic"]
-            topic_arg = "" if (t is None or t == "") else str(t).strip()
+        labels_arg = None
+        if "labels" in body:
+            labels_arg = body["labels"] if isinstance(body["labels"], dict) else {}
 
         updated = memory.update_episode(
             episode_id,
@@ -436,7 +455,7 @@ async def update_episode(request: Request) -> JSONResponse:
             episode_type=episode_type or None,
             entities=entities,
             metadata=metadata,
-            topic=topic_arg,
+            labels=labels_arg,
         )
 
         if not updated:
@@ -812,7 +831,7 @@ async def execute_query(request: Request) -> JSONResponse:
         query = body.get("query") or None
         k = body.get("k", 3)
         entity = body.get("entity") or None
-        topic = body.get("topic") or None
+        labels = body.get("labels") if isinstance(body.get("labels"), dict) else None
 
         if not query and not entity:
             return JSONResponse(
@@ -820,7 +839,7 @@ async def execute_query(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        result = await memory.recall(query=query, k=k, entity=entity, raw=True, topic=topic)
+        result = await memory.recall(query=query, k=k, entity=entity, raw=True, labels=labels)
 
         if entity:
             return JSONResponse({
@@ -828,12 +847,7 @@ async def execute_query(request: Request) -> JSONResponse:
                 "formatted": memory.retriever.format_entity_context(entity, result),
             })
 
-        topic_names = memory._get_topic_names()
-        formatted = memory.retriever.format_for_llm(
-            result,
-            group_by_topic=topic is None,
-            topic_names=topic_names,
-        )
+        formatted = memory.retriever.format_for_llm(result)
 
         return JSONResponse({
             "concepts": [
@@ -914,99 +928,21 @@ async def get_config(request: Request) -> JSONResponse:
 
 
 # =============================================================================
-# Topics
+# Labels
 # =============================================================================
 
 
-async def api_get_topics(request: Request) -> JSONResponse:
-    """List all topics with stats."""
+async def api_get_labels(request: Request) -> JSONResponse:
+    """List distinct key/value labels currently in use, with counts."""
     memory, error = await _get_memory_from_request(request)
     if error:
         return error
     try:
-        topics = memory.list_topics()
-        return JSONResponse({"topics": topics, "total": len(topics)})
+        subject_type = request.query_params.get("subject_type")
+        labels = memory.list_labels(subject_type)
+        return JSONResponse({"labels": labels, "total": len(labels)})
     except Exception as e:
-        logger.exception("Failed to get topics")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-async def api_create_topic(request: Request) -> JSONResponse:
-    """Create a new topic."""
-    memory, error = await _get_memory_from_request(request)
-    if error:
-        return error
-    try:
-        body = await request.json()
-        name = body.get("name", "").strip()
-        if not name:
-            return JSONResponse({"error": "name is required"}, status_code=400)
-        description = body.get("description", "")
-        topic = memory.create_topic(name, description=description)
-        return JSONResponse(topic.to_dict(), status_code=201)
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=409)
-    except Exception as e:
-        logger.exception("Failed to create topic")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-async def api_get_topic_detail(request: Request) -> JSONResponse:
-    """Get a single topic by ID with stats."""
-    memory, error = await _get_memory_from_request(request)
-    if error:
-        return error
-    topic_id = request.path_params.get("id")
-    try:
-        topic = memory.get_topic(topic_id)
-        if not topic:
-            return JSONResponse({"error": "Topic not found"}, status_code=404)
-        stats = memory.store.get_topic_stats()
-        topic_stat = next((t for t in stats if t["id"] == topic_id), None)
-        result = topic.to_dict()
-        if topic_stat:
-            result["episode_count"] = topic_stat["episode_count"]
-            result["concept_count"] = topic_stat["concept_count"]
-            result["latest_activity"] = topic_stat.get("latest_activity")
-        return JSONResponse(result)
-    except Exception as e:
-        logger.exception("Failed to get topic detail")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-async def api_update_topic(request: Request) -> JSONResponse:
-    """Update a topic."""
-    memory, error = await _get_memory_from_request(request)
-    if error:
-        return error
-    topic_id = request.path_params.get("id")
-    try:
-        body = await request.json()
-        name = body.get("name")
-        description = body.get("description")
-        updated = memory.update_topic(topic_id, name=name, description=description)
-        if not updated:
-            return JSONResponse({"error": "Topic not found"}, status_code=404)
-        return JSONResponse(updated.to_dict())
-    except Exception as e:
-        logger.exception("Failed to update topic")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-async def api_delete_topic(request: Request) -> JSONResponse:
-    """Delete a topic (only if not in use)."""
-    memory, error = await _get_memory_from_request(request)
-    if error:
-        return error
-    topic_id = request.path_params.get("id")
-    try:
-        if memory.delete_topic(topic_id):
-            return JSONResponse({"deleted": True})
-        return JSONResponse({"error": "Topic not found"}, status_code=404)
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=409)
-    except Exception as e:
-        logger.exception("Failed to delete topic")
+        logger.exception("Failed to get labels")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -1156,12 +1092,8 @@ api_routes = [
     Route("/api/v1/conflicts", get_conflicts, methods=["GET"]),
     Route("/api/v1/conflicts/{id}/resolve", resolve_conflict_route, methods=["POST"]),
     Route("/api/v1/conflicts/{id}/dismiss", dismiss_conflict_route, methods=["POST"]),
-    # Topics
-    Route("/api/v1/topics", api_get_topics, methods=["GET"]),
-    Route("/api/v1/topics", api_create_topic, methods=["POST"]),
-    Route("/api/v1/topics/{id}", api_get_topic_detail, methods=["GET"]),
-    Route("/api/v1/topics/{id}", api_update_topic, methods=["PUT", "PATCH"]),
-    Route("/api/v1/topics/{id}", api_delete_topic, methods=["DELETE"]),
+    # Labels
+    Route("/api/v1/labels", api_get_labels, methods=["GET"]),
     # Bulk operations
     Route("/api/v1/deleted/purge-all", purge_all_deleted, methods=["DELETE"]),
 ]

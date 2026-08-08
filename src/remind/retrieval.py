@@ -13,7 +13,6 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import logging
 import math
-import re
 import time
 
 from remind.models import Concept, Episode, Entity, RelationType
@@ -26,21 +25,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _keyword_score(query: str, text: str) -> float:
-    """Compute normalized keyword overlap between query tokens and text.
+def _fuse_vector_lexical(
+    vector_results: list[tuple],
+    lexical_results: list[tuple],
+    id_fn,
+    lexical_weight: float,
+    rrf_k: int,
+) -> dict:
+    """Fuse ranked vector-similarity and lexical-search results.
 
-    Returns a score in [0.0, 1.0] representing the fraction of query tokens
-    found in the text (case-insensitive). Tokens shorter than 2 chars are
-    ignored to filter noise words.
+    Both inputs are ``(obj, score)`` pairs already ranked best-first. When
+    there are no lexical results (lexical disabled, no backend configured,
+    or the query had no searchable terms), this degrades to the raw vector
+    similarity scores untouched, preserving the historical [0, 1]
+    cosine-similarity semantics that ``activation_threshold``/``min_activation``
+    are calibrated against.
+
+    Once a lexical arm is present, both sides are combined via weighted
+    Reciprocal Rank Fusion (rank-based, so it doesn't need BM25 and cosine
+    scores to be on comparable scales), then min-max normalized against the
+    batch's own top score so the fused result stays in the same [0, 1] range
+    a similarity score would occupy.
+
+    Returns a dict mapping id -> (fused_score, obj).
     """
-    if not query or not text:
-        return 0.0
-    query_tokens = [t.lower() for t in re.split(r'\W+', query) if len(t) >= 2]
-    if not query_tokens:
-        return 0.0
-    text_lower = text.lower()
-    matches = sum(1 for t in query_tokens if t in text_lower)
-    return matches / len(query_tokens)
+    if not lexical_results:
+        return {id_fn(obj): (score, obj) for obj, score in vector_results}
+
+    vector_weight = 1.0 - lexical_weight
+    fused: dict[str, list] = {}
+    for rank, (obj, _sim) in enumerate(vector_results):
+        oid = id_fn(obj)
+        entry = fused.setdefault(oid, [0.0, obj])
+        entry[0] += vector_weight / (rrf_k + rank + 1)
+
+    for rank, (obj, _score) in enumerate(lexical_results):
+        oid = id_fn(obj)
+        entry = fused.setdefault(oid, [0.0, obj])
+        entry[0] += lexical_weight / (rrf_k + rank + 1)
+
+    max_score = max((v[0] for v in fused.values()), default=0.0)
+    if max_score <= 0:
+        return {oid: (0.0, obj) for oid, (_score, obj) in fused.items()}
+    return {oid: (score / max_score, obj) for oid, (score, obj) in fused.items()}
 
 # Metadata keys to suppress in recall output (internal bookkeeping)
 _HIDDEN_METADATA_KEYS = {"source", "triage_density"}
@@ -128,8 +155,13 @@ class MemoryRetriever:
         spread_hops: int = 2,  # how many hops to spread
         spread_decay: float = 0.5,  # activation decay per hop
         activation_threshold: float = 0.1,  # minimum activation to spread
-        # Hybrid scoring
-        hybrid_keyword_weight: float = 0.0,  # 0.0 = pure embedding, 1.0 = pure keyword
+        # Hybrid scoring -- weight of the lexical (BM25/FTS) arm in RRF fusion
+        # against the vector arm. 0.0 = pure embedding, 1.0 = pure lexical.
+        hybrid_keyword_weight: float = 0.0,
+        # Whether to query the lexical backend at all (no-op if the store has none)
+        lexical_enabled: bool = True,
+        # RRF rank-damping constant; higher = ranks matter less
+        rrf_k: int = 60,
         # Relation type weights (how much different relations spread activation)
         relation_weights: Optional[dict[RelationType, float]] = None,
         # Optional cross-encoder reranker
@@ -142,6 +174,8 @@ class MemoryRetriever:
         self.spread_decay = spread_decay
         self.activation_threshold = activation_threshold
         self.hybrid_keyword_weight = max(0.0, min(1.0, hybrid_keyword_weight))
+        self.lexical_enabled = lexical_enabled
+        self.rrf_k = rrf_k
         self.reranker = reranker
         
         # Default relation weights - some relations spread activation more
@@ -195,7 +229,8 @@ class MemoryRetriever:
         min_activation: float = 0.15,
         context: Optional[str] = None,
         include_weak: bool = False,
-        topic: Optional[str] = None,
+        labels: Optional[dict[str, str]] = None,
+        timeout_ms: Optional[int] = None,
     ) -> list[ActivatedConcept]:
         """
         Retrieve relevant concepts for a query.
@@ -207,13 +242,18 @@ class MemoryRetriever:
                 Concepts below this floor are dropped even if k budget remains.
             context: Optional additional context to include in embedding
             include_weak: If True, include lower-activation concepts
-            topic: If set, filter initial matches to this topic. Cross-topic
-                spreading still occurs but with a 0.4x activation penalty.
+            labels: If set, pre-filter initial matches to concepts matching
+                ALL given key=value label filters. Spreading still follows
+                the graph beyond the filtered set.
+            timeout_ms: Soft deadline. Once exceeded, remaining phases
+                (spreading, reranking) are skipped and results are built
+                from whatever was already gathered, instead of raising.
             
         Returns:
             List of ActivatedConcept objects, sorted by activation
         """
         t_start = time.perf_counter()
+        deadline = t_start + timeout_ms / 1000.0 if timeout_ms else None
         # Combine query with context if provided
         embed_text = query
         if context:
@@ -224,36 +264,30 @@ class MemoryRetriever:
         query_embedding = await self.embedding.embed(embed_text)
         t_embed_ms = (time.perf_counter() - t_embed_start) * 1000.0
         
-        # Step 1: Initial activation from embedding similarity
+        # Step 1: Initial activation from embedding similarity + lexical search
         t_initial_search_start = time.perf_counter()
         initial_matches = self.store.find_by_embedding(
             query_embedding, 
-            k=self.initial_k * 2  # Get more initially, we'll filter
+            k=self.initial_k * 2,  # Get more initially, we'll filter
+            labels=labels,
         )
+        lexical_matches: list[tuple[Concept, float]] = []
+        if self.lexical_enabled and self.hybrid_keyword_weight > 0.0:
+            lexical_matches = self.store.search_concepts_lexical(
+                query, k=self.initial_k * 2, labels=labels,
+            )
         t_initial_search_ms = (time.perf_counter() - t_initial_search_start) * 1000.0
 
-        t_topic_filter_start = time.perf_counter()
-        if topic:
-            initial_matches = [
-                (c, sim) for c, sim in initial_matches
-                if c.topic_id == topic or c.topic_id is None
-            ]
-        t_topic_filter_ms = (time.perf_counter() - t_topic_filter_start) * 1000.0
-        
         # Build activation map: concept_id -> (activation, source, hops)
         t_initial_activation_start = time.perf_counter()
         activation_map: dict[str, tuple[float, str, int]] = {}
         concept_cache: dict[str, Concept] = {}
 
-        kw = self.hybrid_keyword_weight
-        for concept, similarity in initial_matches:
-            if kw > 0.0:
-                concept_text = f"{concept.title or ''} {concept.summary or ''}"
-                kw_score = _keyword_score(query, concept_text)
-                fused = (1.0 - kw) * similarity + kw * kw_score
-            else:
-                fused = similarity
-
+        fused_matches = _fuse_vector_lexical(
+            initial_matches, lexical_matches, lambda c: c.id,
+            self.hybrid_keyword_weight, self.rrf_k,
+        )
+        for fused, concept in fused_matches.values():
             weighted_activation = fused * concept.confidence
             decay_factor = max(0.0, min(1.0, concept.decay_factor))
             evidence_weight = self._compute_evidence_weight(concept.id)
@@ -266,11 +300,14 @@ class MemoryRetriever:
                     logger.debug(f"Concept {concept.id} activation adjusted: decay={decay_factor:.2f}, evidence={evidence_weight:.2f}")
         t_initial_activation_ms = (time.perf_counter() - t_initial_activation_start) * 1000.0
         
-        logger.debug(f"Initial activation: {len(activation_map)} concepts (topic={topic})")
+        logger.debug(f"Initial activation: {len(activation_map)} concepts (labels={labels})")
         
-        # Step 2: Spreading activation
+        # Step 2: Spreading activation (skipped if the deadline already passed)
         t_spread_start = time.perf_counter()
-        for hop in range(self.spread_hops):
+        deadline_hit = deadline is not None and t_spread_start > deadline
+        if deadline_hit:
+            logger.warning("recall timeout_ms exceeded before spreading; returning best-so-far")
+        for hop in range(self.spread_hops if not deadline_hit else 0):
             new_activations: dict[str, tuple[float, str, int]] = {}
             
             for concept_id, (activation, _, _) in list(activation_map.items()):
@@ -296,9 +333,6 @@ class MemoryRetriever:
                         * target_evidence  # Weight by net evidence strength
                     )
 
-                    if topic and related_concept.topic_id and related_concept.topic_id != topic:
-                        spread_activation *= 0.4
-                    
                     if spread_activation < self.activation_threshold:
                         continue
                     
@@ -321,6 +355,9 @@ class MemoryRetriever:
                     activation_map[cid] = (act, src, hops)
             
             logger.debug(f"After hop {hop + 1}: {len(activation_map)} concepts")
+            if deadline is not None and time.perf_counter() > deadline:
+                logger.warning("recall timeout_ms exceeded during spreading; stopping early")
+                break
         t_spread_ms = (time.perf_counter() - t_spread_start) * 1000.0
         
         # Step 2.5: Entity name matching (fast, no embedding needed)
@@ -342,9 +379,11 @@ class MemoryRetriever:
             logger.debug(f"Entity name matching: {entity_sourced} concepts from entities")
         t_entity_ms = (time.perf_counter() - t_entity_start) * 1000.0
 
-        # Step 2.75: Cross-encoder reranking
+        # Step 2.75: Cross-encoder reranking (skipped past the deadline -- rerank
+        # is the most expensive remaining phase and best-so-far without it is
+        # still a valid ranking)
         t_rerank_ms = 0.0
-        if self.reranker and activation_map:
+        if self.reranker and activation_map and not (deadline is not None and time.perf_counter() > deadline):
             t_rerank_start = time.perf_counter()
             rerank_ids = list(activation_map.keys())
             rerank_docs = []
@@ -393,12 +432,11 @@ class MemoryRetriever:
         t_total_ms = (time.perf_counter() - t_start) * 1000.0
 
         logger.debug(
-            "Recall timing (retrieve): embed=%.1fms vector=%.1fms topic_filter=%.1fms "
+            "Recall timing (retrieve): embed=%.1fms vector=%.1fms "
             "initial_activation=%.1fms spread=%.1fms entity_match=%.1fms rerank=%.1fms "
             "finalize=%.1fms total=%.1fms candidates=%d returned=%d",
             t_embed_ms,
             t_initial_search_ms,
-            t_topic_filter_ms,
             t_initial_activation_ms,
             t_spread_ms,
             t_entity_ms,
@@ -529,24 +567,12 @@ class MemoryRetriever:
         scored.sort(key=lambda x: x[1], reverse=True)
         return [c for c, _ in scored[:k]]
     
-    async def retrieve_by_topic(
-        self,
-        topic_id: str,
-        k: int = 5,
-    ) -> list[Concept]:
-        """
-        Retrieve top concepts for a topic, no query needed.
-
-        Returns concepts ordered by confidence * instance_count,
-        suitable for topic overview / drill-down.
-        """
-        return self.store.get_concepts_by_topic(topic_id)[:k]
-
     async def retrieve_episodes_by_embedding(
         self,
         query: str,
         k: int = 5,
         query_embedding: Optional[list[float]] = None,
+        labels: Optional[dict[str, str]] = None,
     ) -> list[ScoredEpisode]:
         """
         Retrieve episodes by direct embedding similarity search.
@@ -560,24 +586,27 @@ class MemoryRetriever:
             k: Maximum number of episodes to return.
             query_embedding: Pre-computed embedding to reuse. When provided
                 the embedding API call is skipped.
+            labels: Optional key=value label pre-filter.
 
         Returns:
             Scored episodes sorted by similarity, highest first.
         """
         if query_embedding is None:
             query_embedding = await self.embedding.embed(query)
-        matches = self.store.find_episodes_by_embedding(query_embedding, k=k)
+        matches = self.store.find_episodes_by_embedding(query_embedding, k=k, labels=labels)
 
-        kw = self.hybrid_keyword_weight
-        results = []
-        for episode, similarity in matches:
-            if kw > 0.0:
-                kw_score = _keyword_score(query, episode.content or "")
-                fused = (1.0 - kw) * similarity + kw * kw_score
-            else:
-                fused = similarity
+        lexical_matches: list[tuple[Episode, float]] = []
+        if self.lexical_enabled and self.hybrid_keyword_weight > 0.0:
+            lexical_matches = self.store.search_episodes_lexical(query, k=k * 2, labels=labels)
 
-            results.append(ScoredEpisode(episode=episode, score=fused))
+        fused_matches = _fuse_vector_lexical(
+            matches, lexical_matches, lambda e: e.id,
+            self.hybrid_keyword_weight, self.rrf_k,
+        )
+        results = [
+            ScoredEpisode(episode=episode, score=fused)
+            for fused, episode in fused_matches.values()
+        ]
 
         if self.reranker and results:
             docs = [se.episode.content or "" for se in results]
@@ -595,7 +624,8 @@ class MemoryRetriever:
         episode_k: int = 5,
         min_activation: float = 0.15,
         context: Optional[str] = None,
-        topic: Optional[str] = None,
+        labels: Optional[dict[str, str]] = None,
+        timeout_ms: Optional[int] = None,
     ) -> tuple[list[ActivatedConcept], Optional[list[ScoredEpisode]]]:
         """Retrieve concepts and episodes in a single pass.
 
@@ -609,7 +639,11 @@ class MemoryRetriever:
             episode_k: Maximum number of episodes to return (0 to skip).
             min_activation: Minimum activation score for concepts.
             context: Optional additional context for the concept embedding.
-            topic: Optional topic filter for concept retrieval.
+            labels: Optional key=value label pre-filter for concept and
+                episode vector search (ANDed across keys).
+            timeout_ms: Soft deadline. Once exceeded, remaining phases
+                (spreading, reranking) are skipped and results are built
+                from whatever was already gathered, instead of raising.
 
         Returns:
             ``(activated_concepts, scored_episodes)`` — the same objects
@@ -617,6 +651,7 @@ class MemoryRetriever:
             would return individually.
         """
         t_start = time.perf_counter()
+        deadline = t_start + timeout_ms / 1000.0 if timeout_ms else None
         # --- single embedding ------------------------------------------
         embed_text = query
         if context:
@@ -625,34 +660,42 @@ class MemoryRetriever:
         query_embedding = await self.embedding.embed(embed_text)
         t_embed_ms = (time.perf_counter() - t_embed_start) * 1000.0
 
-        # --- parallel vector search for concepts, episodes, entities ------
+        # --- parallel vector + lexical search for concepts, episodes, entities --
         t_initial_search_start = time.perf_counter()
-        
-        # Run all three searches in parallel using thread pool
+        run_lexical = self.lexical_enabled and self.hybrid_keyword_weight > 0.0
+
+        # Run all searches in parallel using thread pool
         loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=5) as pool:
             concept_future = loop.run_in_executor(
-                pool, self.store.find_by_embedding, query_embedding, self.initial_k * 2
+                pool, self.store.find_by_embedding, query_embedding, self.initial_k * 2, labels
             )
             episode_future = loop.run_in_executor(
-                pool, self.store.find_episodes_by_embedding, query_embedding, episode_k if episode_k > 0 else 1
+                pool, self.store.find_episodes_by_embedding, query_embedding,
+                episode_k if episode_k > 0 else 1, labels,
             )
             entity_future = loop.run_in_executor(
                 pool, self.store.find_entities_by_embedding, query_embedding, self.initial_k
             )
-            initial_matches, ep_matches_parallel, entity_matches = await asyncio.gather(
-                concept_future, episode_future, entity_future
-            )
-        
-        t_initial_search_ms = (time.perf_counter() - t_initial_search_start) * 1000.0
+            futures = [concept_future, episode_future, entity_future]
+            if run_lexical:
+                lexical_concept_future = loop.run_in_executor(
+                    pool, self.store.search_concepts_lexical, query, self.initial_k * 2, labels
+                )
+                lexical_episode_future = loop.run_in_executor(
+                    pool, self.store.search_episodes_lexical, query,
+                    episode_k if episode_k > 0 else 1, labels,
+                )
+                futures.extend([lexical_concept_future, lexical_episode_future])
 
-        t_topic_filter_start = time.perf_counter()
-        if topic:
-            initial_matches = [
-                (c, sim) for c, sim in initial_matches
-                if c.topic_id == topic or c.topic_id is None
-            ]
-        t_topic_filter_ms = (time.perf_counter() - t_topic_filter_start) * 1000.0
+            gathered = await asyncio.gather(*futures)
+
+        initial_matches, ep_matches_parallel, entity_matches = gathered[:3]
+        lexical_concept_matches, lexical_episode_matches = (
+            gathered[3:5] if run_lexical else ([], [])
+        )
+
+        t_initial_search_ms = (time.perf_counter() - t_initial_search_start) * 1000.0
 
         t_initial_activation_start = time.perf_counter()
         activation_map: dict[str, tuple[float, str, int]] = {}
@@ -671,15 +714,11 @@ class MemoryRetriever:
                     activation_map[concept.id] = (entity_derived_activation, "entity_embedding", 0)
                     concept_cache[concept.id] = concept
 
-        kw = self.hybrid_keyword_weight
-        for concept, similarity in initial_matches:
-            if kw > 0.0:
-                concept_text = f"{concept.title or ''} {concept.summary or ''}"
-                kw_score = _keyword_score(query, concept_text)
-                fused = (1.0 - kw) * similarity + kw * kw_score
-            else:
-                fused = similarity
-
+        fused_concept_matches = _fuse_vector_lexical(
+            initial_matches, lexical_concept_matches, lambda c: c.id,
+            self.hybrid_keyword_weight, self.rrf_k,
+        )
+        for fused, concept in fused_concept_matches.values():
             weighted_activation = fused * concept.confidence
             decay_factor = max(0.0, min(1.0, concept.decay_factor))
             evidence_weight = self._compute_evidence_weight(concept.id)
@@ -695,10 +734,13 @@ class MemoryRetriever:
                     )
         t_initial_activation_ms = (time.perf_counter() - t_initial_activation_start) * 1000.0
 
-        logger.debug(f"Initial activation: {len(activation_map)} concepts (topic={topic})")
+        logger.debug(f"Initial activation: {len(activation_map)} concepts (labels={labels})")
 
         t_spread_start = time.perf_counter()
-        for hop in range(self.spread_hops):
+        deadline_hit = deadline is not None and t_spread_start > deadline
+        if deadline_hit:
+            logger.warning("recall timeout_ms exceeded before spreading; returning best-so-far")
+        for hop in range(self.spread_hops if not deadline_hit else 0):
             new_activations: dict[str, tuple[float, str, int]] = {}
 
             for concept_id, (activation, _, _) in list(activation_map.items()):
@@ -721,9 +763,6 @@ class MemoryRetriever:
                         * target_evidence
                     )
 
-                    if topic and related_concept.topic_id and related_concept.topic_id != topic:
-                        spread_activation *= 0.4
-
                     if spread_activation < self.activation_threshold:
                         continue
 
@@ -744,6 +783,9 @@ class MemoryRetriever:
                     activation_map[cid] = (act, src, hops)
 
             logger.debug(f"After hop {hop + 1}: {len(activation_map)} concepts")
+            if deadline is not None and time.perf_counter() > deadline:
+                logger.warning("recall timeout_ms exceeded during spreading; stopping early")
+                break
         t_spread_ms = (time.perf_counter() - t_spread_start) * 1000.0
 
         # Entity name matching
@@ -768,20 +810,23 @@ class MemoryRetriever:
         # --- process episode results from parallel search ----------------
         t_episode_search_start = time.perf_counter()
         episode_results: Optional[list[ScoredEpisode]] = None
-        if episode_k > 0 and ep_matches_parallel:
-            episode_results = []
-            for episode, similarity in ep_matches_parallel:
-                if kw > 0.0:
-                    kw_score = _keyword_score(query, episode.content or "")
-                    fused = (1.0 - kw) * similarity + kw * kw_score
-                else:
-                    fused = similarity
-                episode_results.append(ScoredEpisode(episode=episode, score=fused))
+        if episode_k > 0 and (ep_matches_parallel or lexical_episode_matches):
+            fused_episode_matches = _fuse_vector_lexical(
+                ep_matches_parallel, lexical_episode_matches, lambda e: e.id,
+                self.hybrid_keyword_weight, self.rrf_k,
+            )
+            episode_results = [
+                ScoredEpisode(episode=episode, score=fused)
+                for fused, episode in fused_episode_matches.values()
+            ]
         t_episode_search_ms = (time.perf_counter() - t_episode_search_start) * 1000.0
 
-        # --- single batched reranker pass -------------------------------
+        # --- single batched reranker pass (skipped past the deadline) ----
         t_rerank_ms = 0.0
-        if self.reranker and (activation_map or episode_results):
+        if (
+            self.reranker and (activation_map or episode_results)
+            and not (deadline is not None and time.perf_counter() > deadline)
+        ):
             t_rerank_start = time.perf_counter()
             concept_ids = list(activation_map.keys()) if activation_map else []
             concept_docs: list[str] = []
@@ -846,13 +891,12 @@ class MemoryRetriever:
         t_finalize_ms = (time.perf_counter() - t_finalize_start) * 1000.0
         t_total_ms = (time.perf_counter() - t_start) * 1000.0
         logger.debug(
-            "Recall timing (retrieve_all): embed=%.1fms vector=%.1fms topic_filter=%.1fms "
+            "Recall timing (retrieve_all): embed=%.1fms vector=%.1fms "
             "initial_activation=%.1fms spread=%.1fms entity_match=%.1fms "
             "episode_search=%.1fms rerank=%.1fms finalize=%.1fms total=%.1fms "
             "candidates(concepts=%d,episodes=%d) returned(concepts=%d,episodes=%d)",
             t_embed_ms,
             t_initial_search_ms,
-            t_topic_filter_ms,
             t_initial_activation_ms,
             t_spread_ms,
             t_entity_ms,
@@ -1085,8 +1129,6 @@ class MemoryRetriever:
         matched_entities: Optional[list[Entity]] = None,
         max_entity_episodes: int = 10,
         direct_episodes: Optional[list["ScoredEpisode"]] = None,
-        group_by_topic: bool = False,
-        topic_names: Optional[dict[str, str]] = None,
         as_of: Optional[datetime] = None,
     ) -> str:
         """
@@ -1100,8 +1142,6 @@ class MemoryRetriever:
             matched_entities: Entities matched by name from the query.
             max_entity_episodes: Max episodes to show per matched entity.
             direct_episodes: Episodes matched by direct embedding search.
-            group_by_topic: When True, group concepts under topic headers.
-            topic_names: {topic_id: display_name} map for headers.
             as_of: When set, fact_cluster concepts show the facts that were
                    valid at this point in time instead of the current ones.
         """
@@ -1111,7 +1151,6 @@ class MemoryRetriever:
         if not activated and not matched_entities and not direct_episodes:
             return "(No relevant memories found)"
 
-        topic_names = topic_names or {}
         lines = []
 
         if direct_episodes:
@@ -1122,20 +1161,8 @@ class MemoryRetriever:
 
         lines.append("RELEVANT MEMORY:\n")
 
-        # Optionally group by topic
-        if group_by_topic and activated:
-            by_topic: dict[Optional[str], list[ActivatedConcept]] = {}
-            for ac in activated:
-                by_topic.setdefault(ac.concept.topic_id, []).append(ac)
-            for topic_id, group in by_topic.items():
-                tname = topic_names.get(topic_id, topic_id) if topic_id else "General"
-                lines.append(f"## Topic: {tname}\n")
-                for ac in group:
-                    self._format_concept_block(ac, lines, include_relations, max_relations, include_episodes, as_of)
-                lines.append("")
-        else:
-            for ac in activated:
-                self._format_concept_block(ac, lines, include_relations, max_relations, include_episodes, as_of)
+        for ac in activated:
+            self._format_concept_block(ac, lines, include_relations, max_relations, include_episodes, as_of)
 
         if matched_entities:
             lines.append("---")

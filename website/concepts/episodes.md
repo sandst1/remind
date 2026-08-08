@@ -26,9 +26,9 @@ Episodes go through these stages:
 
 The agent decides what to do with episodes via `snapshot` (read pending state) and `apply` (create concepts, mark processed).
 
-## Topics and source types
+## Labels
 
-Episodes can be tagged with a **topic** — a knowledge area that groups related memories (e.g., `"architecture"`, `"product"`). Topics scope retrieval, reducing noise in large memory graphs.
+Episodes can be tagged with **labels** — freeform `key=value` pairs that group related memories (e.g., `topic=architecture`, `topic=product`). Labels can be pushed down as a pre-filter into retrieval, reducing noise in large memory graphs. See [Labels](/concepts/labels).
 
 ## Provenance
 
@@ -54,20 +54,20 @@ Provenance flows through to fact rows and shows up in recall output. It's what m
 remind remember "User likes Python and Rust"
 remind remember "Chose PostgreSQL for the user store" -t decision
 remind remember "All API routes need authentication" -t fact -e module:auth
-remind remember "Use event sourcing for audit trail" --topic architecture
+remind remember "Use event sourcing for audit trail" -l topic=architecture
 ```
 
 ```python [Python]
 memory.remember("User likes Python and Rust")
 memory.remember("Chose PostgreSQL", episode_type=EpisodeType.DECISION)
 memory.remember("All API routes need auth", episode_type=EpisodeType.FACT, entities=["module:auth"])
-memory.remember("Use event sourcing", topic="architecture")
+memory.remember("Use event sourcing", labels={"topic": "architecture"})
 ```
 
 ```text [MCP]
 remember(content="User likes Python and Rust")
 remember(content="Chose PostgreSQL", episode_type="decision")
-remember(content="Use event sourcing", topic="architecture")
+remember(content="Use event sourcing", labels="topic=architecture")
 ```
 
 :::
@@ -133,9 +133,9 @@ EOF
 # Update content
 remind update-episode <id> -c "Corrected information"
 
-# Move to another topic
-remind update-episode <id> --topic architecture
-remind update-episode <id> --clear-topic
+# Change labels
+remind update-episode <id> -l topic=architecture
+remind update-episode <id> --clear-labels
 
 # Soft delete (recoverable)
 remind delete-episode <id>

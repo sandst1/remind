@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from remind.models import (
     Episode, Concept, Conflict, Fact,
     Entity, EntityType, EpisodeType, Relation, RelationType,
-    Topic, slugify,
     normalize_entity_name,
+    normalize_labels,
     canonicalize_entity_name,
     strip_entity_label_prefix,
 )
@@ -99,6 +99,12 @@ class MemoryInterface:
         # Retrieval tuning
         hybrid_keyword_weight: float = 0.0,
         recall_initial_candidates: int = 10,
+        lexical_enabled: bool = True,
+        rrf_k: int = 60,
+        # Recall budget controls (defaults used when recall() doesn't override)
+        recall_max_chars: Optional[int] = None,
+        recall_min_score: Optional[float] = None,
+        recall_timeout_ms: Optional[int] = None,
         # Reranking
         reranking_enabled: bool = False,
         reranking_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
@@ -131,9 +137,15 @@ class MemoryInterface:
             initial_k=recall_initial_candidates,
             spread_hops=spread_hops,
             hybrid_keyword_weight=hybrid_keyword_weight,
+            lexical_enabled=lexical_enabled,
+            rrf_k=rrf_k,
             reranker=reranker,
         )
         
+        self.recall_max_chars = recall_max_chars
+        self.recall_min_score = recall_min_score
+        self.recall_timeout_ms = recall_timeout_ms
+
         self.episode_types: list[str] = episode_types or list(DEFAULT_EPISODE_TYPES)
         self.fact_cluster_jaccard_threshold = fact_cluster_jaccard_threshold
         self.fact_related_similarity_threshold = fact_related_similarity_threshold
@@ -181,7 +193,7 @@ class MemoryInterface:
         entities: Optional[list[str]] = None,
         confidence: float = 1.0,
         embed: bool = True,
-        topic: Optional[str] = None,
+        labels: Optional[dict[str, str | list[str]]] = None,
         source_type: Optional[str] = None,
         asserted_by: Optional[str] = None,
         source_ref: Optional[str] = None,
@@ -200,7 +212,7 @@ class MemoryInterface:
             entities: Optional entity ID hints (e.g., ["file:src/auth.ts", "person:alice"]).
             confidence: How certain this information is (0.0-1.0, default 1.0).
             embed: Whether to generate an embedding for the episode (default True).
-            topic: Topic ID or name.
+            labels: Optional freeform key -> value(s) labels (e.g. {"topic": "architecture"}).
             source_type: Origin of this episode (e.g. "agent", "slack", "github", "manual").
             asserted_by: Who asserted this information (e.g. "alice", "agent:cursor").
             source_ref: Link back to the original artifact (URL/permalink).
@@ -208,13 +220,11 @@ class MemoryInterface:
         Returns:
             RememberResult with episode_id and (for facts) collision info
         """
-        topic_id = self._resolve_topic_id(topic)
-
         episode = Episode(
             content=content,
             metadata=metadata or {},
             confidence=max(0.0, min(1.0, confidence)),
-            topic_id=topic_id,
+            labels=normalize_labels(labels),
             source_type=source_type.lower().strip() if source_type else None,
             asserted_by=asserted_by.strip() if asserted_by else None,
             source_ref=source_ref.strip() if source_ref else None,
@@ -235,6 +245,7 @@ class MemoryInterface:
         # Store the episode
         episode_id = self.store.add_episode(episode)
         self._episode_buffer.append(episode_id)
+        self.store.emit_event("remembered", "episode", episode_id)
         
         # Resolve and store explicitly provided entities
         entity_resolutions: list[str] = []
@@ -285,6 +296,8 @@ class MemoryInterface:
                 related_max_results=self.fact_related_max_results,
                 collision_max_results=self.fact_collision_max_results,
             )
+            if fact_result.fact_id:
+                self.store.emit_event("remembered", "fact", fact_result.fact_id)
             return RememberResult(
                 episode_id=episode_id,
                 fact_id=fact_result.fact_id,
@@ -356,6 +369,8 @@ class MemoryInterface:
 
         episode_ids = self.store.add_episodes_batch(episodes)
         self._episode_buffer.extend(episode_ids)
+        for episode_id in episode_ids:
+            self.store.emit_event("remembered", "episode", episode_id)
 
         for episode, item in zip(episodes, items):
             entities = item.get("entities")
@@ -375,18 +390,40 @@ class MemoryInterface:
         entity: Optional[str] = None,
         raw: bool = False,
         episode_k: Optional[int] = None,
-        topic: Optional[str] = None,
+        labels: Optional[dict[str, str]] = None,
         as_of: Optional[Union[datetime, str]] = None,
+        max_chars: Optional[int] = None,
+        min_score: Optional[float] = None,
+        timeout_ms: Optional[int] = None,
     ) -> str | list[ActivatedConcept] | list[Episode]:
         """
         Retrieve relevant memory context for a query.
 
         Uses spreading activation to find conceptually relevant memories,
         optionally enhanced with direct episode vector search.
+
+        Args:
+            labels: Optional key=value label pre-filter (e.g. {"topic": "architecture"}).
+                Applied before vector search, not as a post-filter.
+            max_chars: Cap on the formatted output length. When the rendered
+                text would exceed this, the lowest-ranked concepts/episodes
+                are dropped whole (never truncated mid-item) until it fits.
+                Falls back to the ``recall_max_chars`` constructor default.
+                Ignored when ``raw=True``.
+            min_score: Floor below which concepts/episodes are dropped even
+                if the ``k``/``episode_k`` budget has room left. Falls back
+                to the ``recall_min_score`` constructor default.
+            timeout_ms: Soft deadline for the retrieval. If exceeded,
+                returns the best results gathered so far (skipping
+                remaining spreading-activation hops / reranking) instead of
+                raising. Falls back to the ``recall_timeout_ms`` constructor
+                default.
         """
         k = k or self.default_recall_k
         episode_k = episode_k if episode_k is not None else self.default_episode_k
-        topic_id = self._resolve_topic_id(topic) if topic else None
+        max_chars = max_chars if max_chars is not None else self.recall_max_chars
+        min_score = min_score if min_score is not None else self.recall_min_score
+        timeout_ms = timeout_ms if timeout_ms is not None else self.recall_timeout_ms
 
         as_of_dt = None
         if as_of is not None:
@@ -408,13 +445,21 @@ class MemoryInterface:
         if not query:
             raise ValueError("Either 'query' or 'entity' must be provided")
         
-        concepts, episodes = await self.retriever.retrieve_all(
-            query,
+        retrieve_kwargs: dict = dict(
             k=k,
             episode_k=episode_k,
-            topic=topic_id,
+            labels=labels,
         )
-        
+        if min_score is not None:
+            retrieve_kwargs["min_activation"] = min_score
+        if timeout_ms is not None:
+            retrieve_kwargs["timeout_ms"] = timeout_ms
+
+        concepts, episodes = await self.retriever.retrieve_all(query, **retrieve_kwargs)
+
+        if min_score is not None and episodes:
+            episodes = [e for e in episodes if e.score >= min_score]
+
         self._increment_recall_count()
         
         if self.decay_config.enabled:
@@ -426,23 +471,46 @@ class MemoryInterface:
         if raw:
             return concepts
         
-        return self.retriever.format_for_llm(
-            activated=concepts,
-            direct_episodes=episodes,
-            as_of=as_of_dt,
-        )
+        if max_chars is None:
+            return self.retriever.format_for_llm(
+                activated=concepts,
+                direct_episodes=episodes,
+                as_of=as_of_dt,
+            )
 
-    def _resolve_topic_id(self, topic: Optional[str]) -> Optional[str]:
-        """Resolve a topic name or ID to an ID."""
-        if not topic:
-            return None
-        slug = slugify(topic)
-        if self.store.get_topic(slug):
-            return slug
-        existing = self.store.get_topic_by_name(topic)
-        if existing:
-            return existing.id
-        return None
+        return self._format_with_char_budget(concepts, episodes, as_of_dt, max_chars)
+
+    def _format_with_char_budget(
+        self,
+        concepts: list[ActivatedConcept],
+        episodes: Optional[list],
+        as_of_dt: Optional[datetime],
+        max_chars: int,
+    ) -> str:
+        """Render concepts/episodes, dropping the lowest-ranked whole item at
+        a time (never truncating mid-item) until the result fits max_chars.
+
+        Both lists are expected sorted best-first; the last element is
+        always the weakest one to drop.
+        """
+        concepts = list(concepts)
+        episodes = list(episodes) if episodes else []
+
+        text = self.retriever.format_for_llm(
+            activated=concepts, direct_episodes=episodes, as_of=as_of_dt,
+        )
+        while len(text) > max_chars and (concepts or episodes):
+            drop_concept = bool(concepts) and (
+                not episodes or concepts[-1].activation <= episodes[-1].score
+            )
+            if drop_concept:
+                concepts.pop()
+            else:
+                episodes.pop()
+            text = self.retriever.format_for_llm(
+                activated=concepts, direct_episodes=episodes, as_of=as_of_dt,
+            )
+        return text
 
     def _load_recall_count(self) -> int:
         raw = self.store.get_metadata("recall_count")
@@ -627,46 +695,73 @@ class MemoryInterface:
             "target_dimensions": target_dims,
         }
 
-    # Topic operations
+    # Label operations
 
-    def create_topic(self, name: str, description: str = "") -> Topic:
-        """Create a new topic. ID is auto-generated from name."""
-        topic = Topic(id=slugify(name), name=name, description=description)
-        self.store.create_topic(topic)
-        return topic
+    def get_labels(self, subject_type: str, subject_id: str) -> dict[str, list[str]]:
+        """Get all labels on an episode, concept, or fact."""
+        if subject_type == "episode":
+            obj = self.store.get_episode(subject_id)
+            return dict(obj.labels) if obj else {}
+        if subject_type == "concept":
+            obj = self.store.get_concept(subject_id)
+            return dict(obj.labels) if obj else {}
+        return self.store.get_labels(subject_type, subject_id)
 
-    def get_topic(self, id: str) -> Optional[Topic]:
-        return self.store.get_topic(id)
+    def add_label(self, subject_type: str, subject_id: str, key: str, value: str) -> bool:
+        """Add a key=value label to an episode, concept, or fact.
 
-    def list_topics(self) -> list[dict]:
-        """List all topics with stats (episode/concept counts, latest activity)."""
-        return self.store.get_topic_stats()
-
-    def update_topic(
-        self,
-        id: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-    ) -> Optional[Topic]:
-        topic = self.store.get_topic(id)
-        if not topic:
-            return None
-        if name is not None:
-            topic.name = name
-        if description is not None:
-            topic.description = description
-        self.store.update_topic(topic)
-        return topic
-
-    def delete_topic(self, id: str) -> bool:
-        topic = self.store.get_topic(id)
-        if not topic:
-            return False
-        self.store.delete_topic(id)
+        Returns False if the subject does not exist (episode/concept only;
+        fact labels are stored independently of the fact row).
+        """
+        if subject_type in ("episode", "concept"):
+            obj = (
+                self.store.get_episode(subject_id)
+                if subject_type == "episode"
+                else self.store.get_concept(subject_id)
+            )
+            if not obj:
+                return False
+            values = obj.labels.setdefault(key, [])
+            if value not in values:
+                values.append(value)
+                if subject_type == "episode":
+                    self.store.update_episode(obj)
+                else:
+                    self.store.update_concept(obj)
+            return True
+        self.store.add_label(subject_type, subject_id, key, value)
         return True
 
-    def get_topic_overview(self, topic_id: str, k: int = 5) -> dict:
-        return self.store.get_topic_overview(topic_id, k=k)
+    def remove_label(
+        self, subject_type: str, subject_id: str, key: str, value: Optional[str] = None
+    ) -> bool:
+        """Remove a label (or all values for *key* if *value* is None)."""
+        if subject_type in ("episode", "concept"):
+            obj = (
+                self.store.get_episode(subject_id)
+                if subject_type == "episode"
+                else self.store.get_concept(subject_id)
+            )
+            if not obj or key not in obj.labels:
+                return False
+            if value is None:
+                obj.labels.pop(key, None)
+            else:
+                remaining = [v for v in obj.labels[key] if v != value]
+                if remaining:
+                    obj.labels[key] = remaining
+                else:
+                    obj.labels.pop(key, None)
+            if subject_type == "episode":
+                self.store.update_episode(obj)
+            else:
+                self.store.update_concept(obj)
+            return True
+        return self.store.remove_label(subject_type, subject_id, key, value) > 0
+
+    def list_labels(self, subject_type: Optional[str] = None) -> list[dict]:
+        """List distinct key/value labels currently in use, with counts."""
+        return self.store.get_distinct_labels(subject_type)
 
     # Conflict operations
 
@@ -796,8 +891,7 @@ class MemoryInterface:
         id: str,
         content: Optional[str] = None,
         metadata: Optional[dict] = None,
-        topic: Optional[str] = None,
-        clear_topic: bool = False,
+        labels: Optional[dict[str, str | list[str]]] = None,
     ) -> Optional[Episode]:
         episode = self.store.get_episode(id)
         if not episode:
@@ -810,10 +904,8 @@ class MemoryInterface:
         if metadata is not None:
             episode.metadata = metadata
 
-        if clear_topic:
-            episode.topic_id = None
-        elif topic is not None:
-            episode.topic_id = self._resolve_topic_id(topic)
+        if labels is not None:
+            episode.labels = normalize_labels(labels)
 
         episode.updated_at = datetime.now()
         self.store.update_episode(episode)
@@ -839,8 +931,7 @@ class MemoryInterface:
         confidence: Optional[float] = None,
         tags: Optional[list[str]] = None,
         relations: Optional[list[dict]] = None,
-        topic: Optional[str] = None,
-        clear_topic: bool = False,
+        labels: Optional[dict[str, str | list[str]]] = None,
     ) -> Optional[Concept]:
         concept = self.store.get_concept(id)
         if not concept:
@@ -875,10 +966,8 @@ class MemoryInterface:
                 ))
             concept.relations = new_relations
 
-        if clear_topic:
-            concept.topic_id = None
-        elif topic is not None:
-            concept.topic_id = self._resolve_topic_id(topic)
+        if labels is not None:
+            concept.labels = normalize_labels(labels)
 
         concept.updated_at = datetime.now()
         self.store.update_concept(concept)
@@ -998,6 +1087,16 @@ def create_memory(
         kwargs["hybrid_keyword_weight"] = float(kwargs["hybrid_keyword_weight"])
     if "recall_initial_candidates" not in kwargs:
         kwargs["recall_initial_candidates"] = config.recall_initial_candidates
+    if "lexical_enabled" not in kwargs:
+        kwargs["lexical_enabled"] = config.lexical_enabled
+    if "rrf_k" not in kwargs:
+        kwargs["rrf_k"] = config.rrf_k
+    if "recall_max_chars" not in kwargs:
+        kwargs["recall_max_chars"] = config.recall_max_chars
+    if "recall_min_score" not in kwargs:
+        kwargs["recall_min_score"] = config.recall_min_score
+    if "recall_timeout_ms" not in kwargs:
+        kwargs["recall_timeout_ms"] = config.recall_timeout_ms
     if "reranking_enabled" not in kwargs:
         kwargs["reranking_enabled"] = config.reranking_enabled
     if "reranking_model" not in kwargs:

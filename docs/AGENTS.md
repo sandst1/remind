@@ -8,15 +8,11 @@ External memory layer that persists across sessions. Agent-driven memory curatio
 
 | Tool | Purpose |
 |------|---------|
-| `remember(content, [episode_type], [entities], [topic], [asserted_by], [source_ref])` | Store experience (embeds immediately, no LLM) |
-| `recall(query, [entity], [episode_k], [topic], [as_of])` | Retrieve relevant memories (concepts + direct episodes) |
+| `remember(content, [episode_type], [entities], [labels], [asserted_by], [source_ref])` | Store experience (embeds immediately, no LLM) |
+| `recall(query, [entity], [episode_k], [labels], [as_of], [max_chars], [min_score], [timeout_ms])` | Retrieve relevant memories (concepts + direct episodes) |
 | `snapshot(scopes)` | Batch read: get current memory state as JSON |
 | `apply(changeset, [dry_run])` | Batch write: transactional memory curation |
-| `create_topic(name, [description])` | Create a new topic |
-| `update_topic(topic_id, [name], [description])` | Update topic name/description |
-| `delete_topic(topic_id)` | Delete unused topic |
-| `list_topics()` | List all topics with stats |
-| `topic_overview(topic, [k])` | Top concepts for a topic (no query needed) |
+| `events([since_seq], [limit], [kind])` | Poll the append-only change feed of writes |
 | `stats()` | Memory statistics |
 
 ## remember
@@ -24,13 +20,13 @@ External memory layer that persists across sessions. Agent-driven memory curatio
 ```
 remember(content="User prefers TypeScript over JavaScript")
 remember(content="Use Redis for caching", episode_type="decision", entities="tool:redis,subject:caching")
-remember(content="Chose SQLite for zero-dep deploys", topic="architecture")
+remember(content="Chose SQLite for zero-dep deploys", labels="topic=architecture")
 remember(content="Cache TTL is 300s", episode_type="fact", entities="tool:redis", asserted_by="alice", source_ref="https://github.com/org/repo/pull/42")
 ```
 
 **Episode types**: `observation` (default), `decision`, `question`, `meta`, `preference`, `outcome`, `fact`
 
-**Topics**: Knowledge areas that group related memories (e.g., `"architecture"`, `"product"`, `"infra"`). Use `list_topics()` to see what exists.
+**Labels**: Freeform `key=value` tags on episodes/concepts, comma-separated (e.g. `"topic=architecture"` or `"topic=architecture,team=infra"`). There's no built-in "topic" concept — `topic` is just a label key you choose to use. Use `snapshot(scopes="labels")` to see what's in use.
 
 **Provenance**: Use `asserted_by` and `source_ref` to track who stated a fact and where it came from.
 
@@ -68,15 +64,19 @@ recall(query="authentication issues")           # Semantic search
 recall(query="auth", entity="file:src/auth.ts") # Entity-specific
 recall(query="auth", episode_k=10)              # More direct episode matches
 recall(query="auth", episode_k=0)               # Concepts only, no episode search
-recall(query="database design", topic="architecture")  # Topic-scoped
+recall(query="database design", labels="topic=architecture")  # Label-scoped
 recall(query="cache config", as_of="2024-06-01")  # Time-travel: facts as of date
+recall(query="auth", max_chars=2000)              # Cap output size
+recall(query="auth", min_score=0.3, timeout_ms=500)  # Budget controls
 ```
 
 Recall returns two layers of results:
 - **RELEVANT EPISODES** — Direct episode matches via embedding similarity (controlled by `episode_k`, default: 5, set to 0 to disable)
 - **RELEVANT MEMORY** — Concept matches via spreading activation, each showing source episodes, entity context, and conflicts
 
-When `topic` is set, initial matches are filtered to that topic. Cross-topic results can still surface via spreading activation but are penalized.
+When `labels` is set, initial matches are pre-filtered to items matching ALL given key=value labels before vector search runs. Spreading activation still follows the graph beyond the filtered set, so related results outside the label can surface.
+
+**Budget controls** (all optional, no-op unless set): `max_chars` caps the formatted output length by dropping the lowest-ranked concepts/episodes whole; `min_score` drops results below an activation floor even if the k/episode_k budget has room left; `timeout_ms` returns the best results gathered so far instead of raising if the deadline is exceeded.
 
 **Time-travel**: Use `as_of` (ISO date or datetime) to see fact_cluster concepts with the facts that were valid at that point in time, instead of current ones.
 
@@ -90,7 +90,8 @@ snapshot(scopes="conflicts")                  # Open conflicts with fact context
 snapshot(scopes="pending,conflicts")          # Both at once
 snapshot(scopes="health")                     # Actionable issues summary
 snapshot(scopes="entity:tool:redis")          # All data for an entity
-snapshot(scopes="topic:architecture")         # All data for a topic
+snapshot(scopes="labels")                     # All distinct labels with counts
+snapshot(scopes="label:topic=architecture")   # All data for a label
 snapshot(scopes="concept:abc123")             # Concept detail with facts/history
 snapshot(scopes="recent:20")                  # 20 most recent episodes
 snapshot(scopes="stats")                      # Memory statistics
@@ -99,9 +100,10 @@ snapshot(scopes="concepts")                   # All concepts (up to 50)
 snapshot(scopes="episodes:20")                # Recent 20 episodes
 snapshot(scopes="entities")                   # All entities with mention counts
 snapshot(scopes="entities:person")            # Filter entities by type
-snapshot(scopes="topics")                     # All topics with stats
 snapshot(scopes="decisions:10")               # Recent 10 decision episodes
 snapshot(scopes="questions")                  # Open question episodes
+snapshot(scopes="events:42")                  # Change-feed events after seq 42
+snapshot(scopes="bootstrap")                  # Query-free stable context (top concepts + conflicts + stats)
 ```
 
 **Scopes**:
@@ -109,7 +111,8 @@ snapshot(scopes="questions")                  # Open question episodes
 - `conflicts` — Open conflicts with both facts and provenance
 - `health` — Actionable memory issues (pending episodes, conflicts, orphans)
 - `entity:<id>` — Entity detail with episodes and fact clusters
-- `topic:<id>` — Topic detail with all episodes and concepts
+- `labels` — All distinct key/value labels in use, with counts
+- `label:<key>=<value>` — Episodes and concepts carrying this label
 - `concept:<id>` — Concept detail including superseded fact history
 - `recent:<n>` — N most recent episodes
 - `stats` — Memory statistics
@@ -117,11 +120,26 @@ snapshot(scopes="questions")                  # Open question episodes
 - `concepts[:<n>]` — All concepts (default 50)
 - `episodes[:<n>]` — Recent episodes (default 20)
 - `entities[:<type>]` — All entities with mention counts, optionally filtered by type
-- `topics` — All topics with episode and concept counts
 - `decisions[:<n>]` — Recent decision episodes (default 20)
 - `questions[:<n>]` — Recent question episodes (default 20)
+- `events[:<since_seq>]` — Change-feed events with `seq > since_seq` (default 0). Prefer the dedicated `events` tool below.
+- `bootstrap[:<n>]` — Query-free stable context: top-n actionable concepts by confidence and instance count, plus open conflict count and stats (default 10)
 
 Use `snapshot` to inspect memory state before curating with `apply`.
+
+**`bootstrap` at session start**: Unlike `query:<text>`, `bootstrap` needs no embedding call and returns the same result for the same memory state, so it's cheap enough to call at the start of every session (or have an injection layer place it in the system prompt) to ground yourself in what's already known before you `recall` anything specific.
+
+## events
+
+Poll the append-only change feed instead of re-scanning `snapshot(scopes="pending")` on every tick:
+
+```
+events()                                       # All events from the start
+events(since_seq=42)                           # Only events after seq 42
+events(since_seq=42, kind="conflict_opened")   # Filter to one kind
+```
+
+Returns `{since_seq, count, events, next_since_seq}`. Every successful `remember` and every successful `apply` op appends a row atomically with the write it describes — `kind` is one of `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, `processed`. Save `next_since_seq` and pass it as `since_seq` on the next poll.
 
 ## apply
 
@@ -149,8 +167,8 @@ processed ids=ep:11,ep:12
 - `concept title=<title> from=<ep_ids> [relations]` — Create concept from episodes
 - `update id=<id> [field=value...]` — Update episode/concept fields
 - `link source=<concept_id> type=<relation> target=<concept_id>` — Add concept relation
-- `topic name=<name> [description]` — Create topic
-- `set_topic id=<id> topic=<topic_id>` — Assign topic to episode/concept
+- `label id=<id> key=<key> value=<value>` — Add a key=value label to episode/concept
+- `unlabel id=<id> key=<key> value=<value>` — Remove a key=value label from episode/concept
 - `delete id=<id>` — Soft delete
 - `restore id=<id>` — Restore deleted item
 - `processed ids=<ep_id,ep_id,...>` — Mark episodes as reviewed
@@ -176,7 +194,7 @@ Memory curation is agent-driven. The typical flow:
 
 **1. Capture during work**:
 ```
-remember(content="Rate limiting is at gateway level", topic="architecture")
+remember(content="Rate limiting is at gateway level", labels="topic=architecture")
 remember(content="Max connections is 100", episode_type="fact", entities="tool:postgres")
 ```
 
@@ -196,19 +214,23 @@ processed ids=ep:11,ep:12
 
 This replaces the old LLM-based consolidation with explicit agent judgment.
 
-## Topics
+## Labels
 
-Topics are first-class managed entities that group related memories.
+Labels are freeform `key=value` tags on episodes and concepts — there's no built-in "topic"
+entity to manage. Use whatever keys make sense (`topic`, `team`, `project`, ...) and apply
+them consistently.
 
 ```
-create_topic(name="Architecture", description="System design decisions")
-update_topic(topic_id="architecture", description="Updated description")
-delete_topic(topic_id="old-topic")  # Only works if no episodes/concepts use it
-list_topics()                       # See all topics with stats
-topic_overview(topic="architecture") # Top concepts for a topic
+remember(content="...", labels="topic=architecture")     # Set on write
+apply(changeset='label id=concept:abc key=topic value=architecture')  # Set after the fact
+apply(changeset='unlabel id=concept:abc key=topic value=architecture')  # Remove
+snapshot(scopes="labels")                                 # See all labels with counts
+snapshot(scopes="label:topic=architecture")               # Browse everything under one
 ```
 
-Use topics to organize knowledge by domain. Good workflow: `list_topics()` → `topic_overview(topic)` → `recall(query, topic=topic)`
+Good workflow: `snapshot(scopes="labels")` → `snapshot(scopes="label:topic=architecture")` →
+`recall(query, labels="topic=architecture")`. Because labels are pre-filters into vector
+search (not post-filters), scoped recall stays precise even as memory grows.
 
 ## Entity Format
 
@@ -272,5 +294,6 @@ Fallback: brute-force cosine similarity in Python.
 8. Use `apply` for batch curation — it's transactional
 9. Mark episodes as `processed` after review
 10. Resolve or dismiss conflicts explicitly
-11. Assign `topic` to organize knowledge by domain
+11. Apply consistent `labels` (e.g. `topic=...`) to organize knowledge by domain
 12. Use time-travel `as_of` to see historical fact states
+13. Call `snapshot(scopes="bootstrap")` at session start for cheap, stable grounding before running targeted `recall` queries

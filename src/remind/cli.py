@@ -97,12 +97,38 @@ def _compact_concept(c: Any) -> dict[str, Any]:
     return {"id": c.id, "title": c.title, "summary": c.summary}
 
 
-def _compact_topic_row(t: dict) -> dict[str, Any]:
-    return {
-        "id": t["id"],
-        "title": t.get("name") or "",
-        "summary": (t.get("description") or "") or "",
-    }
+def _parse_label_options(raw: tuple) -> dict[str, list[str]]:
+    """Parse repeatable -l/--label key=value options into a labels dict (multi-value)."""
+    result: dict[str, list[str]] = {}
+    for item in raw:
+        if "=" not in item:
+            raise click.UsageError(f"--label must be in key=value form, got: {item}")
+        key, _, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not key or not value:
+            raise click.UsageError(f"--label must be in key=value form, got: {item}")
+        values = result.setdefault(key, [])
+        if value not in values:
+            values.append(value)
+    return result
+
+
+def _parse_label_filter_options(raw: tuple) -> dict[str, str]:
+    """Parse repeatable -l/--label key=value options into a single-value filter dict."""
+    result: dict[str, str] = {}
+    for item in raw:
+        if "=" not in item:
+            raise click.UsageError(f"--label must be in key=value form, got: {item}")
+        key, _, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not key or not value:
+            raise click.UsageError(f"--label must be in key=value form, got: {item}")
+        result[key] = value
+    return result
+
+
+def _format_labels(labels: dict) -> str:
+    return ", ".join(f"{k}={v}" for k, values in labels.items() for v in values)
 
 
 def _compact_entity(e: Any) -> dict[str, Any]:
@@ -215,8 +241,11 @@ def _run_recall_via_worker(
     episode_k: int,
     context: Optional[str],
     entity: Optional[str],
-    topic: Optional[str],
+    labels: Optional[dict[str, str]],
     raw: bool,
+    max_chars: Optional[int] = None,
+    min_score: Optional[float] = None,
+    timeout_ms: Optional[int] = None,
 ):
     """Run recall over persistent worker, with one-shot fallback on failure."""
     from remind.background import (
@@ -252,8 +281,11 @@ def _run_recall_via_worker(
         episode_k=episode_k,
         context=context,
         entity=entity,
-        topic=topic,
+        labels=labels,
         raw=raw,
+        max_chars=max_chars,
+        min_score=min_score,
+        timeout_ms=timeout_ms,
     )
     if not response:
         raise RuntimeError("No response from recall worker")
@@ -319,14 +351,15 @@ def main(ctx, db: str, embedding: str):
               help="Episode type (detected during consolidation if not provided)")
 @click.option("--entity", "-e", "entities", multiple=True, 
               help="Entity IDs (e.g., file:src/auth.ts, person:alice)")
-@click.option("--topic", help="Knowledge area (e.g., architecture, product, infra)")
+@click.option("--label", "-l", "labels", multiple=True,
+              help="Label as key=value, e.g. -l topic=architecture (repeatable)")
 @click.option("--source-type", help="Origin of this memory (e.g., agent, slack, github, manual)")
 @click.option("--asserted-by", help="Who asserted this information (e.g., alice, agent:cursor)")
 @click.option("--source-ref", help="Link to the original artifact (URL/permalink)")
 @click.option("--no-embed", is_flag=True, help="Skip embedding the episode (faster, no API call)")
 @click.pass_context
 def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[str], 
-             entities: tuple, topic: Optional[str], source_type: Optional[str],
+             entities: tuple, labels: tuple, source_type: Optional[str],
              asserted_by: Optional[str], source_ref: Optional[str], no_embed: bool):
     """Add an episode to memory.
     
@@ -337,6 +370,7 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
     
     meta = json.loads(metadata) if metadata else None
     entity_list = list(entities) if entities else None
+    label_dict = _parse_label_options(labels) if labels else None
     
     async def _remember():
         return await memory.remember(
@@ -345,7 +379,7 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
             episode_type=episode_type,
             entities=entity_list,
             embed=not no_embed,
-            topic=topic,
+            labels=label_dict,
             source_type=source_type,
             asserted_by=asserted_by,
             source_ref=source_ref,
@@ -360,8 +394,8 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
         console.print(f"  Type: [yellow]{episode_type}[/yellow]")
     if entity_list:
         console.print(f"  Entities: {', '.join(entity_list)}")
-    if topic:
-        console.print(f"  Topic: [blue]{topic}[/blue]")
+    if label_dict:
+        console.print(f"  Labels: [blue]{_format_labels(label_dict)}[/blue]")
     if source_type:
         console.print(f"  Source: {source_type}")
     if asserted_by:
@@ -428,7 +462,7 @@ def apply(ctx, changeset: Optional[str], input_file: Optional[str], dry_run: boo
     
     \b
     Operations: remember, supersede, conflict, resolve, dismiss, concept,
-                update, link, topic, set_topic, delete, restore, processed
+                update, link, label, unlabel, delete, restore, processed
     
     Examples:
         remind apply 'remember t=fact e=concept:cache "TTL is 600"'
@@ -512,23 +546,26 @@ def snapshot(ctx, scopes: tuple, pretty: bool):
         concepts[:<n>]   - All concepts (default 50)
         episodes[:<n>]   - Recent episodes (default 20)
         entities[:<type>]- All entities with mention counts
-        topics           - All topics with stats
+        labels           - All distinct labels with usage counts
         decisions[:<n>]  - Recent decision episodes (default 20)
         questions[:<n>]  - Recent question episodes (default 20)
     \b
     Detail scopes:
         entity:<id>      - Episodes and concepts for an entity
-        topic:<id>       - Episodes and concepts for a topic
+        label:<k>=<v>    - Episodes and concepts carrying a label
         concept:<id>     - Concept detail with facts and supersession history
         recent:<n>       - N most recent episodes (default: 10)
         query:<text>     - Semantic search results
+        events:<seq>     - Change-feed events with seq > <seq> (default: 0). Prefer `remind events`.
+        bootstrap:<n>    - Query-free stable context: top-n concepts by confidence + open conflicts + stats (default: 10)
     
     Examples:
         remind snapshot pending conflicts health
         remind snapshot entity:concept:caching
         remind snapshot concepts episodes:10
-        remind snapshot topics entities:person
+        remind snapshot labels entities:person
         remind snapshot "query:authentication issues"
+        remind snapshot bootstrap
     """
     from remind.snapshot import SnapshotEngine
     
@@ -554,36 +591,85 @@ def snapshot(ctx, scopes: tuple, pretty: bool):
 
 
 @main.command()
+@click.option("--since", "since_seq", type=int, default=0,
+              help="Only show events with seq greater than this (default: 0, i.e. from the start)")
+@click.option("--limit", type=int, default=200, help="Maximum number of events to return")
+@click.option("--kind", default=None, help="Filter to a single event kind (e.g. remembered, superseded)")
+@click.option("--pretty", "-p", is_flag=True, help="Pretty-print JSON output")
+@click.pass_context
+def events(ctx, since_seq: int, limit: int, kind: Optional[str], pretty: bool):
+    """Read the append-only change feed.
+
+    Each write (remember, supersede, conflict, resolve, dismiss, concept,
+    update, label, unlabel, delete, restore, processed) appends an event
+    atomically with the write it describes. Poll with --since to pick up
+    where you left off, instead of re-scanning `snapshot pending`.
+
+    Examples:
+        remind events
+        remind events --since 42
+        remind events --kind conflict_opened --since 42
+    """
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
+    matched_events = memory.store.get_events(since_seq=since_seq, limit=limit, kind=kind)
+    result = {
+        "since_seq": since_seq,
+        "count": len(matched_events),
+        "events": matched_events,
+        "next_since_seq": matched_events[-1]["seq"] if matched_events else since_seq,
+    }
+
+    if pretty:
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        print(json.dumps(result, default=str))
+
+
+@main.command()
 @click.argument("query", required=False, default=None)
 @click.option("-k", default=3, help="Number of concepts to retrieve")
 @click.option("--episode-k", "-ek", default=5, help="Number of episodes to retrieve via direct vector search")
 @click.option("--context", "-c", help="Additional context for search")
 @click.option("--entity", "-e", help="Retrieve by entity ID instead of semantic search")
-@click.option("--topic", help="Restrict recall to this topic")
+@click.option("--label", "-l", "labels", multiple=True,
+              help="Restrict recall to concepts matching this label, as key=value (repeatable, ANDed)")
 @click.option("--as-of", "as_of", default=None,
               help="Show facts valid at this point in time (ISO date/datetime, e.g. 2026-01-15)")
+@click.option("--max-chars", "max_chars", type=int, default=None,
+              help="Cap the formatted output length; drops lowest-ranked items whole to fit")
+@click.option("--min-score", "min_score", type=float, default=None,
+              help="Drop concepts/episodes below this activation score even if k budget remains")
+@click.option("--timeout-ms", "timeout_ms", type=int, default=None,
+              help="Soft deadline; returns best-so-far instead of raising if exceeded")
 @click.option("--raw", is_flag=True, help="Show raw concept data")
 @click.pass_context
 def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[str], 
-           entity: Optional[str], topic: Optional[str], as_of: Optional[str], raw: bool):
+           entity: Optional[str], labels: tuple, as_of: Optional[str],
+           max_chars: Optional[int], min_score: Optional[float], timeout_ms: Optional[int],
+           raw: bool):
     """Retrieve relevant concepts for a query.
     
     By default, does semantic search across concepts. 
     Use --entity to retrieve by entity ID instead.
     Use --episode-k to also include direct episode vector matches.
-    Use --topic to restrict to a specific knowledge area.
+    Use --label to pre-filter to concepts carrying a specific label.
     Use --as-of to see the facts that were valid at a past point in time.
+    Use --max-chars, --min-score, --timeout-ms to bound recall's cost/size.
     
     Examples:
         remind recall "authentication issues"
-        remind recall --topic architecture "database design"
+        remind recall --label topic=architecture "database design"
         remind recall --episode-k 10 "authentication issues"
         remind recall --as-of 2026-01-15 "cache configuration"
+        remind recall --max-chars 2000 "authentication issues"
+        remind recall --min-score 0.3 --timeout-ms 500 "authentication issues"
         remind recall --entity file:src/auth.ts
         remind recall -e "person:alice"
     """
     if not query and not entity:
         raise click.UsageError("Either QUERY or --entity must be provided.")
+
+    label_dict = _parse_label_filter_options(labels) if labels else None
 
     if as_of:
         from datetime import datetime as _dt
@@ -612,8 +698,11 @@ def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[
                 episode_k=episode_k,
                 context=context,
                 entity=entity,
-                topic=topic,
+                labels=label_dict,
                 raw=raw,
+                max_chars=max_chars,
+                min_score=min_score,
+                timeout_ms=timeout_ms,
             )
         except Exception as e:
             reason = str(e).strip()
@@ -637,8 +726,11 @@ def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[
                 entity=entity,
                 raw=raw,
                 episode_k=episode_k,
-                topic=topic,
+                labels=label_dict,
                 as_of=as_of,
+                max_chars=max_chars,
+                min_score=min_score,
+                timeout_ms=timeout_ms,
             )
 
         result = run_async(_recall())
@@ -806,170 +898,6 @@ def conflicts_dismiss(ctx, conflict_id: str, note: Optional[str], resolved_by: O
         return
     console.print(f"[green]✓[/green] Conflict [cyan]{conflict.id}[/cyan] dismissed. Both facts remain active.")
 
-
-@main.group()
-@click.pass_context
-def topics(ctx):
-    """Browse and manage knowledge topics."""
-    pass
-
-
-@topics.command("list")
-@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
-@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
-@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
-@click.pass_context
-def topics_list(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
-    """List all topics with stats."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
-    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
-    topic_list = memory.list_topics()
-
-    if not topic_list:
-        if out_fmt == "json":
-            _emit_cli_json({"topics": []})
-        elif out_fmt == "compact_json":
-            _emit_cli_json({"format": "compact-json", "topics": []})
-        else:
-            console.print("[dim]No topics found. Use 'remind topics create' to add one.[/dim]")
-        return
-
-    if out_fmt == "json":
-        _emit_cli_json({"topics": topic_list})
-        return
-    if out_fmt == "compact_json":
-        _emit_cli_json(
-            {
-                "format": "compact-json",
-                "topics": [_compact_topic_row(t) for t in topic_list],
-            }
-        )
-        return
-
-    table = Table(title="Topics")
-    table.add_column("ID", style="blue")
-    table.add_column("Name", style="bold")
-    table.add_column("Description")
-    table.add_column("Episodes", justify="right")
-    table.add_column("Concepts", justify="right")
-    table.add_column("Latest Activity")
-
-    for t in topic_list:
-        table.add_row(
-            t["id"],
-            t["name"],
-            (t.get("description") or "")[:50],
-            str(t["episode_count"]),
-            str(t["concept_count"]),
-            t.get("latest_activity") or "",
-        )
-
-    console.print(table)
-
-
-@topics.command("create")
-@click.argument("name")
-@click.option("--description", "-d", default="", help="Description of the topic")
-@click.pass_context
-def topics_create(ctx, name: str, description: str):
-    """Create a new topic."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
-    try:
-        topic = memory.create_topic(name, description=description)
-        console.print(f"[green]✓[/green] Created topic [blue]{topic.id}[/blue] ({topic.name})")
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-
-
-@topics.command("update")
-@click.argument("topic_id")
-@click.option("--name", "-n", default=None, help="New display name")
-@click.option("--description", "-d", default=None, help="New description")
-@click.pass_context
-def topics_update(ctx, topic_id: str, name: Optional[str], description: Optional[str]):
-    """Update an existing topic."""
-    if name is None and description is None:
-        raise click.UsageError("At least --name or --description must be provided.")
-    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
-    updated = memory.update_topic(topic_id, name=name, description=description)
-    if not updated:
-        console.print(f"[red]Topic '{topic_id}' not found.[/red]")
-    else:
-        console.print(f"[green]✓[/green] Updated topic [blue]{updated.id}[/blue] ({updated.name})")
-
-
-@topics.command("delete")
-@click.argument("topic_id")
-@click.pass_context
-def topics_delete(ctx, topic_id: str):
-    """Delete a topic (only if no episodes/concepts reference it)."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
-    try:
-        if memory.delete_topic(topic_id):
-            console.print(f"[green]✓[/green] Deleted topic [blue]{topic_id}[/blue]")
-        else:
-            console.print(f"[red]Topic '{topic_id}' not found.[/red]")
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-
-
-@topics.command("overview")
-@click.argument("topic_id")
-@click.option("-k", default=5, help="Number of top concepts to show")
-@click.option("--json", "as_json", is_flag=True, help="Output JSON (overrides cli_output_mode)")
-@click.option("--table", "as_table", is_flag=True, help="Output human tables (overrides cli_output_mode=json)")
-@click.option("--compact-json", "as_compact_json", is_flag=True, help="Minimal id/title/summary JSON")
-@click.pass_context
-def topics_overview(ctx, topic_id: str, k: int, as_json: bool, as_table: bool, as_compact_json: bool):
-    """Show top concepts for a topic."""
-    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
-    out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
-    topic = memory.get_topic(topic_id)
-    concepts = memory.get_topic_overview(topic_id, k=k)
-
-    if out_fmt == "json":
-        tdict = topic.to_dict() if topic else {"id": topic_id}
-        _emit_cli_json(
-            {
-                "topic": tdict,
-                "concepts": [_concept_to_json_dict(c) for c in concepts],
-            }
-        )
-        return
-    if out_fmt == "compact_json":
-        t_compact = (
-            {"id": topic.id, "title": topic.name, "summary": topic.description or ""}
-            if topic
-            else {"id": topic_id, "title": "", "summary": ""}
-        )
-        _emit_cli_json(
-            {
-                "format": "compact-json",
-                "topic": t_compact,
-                "concepts": [_compact_concept(c) for c in concepts],
-            }
-        )
-        return
-
-    if not concepts:
-        console.print(f"[dim]No concepts found for topic '{topic_id}'.[/dim]")
-        return
-
-    label = topic.name if topic else topic_id
-    console.print(f"\n[bold blue]Topic: {label}[/bold blue]\n")
-    if topic and topic.description:
-        console.print(f"  [dim]{topic.description}[/dim]\n")
-    for c in concepts:
-        updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
-        title = f" {c.title}" if c.title else ""
-        console.print(
-            f"  [cyan][{c.id}][/cyan]{title} "
-            f"(confidence: {c.confidence:.2f}, instances: {c.instance_count}, updated: {updated})"
-        )
-        console.print(f"    {c.summary}")
-        if c.conditions:
-            console.print(f"    → Applies when: {c.conditions}")
-        console.print()
 
 @main.command("embed-episodes")
 @click.option("--batch-size", default=50, help="Number of episodes to embed per batch")
@@ -2130,34 +2058,35 @@ def skill_install(names: tuple):
 @click.option("--type", "-t", "episode_type",
               help="New episode type")
 @click.option("--entity", "-e", "entities", multiple=True, help="New entity IDs (replaces existing)")
-@click.option("--topic", default=None, help="Topic ID or name (same as remember)")
-@click.option("--clear-topic", is_flag=True, help="Remove topic from this episode")
+@click.option("--label", "-l", "labels", multiple=True,
+              help="Label as key=value (repeatable). Replaces all existing labels.")
+@click.option("--clear-labels", is_flag=True, help="Remove all labels from this episode")
 @click.pass_context
 def update_episode(ctx, episode_id: str, content: Optional[str],
                    episode_type: Optional[str], entities: tuple,
-                   topic: Optional[str], clear_topic: bool):
+                   labels: tuple, clear_labels: bool):
     """Update an existing episode."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
-    if topic is not None and clear_topic:
-        console.print("[red]Use either --topic or --clear-topic, not both.[/red]")
+    if labels and clear_labels:
+        console.print("[red]Use either --label or --clear-labels, not both.[/red]")
         raise SystemExit(1)
 
     ep_type = episode_type or None
     entity_list = list(entities) if entities else None
 
-    topic_kw: Optional[str] = None
-    if clear_topic:
-        topic_kw = ""
-    elif topic is not None:
-        topic_kw = topic
+    label_dict: Optional[dict[str, list[str]]] = None
+    if clear_labels:
+        label_dict = {}
+    elif labels:
+        label_dict = _parse_label_options(labels)
 
     updated = memory.update_episode(
         episode_id,
         content=content,
         episode_type=ep_type,
         entities=entity_list,
-        topic=topic_kw,
+        labels=label_dict,
     )
 
     if updated:
@@ -2168,12 +2097,10 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
             console.print(f"  Type: [yellow]{ep_type.value}[/yellow]")
         if entity_list:
             console.print(f"  Entities: {', '.join(entity_list)}")
-        if clear_topic:
-            console.print(f"  Topic: [dim]cleared[/dim]")
-        elif topic is not None and updated.topic_id:
-            names = memory._get_topic_names()
-            tlabel = names.get(updated.topic_id, updated.topic_id)
-            console.print(f"  Topic: [blue]{tlabel}[/blue] ({updated.topic_id})")
+        if clear_labels:
+            console.print(f"  Labels: [dim]cleared[/dim]")
+        elif label_dict:
+            console.print(f"  Labels: [blue]{_format_labels(label_dict)}[/blue]")
     else:
         console.print(f"[red]Episode {episode_id} not found[/red]")
 
@@ -2254,18 +2181,19 @@ def purge_episode(ctx, episode_id: str, yes: bool):
 @click.option("--confidence", "-c", type=float, help="New confidence score (0.0-1.0)")
 @click.option("--tag", "tags", multiple=True, help="New tags (replaces existing)")
 @click.option("--relations", help='JSON array of relations, e.g. \'[{"type":"implies","target_id":"abc","strength":0.7}]\'')
-@click.option("--topic", default=None, help="Topic ID or name (same as remember)")
-@click.option("--clear-topic", is_flag=True, help="Remove topic from this concept")
+@click.option("--label", "-l", "labels", multiple=True,
+              help="Label as key=value (repeatable). Replaces all existing labels.")
+@click.option("--clear-labels", is_flag=True, help="Remove all labels from this concept")
 @click.pass_context
 def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional[str],
                    confidence: Optional[float], tags: tuple, relations: Optional[str],
-                   topic: Optional[str], clear_topic: bool):
+                   labels: tuple, clear_labels: bool):
     """Update an existing concept."""
     import json as _json
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
-    if topic is not None and clear_topic:
-        console.print("[red]Use either --topic or --clear-topic, not both.[/red]")
+    if labels and clear_labels:
+        console.print("[red]Use either --label or --clear-labels, not both.[/red]")
         raise SystemExit(1)
 
     tag_list = list(tags) if tags else None
@@ -2278,11 +2206,11 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
             console.print(f"[red]Invalid relations JSON: {e}[/red]")
             return
 
-    topic_kw: Optional[str] = None
-    if clear_topic:
-        topic_kw = ""
-    elif topic is not None:
-        topic_kw = topic
+    label_dict: Optional[dict[str, list[str]]] = None
+    if clear_labels:
+        label_dict = {}
+    elif labels:
+        label_dict = _parse_label_options(labels)
 
     updated = memory.update_concept(
         concept_id,
@@ -2291,7 +2219,7 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
         confidence=confidence,
         tags=tag_list,
         relations=relations_list,
-        topic=topic_kw,
+        labels=label_dict,
     )
 
     if updated:
@@ -2306,12 +2234,10 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
             console.print(f"  Tags: {', '.join(tag_list)}")
         if relations_list is not None:
             console.print(f"  Relations: {len(relations_list)} set")
-        if clear_topic:
-            console.print(f"  Topic: [dim]cleared[/dim]")
-        elif topic is not None and updated.topic_id:
-            names = memory._get_topic_names()
-            tlabel = names.get(updated.topic_id, updated.topic_id)
-            console.print(f"  Topic: [blue]{tlabel}[/blue] ({updated.topic_id})")
+        if clear_labels:
+            console.print(f"  Labels: [dim]cleared[/dim]")
+        elif label_dict:
+            console.print(f"  Labels: [blue]{_format_labels(label_dict)}[/blue]")
     else:
         console.print(f"[red]Concept {concept_id} not found[/red]")
 

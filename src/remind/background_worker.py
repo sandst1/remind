@@ -163,7 +163,10 @@ def run_recall_worker(args, logger):
                 k = int(req.get("k", 3))
                 episode_k = int(req.get("episode_k", 5))
                 context = req.get("context")
-                topic = req.get("topic")
+                labels = req.get("labels")
+                max_chars = req.get("max_chars")
+                min_score = req.get("min_score")
+                timeout_ms = req.get("timeout_ms")
 
                 result = await memory.recall(
                     query=query,
@@ -172,7 +175,10 @@ def run_recall_worker(args, logger):
                     entity=entity,
                     raw=raw,
                     episode_k=episode_k,
-                    topic=topic,
+                    labels=labels,
+                    max_chars=max_chars,
+                    min_score=min_score,
+                    timeout_ms=timeout_ms,
                 )
                 last_activity = time.monotonic()
                 if raw:

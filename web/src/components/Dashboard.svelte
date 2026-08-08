@@ -1,9 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { stats, statsLoading, statsError, currentDb, topics, configuredEpisodeTypes } from '../lib/stores';
-  import { fetchStats, fetchTopics } from '../lib/api';
-  import type { Topic } from '../lib/types';
-  import { Lightbulb, History, Tag, Network, AlertCircle, CheckCircle, FolderOpen } from 'lucide-svelte';
+  import { stats, statsLoading, statsError, currentDb, configuredEpisodeTypes } from '../lib/stores';
+  import { fetchStats } from '../lib/api';
+  import { Lightbulb, History, Tag, Network, AlertCircle, CheckCircle } from 'lucide-svelte';
   import { getTypePluralLabel, isCustomEpisodeTypesProfile } from '../lib/episode-types';
 
   let mounted = false;
@@ -24,9 +23,8 @@
     statsError.set(null);
 
     try {
-      const [data, topicRes] = await Promise.all([fetchStats(), fetchTopics()]);
+      const data = await fetchStats();
       stats.set(data);
-      topics.set(topicRes.topics);
     } catch (e) {
       statsError.set(e instanceof Error ? e.message : 'Failed to load stats');
     } finally {
@@ -176,20 +174,6 @@
           {/each}
         </div>
       </div>
-
-      {#if $topics.length > 0}
-        <div class="section">
-          <h3><FolderOpen size={16} /> Topics</h3>
-          <div class="distribution-list">
-            {#each $topics as t}
-              <div class="distribution-item">
-                <span class="distribution-label">{t.name}</span>
-                <span class="distribution-value">{t.episode_count ?? 0} ep / {t.concept_count ?? 0} concepts</span>
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
     </div>
   {:else}
     <div class="empty">No stats available</div>

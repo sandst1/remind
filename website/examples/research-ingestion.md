@@ -16,13 +16,7 @@ cd ~/research/llm-memory
 remind skill-install
 ```
 
-Optionally create a topic to group this survey:
-
-```bash
-remind apply << 'EOF'
-topic name="LLM memory survey" "Papers on agent memory architectures"
-EOF
-```
+Optionally use a label to group this survey — no setup required, just apply it when storing episodes below (e.g. `-l survey=llm-memory`).
 
 **Episode types**:
 
@@ -44,25 +38,25 @@ remind remember "Generative Agents uses a retrieval-based memory with recency, \
   importance, and relevance scoring. Agents reflect on memories to form \
   higher-level abstractions." \
   -t observation -e person:park -e subject:memory-architecture \
-  --topic "llm-memory-survey"
+  -l survey=llm-memory
 
 remind remember "Generative Agents reflection mechanism: periodically ask \
   'what are the most salient high-level questions?' and generate insights" \
   -t observation -e subject:reflection -e subject:generative-agents \
-  --topic "llm-memory-survey"
+  -l survey=llm-memory
 
 # Paper 2: "MemGPT" (Packer et al.)
 remind remember "MemGPT treats context window as 'working memory' and uses \
   explicit read/write to a larger 'archival memory'. Inspired by OS virtual \
   memory paging." \
   -t observation -e person:packer -e subject:memory-architecture \
-  --topic "llm-memory-survey"
+  -l survey=llm-memory
 
 # Paper 3: "Voyager" (Wang et al.)
 remind remember "Voyager stores learned skills as code in a 'skill library'. \
   Retrieval matches skills by description similarity." \
   -t observation -e person:wang -e subject:skill-library -e subject:voyager \
-  --topic "llm-memory-survey"
+  -l survey=llm-memory
 ```
 
 ### Agent curates themes
@@ -88,7 +82,7 @@ EOF
 remind recall "how do different systems handle memory retrieval?"
 remind recall "memory representation tradeoffs"
 remind recall "limitations" --entity subject:memory-architecture
-remind recall "retrieval tradeoffs" --topic "llm-memory-survey"
+remind recall "retrieval tradeoffs" -l survey=llm-memory
 ```
 
 ### Recording contradictions

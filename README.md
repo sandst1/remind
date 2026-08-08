@@ -58,8 +58,9 @@ remind snapshot concept:abc123                        # Concept detail with hist
 remind snapshot concepts                              # All concepts
 remind snapshot episodes:20                           # Recent 20 episodes
 remind snapshot entities:person                       # Entities filtered by type
-remind snapshot topics                                # All topics with stats
+remind snapshot labels                                # All labels with counts
 remind snapshot decisions questions                   # Episodes by type
+remind snapshot bootstrap                              # Query-free stable context
 ```
 
 Returns JSON. Combinable scopes:
@@ -73,14 +74,26 @@ Returns JSON. Combinable scopes:
 | `concepts[:<n>]` | All concepts (default 50) |
 | `episodes[:<n>]` | Recent episodes (default 20) |
 | `entities[:<type>]` | All entities with mention counts, filterable by type |
-| `topics` | All topics with episode and concept counts |
+| `labels` | All distinct key/value labels in use, with counts |
 | `decisions[:<n>]` | Recent decision episodes |
 | `questions[:<n>]` | Recent question episodes |
 | `entity:<id>` | Episodes and concepts for a specific entity |
-| `topic:<id>` | All episodes and concepts for a topic |
+| `label:<key>=<value>` | All episodes and concepts carrying a label |
 | `concept:<id>` | Concept detail with facts and supersession history |
 | `recent:<n>` | N most recent episodes |
 | `query:<text>` | Semantic search results |
+| `events[:<since_seq>]` | Change-feed events with `seq > since_seq` (default 0). Prefer `remind events`. |
+| `bootstrap[:<n>]` | Query-free stable context: top-n actionable concepts by confidence + open conflicts + stats (default 10) |
+
+### `remind events` — Poll the change feed
+
+```bash
+remind events                    # All events from the start
+remind events --since 42         # Only events after seq 42
+remind events --kind conflict_opened --since 42
+```
+
+Every write (`remember`, `supersede`, `conflict`, `resolve`, `dismiss`, `concept`, `update`, `label`, `unlabel`, `delete`, `restore`, `processed`) appends an append-only row atomically with the write it describes. Returns `{since_seq, count, events, next_since_seq}` — pass `next_since_seq` back in as `--since` on the next poll instead of re-scanning `snapshot pending`.
 
 ### `remind apply` — Write changes
 
@@ -115,8 +128,8 @@ All operations run in a single transaction. `--dry-run` validates without execut
 | `merge from=<id1>,<id2> into=<new_id>` | Combine overlapping concepts |
 | `split id=<concept> into=<id1>,<id2>` | Separate distinct concerns |
 | `update id=<id> [field=value...]` | Update episode or concept fields |
-| `topic name="Name"` | Create topic |
-| `set_topic id=<id> topic=<topic_id>` | Assign episode/concept to topic |
+| `label id=<id> key=<key> value=<value>` | Add a key=value label to episode/concept |
+| `unlabel id=<id> key=<key> value=<value>` | Remove a key=value label from episode/concept |
 | `delete id=<id>` / `restore id=<id>` | Soft delete / restore |
 | `processed ids=<ep1>,<ep2>` | Mark episodes as reviewed |
 
@@ -151,13 +164,16 @@ remind-mcp --port 8765
 }
 ```
 
-Tools: `remember`, `recall`, `snapshot`, `apply`, plus topic/conflict/entity management.
+Tools: `remember`, `recall`, `snapshot`, `apply`, plus conflict/entity management.
 
 Web UI at `http://127.0.0.1:8765/ui/`, REST API at `/api/v1/`.
 
 ## Key features
 
 - **Zero-config embeddings** — Local fastembed by default (no API key required)
+- **Labels as a substrate primitive** — Freeform `key=value` tags on episodes/concepts, pushed down as a pre-filter into vector search (`recall -l key=value`), not just a post-filter
+- **Change feed** — Append-only `events` table written atomically with every write; poll with `remind events --since <seq>` instead of re-scanning pending state
+- **Query-free bootstrap read** — `snapshot bootstrap` returns deterministic, stable context (top concepts + conflicts + stats) with no embedding call, cheap enough to inject every turn
 - **Temporal facts** — Validity windows, structural supersession, time-travel queries (`--as-of`)
 - **Collision detection** — Same-cluster and cross-cluster collisions reported on write with ready-to-paste `apply` commands
 - **Nearby surfacing** — Every `remember` call returns the top-k semantically nearest episodes and concepts for immediate conflict triage
@@ -205,8 +221,8 @@ export REMIND_DB_URL="postgresql+psycopg://user:pass@localhost:5432/mydb"
 
 ```
 Core
-  remember     Add an episode (-t type, -e entity, --asserted-by, --source-ref)
-  recall       Semantic or entity-based retrieval (-k, --episode-k, --as-of)
+  remember     Add an episode (-t type, -e entity, -l key=value label, --asserted-by, --source-ref)
+  recall       Semantic or entity-based retrieval (-k, --episode-k, -l label filter, --as-of)
   snapshot     Read memory state as JSON (combinable scopes)
   apply        Apply a batch changeset transactionally
 
@@ -218,9 +234,6 @@ Inspection
 Episode types
   decisions    Show decision episodes
   questions    Show open question episodes
-
-Topics
-  topics list/create/update/delete/overview
 
 Conflicts
   conflicts list/resolve/dismiss

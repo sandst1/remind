@@ -12,7 +12,7 @@ Remind is an agent-driven memory layer for LLMs. It provides temporal facts, sem
 
 ```
 src/remind/
-├── models.py          # Data models (Concept, Episode, Entity, Relation, Topic, Fact, Conflict)
+├── models.py          # Data models (Concept, Episode, Entity, Relation, Fact, Conflict)
 ├── store.py           # SQLAlchemy persistence layer (SQLite, PostgreSQL, MySQL)
 ├── interface.py       # MemoryInterface - main public API
 ├── config.py          # Configuration loading (config file, env vars, defaults)
@@ -34,7 +34,7 @@ src/remind/
 ├── skills/            # Bundled agent skills (installed via `remind skill-install`)
 │   ├── remind-capture/  # When/how to write memories while working
 │   ├── remind-context/  # When/how to recall before acting
-│   └── remind-curate/   # Consolidation procedure, conflict triage, topic upkeep
+│   └── remind-curate/   # Consolidation procedure, conflict triage, label upkeep
 └── providers/         # Embedding provider implementations
     ├── base.py        # EmbeddingProvider ABC
     ├── local.py       # Local embeddings via fastembed (default)
@@ -53,7 +53,6 @@ src/remind/
 | `Concept` | Generalized knowledge with confidence, relations, conditions. Has `concept_type`: `pattern`, `fact_cluster`, or `legacy`. |
 | `Entity` | External referent (file, person, concept, tool). Format: `type:name` |
 | `Relation` | Typed edge between concepts (implies, contradicts, specializes, etc.) |
-| `Topic` | Named knowledge area grouping episodes/concepts. Has id (slug), name, description. |
 | `Fact` | First-class factual assertion with validity window (`valid_from`/`valid_to`), structural supersession (`superseded_by`), and provenance. Belongs to a fact_cluster concept via `cluster_id`. |
 | `Conflict` | Detected contradiction with lifecycle: `open` → `resolved`/`dismissed`. `kind` is `fact` (two fact rows) or `concept` (two concepts). |
 
@@ -64,6 +63,8 @@ src/remind/
 **Episode provenance**: Optional `asserted_by` (who asserted the information) and `source_ref` (permalink to the original artifact).
 
 **Entity ID format**: `type:name` (e.g., `file:src/auth.ts`, `person:alice`, `concept:caching`)
+
+**Labels**: Freeform `key -> value(s)` tags on `Episode`/`Concept` (e.g. `{"topic": ["architecture"]}`), backed by a `labels` table designed to be pushed down as a pre-filter into vector search (`recall(labels=...)`), not just applied as a post-filter. Replaced the old hardcoded `Topic` model in 0.13.0 — build any higher-level grouping convention (topics, projects, teams) on top of this primitive rather than in the substrate.
 
 ### Providers (`providers/base.py`)
 
@@ -112,7 +113,7 @@ Collisions are reported to the agent via `RememberResult.collisions` for disposi
 
 Batch write operations with transaction support:
 
-**Op vocabulary**: `remember`, `supersede`, `conflict`, `resolve`, `dismiss`, `concept`, `update`, `link`, `topic`, `set_topic`, `delete`, `restore`, `processed`
+**Op vocabulary**: `remember`, `supersede`, `conflict`, `resolve`, `dismiss`, `concept`, `update`, `link`, `label`, `unlabel`, `delete`, `restore`, `processed`
 
 **Two formats** (auto-detected):
 - Compact line format (canonical, lower token usage)
@@ -124,15 +125,22 @@ Batch write operations with transaction support:
 
 Batch read returning JSON:
 
-**Scopes**: `pending`, `conflicts`, `entity:<id>`, `topic:<id>`, `concept:<id>`, `recent:<n>`, `stats`, `query:<text>`
+**Scopes**: `pending`, `conflicts`, `entity:<id>`, `labels`, `label:<key>=<value>`, `concept:<id>`, `recent:<n>`, `stats`, `query:<text>`, `events[:<since_seq>]`, `bootstrap[:<n>]`
+
+`bootstrap[:<n>]` is the query-free counterpart to `query:<text>`: no embedding call, deterministic across turns for the same memory state (top-n actionable concepts ranked by `(confidence, instance_count)` desc, plus open conflict count and stats) — suitable for a system-prompt injection layer that wants to keep the KV cache warm.
+
+### Change Feed (`events` table)
+
+Append-only outbox so consolidation daemons and sync layers can poll incrementally instead of re-scanning `snapshot pending`. Every successful `apply` op and every `remember`/`remember_batch` call appends a row via `store.emit_event(kind, subject_type, subject_id, payload=None)`, written inside the same `store.transaction()` as the change it describes so it commits atomically. `kind` is one of `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, `processed`. Read with `store.get_events(since_seq=0, limit=100, kind=None)`, `snapshot(["events:<since_seq>"])`, or `remind events --since <seq>`; each read returns a `next_since_seq` cursor to pass on the next poll.
 
 ### Retrieval (`retrieval.py`)
 
 **Hybrid recall** with spreading activation + entity-based episode retrieval:
 1. Query is embedded and matched to concepts via cosine similarity
-2. Embedding scores are fused with keyword overlap scores (`hybrid_keyword_weight`)
-3. Matched concepts activate related concepts through the graph
-4. Activation spreads with decay over multiple hops
+2. A parallel lexical (FTS5/tsvector/FULLTEXT) search ranks the same concepts/episodes by keyword match
+3. The two rankings are fused via weighted Reciprocal Rank Fusion (`hybrid_keyword_weight` = lexical arm weight, `rrf_k` = rank-damping constant)
+4. Matched concepts activate related concepts through the graph
+5. Activation spreads with decay over multiple hops
 5. Optional cross-encoder reranking
 
 **Time-travel recall**: `recall(as_of=...)` renders fact_cluster concepts with historical facts.
@@ -156,7 +164,12 @@ class RemindConfig:
     embedding_provider: str = "local"
     db_url: Optional[str] = None
     hybrid_keyword_weight: float = 0.3
+    lexical_enabled: bool = True
+    rrf_k: int = 60
     recall_initial_candidates: int = 10
+    recall_max_chars: Optional[int] = None
+    recall_min_score: Optional[float] = None
+    recall_timeout_ms: Optional[int] = None
     reranking_enabled: bool = False
     fact_cluster_jaccard_threshold: float = 0.5
     logging_enabled: bool = False
@@ -271,6 +284,14 @@ CREATE TABLE mentions (
     episode_id TEXT,
     entity_id TEXT,
     PRIMARY KEY (episode_id, entity_id)
+);
+
+CREATE TABLE labels (
+    subject_type TEXT NOT NULL,   -- episode | concept | fact
+    subject_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (subject_type, subject_id, key, value)
 );
 
 CREATE TABLE facts (

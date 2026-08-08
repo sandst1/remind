@@ -15,9 +15,9 @@ from typing import Any, Optional, Union
 from uuid import uuid4
 
 from remind.models import (
-    Episode, Concept, Evidence, Fact, Conflict, Topic, Relation, RelationType,
+    Episode, Concept, Evidence, Fact, Conflict, Relation, RelationType,
     EpisodeType, EntityType, Entity, EntityRelation,
-    slugify, canonicalize_entity_name, strip_entity_label_prefix,
+    canonicalize_entity_name, strip_entity_label_prefix,
     EVIDENCE_SUPPORTS,
 )
 from remind.store import MemoryStore
@@ -56,6 +56,7 @@ class OpResult:
     ref: Optional[str] = None  # Local ref name if declared with `as`
     error: Optional[str] = None
     collisions: list[dict] = field(default_factory=list)  # For remember ops
+    subject_type: Optional[str] = None  # For the change feed; not surfaced via to_dict
     
     def to_dict(self) -> dict:
         d = {
@@ -153,8 +154,6 @@ def parse_compact_line(line: str, line_num: int) -> tuple[Optional[dict], Option
             op["content"] = trailing_string
         elif op_type in ("resolve", "dismiss", "evidence", "reshape", "merge", "split"):
             op["note"] = trailing_string
-        elif op_type == "topic":
-            op["name"] = trailing_string
     
     return op, None
 
@@ -348,7 +347,7 @@ class ApplyEngine:
         
         valid_ops = {
             "remember", "supersede", "conflict", "resolve", "dismiss",
-            "concept", "update", "link", "topic", "set_topic",
+            "concept", "update", "link", "label", "unlabel",
             "delete", "restore", "processed", "entity_relation",
             "evidence", "unlink",
             "reshape", "merge", "split",
@@ -420,11 +419,18 @@ class ApplyEngine:
                         message="concept requires 'title' or 'summary'",
                     ))
             
-            elif op_type == "topic":
-                if not op.get("name"):
+            elif op_type == "label":
+                if not op.get("id") or not op.get("key") or op.get("value") is None:
                     errors.append(OpError(
                         line=None, op_index=i, op_type=op_type,
-                        message="topic requires 'name'",
+                        message="label requires 'id', 'key', and 'value'",
+                    ))
+
+            elif op_type == "unlabel":
+                if not op.get("id") or not op.get("key"):
+                    errors.append(OpError(
+                        line=None, op_index=i, op_type=op_type,
+                        message="unlabel requires 'id' and 'key'",
                     ))
             
             elif op_type in ("delete", "restore", "dismiss"):
@@ -498,43 +504,43 @@ class ApplyEngine:
         
         try:
             if op_type == "remember":
-                return self._op_remember(index, op, refs, ref_name, embedding)
+                result = self._op_remember(index, op, refs, ref_name, embedding)
             elif op_type == "supersede":
-                return self._op_supersede(index, op, refs, ref_name)
+                result = self._op_supersede(index, op, refs, ref_name)
             elif op_type == "conflict":
-                return self._op_conflict(index, op, refs, ref_name)
+                result = self._op_conflict(index, op, refs, ref_name)
             elif op_type == "resolve":
-                return self._op_resolve(index, op, refs, ref_name)
+                result = self._op_resolve(index, op, refs, ref_name)
             elif op_type == "dismiss":
-                return self._op_dismiss(index, op, refs, ref_name)
+                result = self._op_dismiss(index, op, refs, ref_name)
             elif op_type == "concept":
-                return self._op_concept(index, op, refs, ref_name, embedding)
+                result = self._op_concept(index, op, refs, ref_name, embedding)
             elif op_type == "update":
-                return self._op_update(index, op, refs, ref_name)
+                result = self._op_update(index, op, refs, ref_name)
             elif op_type == "link":
-                return self._op_link(index, op, refs, ref_name)
-            elif op_type == "topic":
-                return self._op_topic(index, op, refs, ref_name)
-            elif op_type == "set_topic":
-                return self._op_set_topic(index, op, refs, ref_name)
+                result = self._op_link(index, op, refs, ref_name)
+            elif op_type == "label":
+                result = self._op_label(index, op, refs, ref_name)
+            elif op_type == "unlabel":
+                result = self._op_unlabel(index, op, refs, ref_name)
             elif op_type == "delete":
-                return self._op_delete(index, op, refs, ref_name)
+                result = self._op_delete(index, op, refs, ref_name)
             elif op_type == "restore":
-                return self._op_restore(index, op, refs, ref_name)
+                result = self._op_restore(index, op, refs, ref_name)
             elif op_type == "processed":
-                return self._op_processed(index, op, refs, ref_name)
+                result = self._op_processed(index, op, refs, ref_name)
             elif op_type == "entity_relation":
-                return self._op_entity_relation(index, op, refs, ref_name)
+                result = self._op_entity_relation(index, op, refs, ref_name)
             elif op_type == "evidence":
-                return self._op_evidence(index, op, refs, ref_name)
+                result = self._op_evidence(index, op, refs, ref_name)
             elif op_type == "unlink":
-                return self._op_unlink(index, op, refs, ref_name)
+                result = self._op_unlink(index, op, refs, ref_name)
             elif op_type == "reshape":
-                return self._op_reshape(index, op, refs, ref_name)
+                result = self._op_reshape(index, op, refs, ref_name)
             elif op_type == "merge":
-                return self._op_merge(index, op, refs, ref_name)
+                result = self._op_merge(index, op, refs, ref_name)
             elif op_type == "split":
-                return self._op_split(index, op, refs, ref_name)
+                result = self._op_split(index, op, refs, ref_name)
             else:
                 return OpResult(
                     op_index=index, op_type=op_type, success=False,
@@ -545,6 +551,51 @@ class ApplyEngine:
                 op_index=index, op_type=op_type, success=False,
                 error=str(e),
             )
+
+        if result.success:
+            self._emit_op_event(op, result)
+        return result
+
+    # Maps op_type -> (event kind, default subject_type). Ops not listed
+    # here (link, entity_relation, evidence, unlink, reshape, merge, split)
+    # don't yet write to the change feed.
+    _EVENT_KIND_MAP = {
+        "remember": ("remembered", "episode"),
+        "supersede": ("superseded", "fact"),
+        "conflict": ("conflict_opened", "conflict"),
+        "resolve": ("conflict_resolved", "conflict"),
+        "dismiss": ("conflict_dismissed", "conflict"),
+        "concept": ("concept_created", "concept"),
+        "update": ("updated", "concept"),
+        "label": ("labeled", "episode"),
+        "unlabel": ("unlabeled", "episode"),
+        "delete": ("deleted", "episode"),
+        "restore": ("restored", "episode"),
+    }
+
+    def _emit_op_event(self, op: dict, result: OpResult) -> None:
+        """Append change-feed events for a successfully executed op.
+
+        Best-effort: failures here are logged, not raised, so an events
+        backend hiccup never breaks the underlying write it's describing.
+        """
+        try:
+            if result.op_type == "processed":
+                ids_raw = op.get("ids", [])
+                if isinstance(ids_raw, str):
+                    ids_raw = [ids_raw]
+                for episode_id in ids_raw:
+                    self.store.emit_event("processed", "episode", episode_id)
+                return
+
+            mapping = self._EVENT_KIND_MAP.get(result.op_type)
+            if not mapping or not result.id:
+                return
+            kind, default_subject_type = mapping
+            subject_type = result.subject_type or default_subject_type
+            self.store.emit_event(kind, subject_type, result.id)
+        except Exception as e:
+            logger.warning(f"Failed to emit change-feed event for op {result.op_type}: {e}")
     
     def _op_remember(
         self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str],
@@ -613,6 +664,7 @@ class ApplyEngine:
             id=fact_id or episode_id,
             ref=ref_name,
             collisions=collisions,
+            subject_type="fact" if fact_id else "episode",
         )
     
     def _op_supersede(
@@ -864,8 +916,8 @@ class ApplyEngine:
         target_id = self._resolve_ref(op.get("id", ""), refs)
         
         # Determine target type and update
-        if self.store.get_episode(target_id):
-            episode = self.store.get_episode(target_id)
+        episode = self.store.get_episode(target_id)
+        if episode:
             if "content" in op:
                 episode.content = op["content"]
                 episode.embedding = None
@@ -873,8 +925,13 @@ class ApplyEngine:
                 episode.metadata = op["metadata"]
             episode.updated_at = datetime.now()
             self.store.update_episode(episode)
-        elif self.store.get_concept(target_id):
+        else:
             concept = self.store.get_concept(target_id)
+            if not concept:
+                return OpResult(
+                    op_index=index, op_type="update", success=False,
+                    error=f"Target not found: {target_id}",
+                )
             if "title" in op:
                 concept.title = op["title"]
             if "summary" in op:
@@ -882,11 +939,6 @@ class ApplyEngine:
                 concept.embedding = None
             concept.updated_at = datetime.now()
             self.store.update_concept(concept)
-        else:
-            return OpResult(
-                op_index=index, op_type="update", success=False,
-                error=f"Target not found: {target_id}",
-            )
         
         return OpResult(
             op_index=index,
@@ -894,6 +946,7 @@ class ApplyEngine:
             success=True,
             id=target_id,
             ref=ref_name,
+            subject_type="episode" if episode else "concept",
         )
     
     def _op_link(
@@ -919,64 +972,88 @@ class ApplyEngine:
             ref=ref_name,
         )
     
-    def _op_topic(
+    def _op_label(
         self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
     ) -> OpResult:
-        """Execute a topic upsert operation — creates if absent, updates if present."""
-        name = op.get("name", "")
-        topic_id = op.get("id") or slugify(name)
-        description = op.get("description", "")
-
-        existing = self.store.get_topic(topic_id)
-        if existing:
-            if name:
-                existing.name = name
-            if description:
-                existing.description = description
-            self.store.update_topic(existing)
-        else:
-            topic = Topic(id=topic_id, name=name, description=description)
-            self.store.create_topic(topic)
-
-        return OpResult(
-            op_index=index,
-            op_type="topic",
-            success=True,
-            id=topic_id,
-            ref=ref_name,
-        )
-    
-    def _op_set_topic(
-        self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
-    ) -> OpResult:
-        """Execute a set_topic operation."""
+        """Add a key=value label to an episode or concept, leaving existing labels intact."""
         target_id = self._resolve_ref(op.get("id", ""), refs)
-        topic_id = op.get("topic")
-        
-        # Try episode first, then concept
+        key = str(op.get("key", "")).strip()
+        value = str(op.get("value", "")).strip()
+
         episode = self.store.get_episode(target_id)
+        subject_type = "episode"
         if episode:
-            episode.topic_id = topic_id
+            values = episode.labels.setdefault(key, [])
+            if value not in values:
+                values.append(value)
             episode.updated_at = datetime.now()
             self.store.update_episode(episode)
         else:
+            subject_type = "concept"
             concept = self.store.get_concept(target_id)
             if concept:
-                concept.topic_id = topic_id
+                values = concept.labels.setdefault(key, [])
+                if value not in values:
+                    values.append(value)
                 concept.updated_at = datetime.now()
                 self.store.update_concept(concept)
             else:
                 return OpResult(
-                    op_index=index, op_type="set_topic", success=False,
+                    op_index=index, op_type="label", success=False,
                     error=f"Target not found: {target_id}",
                 )
-        
+
         return OpResult(
             op_index=index,
-            op_type="set_topic",
+            op_type="label",
             success=True,
             id=target_id,
             ref=ref_name,
+            subject_type=subject_type,
+        )
+
+    def _op_unlabel(
+        self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
+    ) -> OpResult:
+        """Remove a label from an episode or concept.
+
+        Removes all values for 'key' unless 'value' narrows it to one.
+        """
+        target_id = self._resolve_ref(op.get("id", ""), refs)
+        key = str(op.get("key", "")).strip()
+        value = op.get("value")
+
+        episode = self.store.get_episode(target_id)
+        obj = episode or self.store.get_concept(target_id)
+        if not obj:
+            return OpResult(
+                op_index=index, op_type="unlabel", success=False,
+                error=f"Target not found: {target_id}",
+            )
+
+        if key in obj.labels:
+            if value is None:
+                obj.labels.pop(key, None)
+            else:
+                remaining = [v for v in obj.labels[key] if v != value]
+                if remaining:
+                    obj.labels[key] = remaining
+                else:
+                    obj.labels.pop(key, None)
+
+        obj.updated_at = datetime.now()
+        if episode:
+            self.store.update_episode(obj)
+        else:
+            self.store.update_concept(obj)
+
+        return OpResult(
+            op_index=index,
+            op_type="unlabel",
+            success=True,
+            id=target_id,
+            ref=ref_name,
+            subject_type="episode" if episode else "concept",
         )
     
     def _op_delete(
@@ -986,7 +1063,9 @@ class ApplyEngine:
         target_id = self._resolve_ref(op.get("id", ""), refs)
         
         # Try episode first, then concept.
-        if not self.store.delete_episode(target_id) and not self.store.delete_concept(target_id):
+        deleted_episode = self.store.delete_episode(target_id)
+        deleted_concept = False if deleted_episode else self.store.delete_concept(target_id)
+        if not deleted_episode and not deleted_concept:
             return OpResult(
                 op_index=index, op_type="delete", success=False,
                 error=f"Target not found: {target_id}",
@@ -998,6 +1077,7 @@ class ApplyEngine:
             success=True,
             id=target_id,
             ref=ref_name,
+            subject_type="episode" if deleted_episode else "concept",
         )
     
     def _op_restore(
@@ -1007,7 +1087,9 @@ class ApplyEngine:
         target_id = self._resolve_ref(op.get("id", ""), refs)
         
         # Try episode first, then concept.
-        if not self.store.restore_episode(target_id) and not self.store.restore_concept(target_id):
+        restored_episode = self.store.restore_episode(target_id)
+        restored_concept = False if restored_episode else self.store.restore_concept(target_id)
+        if not restored_episode and not restored_concept:
             return OpResult(
                 op_index=index, op_type="restore", success=False,
                 error=f"Deleted item not found: {target_id}",
@@ -1019,6 +1101,7 @@ class ApplyEngine:
             success=True,
             id=target_id,
             ref=ref_name,
+            subject_type="episode" if restored_episode else "concept",
         )
     
     def _op_processed(

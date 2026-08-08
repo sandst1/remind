@@ -50,20 +50,26 @@ Summary:
 | Tool | Purpose |
 |------|---------|
 | `remember` | Store an episode (returns collision info for facts) |
-| `recall` | Spreading activation (+ optional `entity`, `topic`, `as_of`) |
-| `snapshot` | Batch read (pending episodes, conflicts, entities, topics, concepts) |
-| `apply` | Batch write (create concepts, supersede facts, resolve conflicts) |
+| `recall` | Spreading activation (+ optional `entity`, `labels`, `as_of`) |
+| `snapshot` | Batch read (pending episodes, conflicts, entities, labels, concepts) |
+| `apply` | Batch write (create concepts, supersede facts, resolve conflicts, label/unlabel) |
+| `events` | Poll the append-only change feed of writes since a given `seq` |
 | `stats` | Memory statistics |
-| `list_topics` | List topics with counts |
-| `create_topic` / `update_topic` / `delete_topic` | Manage topics |
-| `topic_overview` | Top concepts for a topic |
+| `list_conflicts` / `resolve_conflict` / `dismiss_conflict` | Manage detected conflicts |
+| `inspect` | Concept detail with facts and supersession history |
+| `entities` / `inspect_entity` | List and inspect entities |
+| `update_episode` / `delete_episode` / `restore_episode` | Manage episodes |
+| `update_concept` / `delete_concept` / `restore_concept` | Manage concepts |
+| `list_deleted` | Review soft-deleted episodes/concepts |
+
+See [MCP Tools reference](/reference/mcp-tools) for the full parameter list of every tool.
 
 ## Agent instructions
 
 Copy [docs/AGENTS.md](https://github.com/sandst1/remind/blob/main/docs/AGENTS.md) into your project to instruct AI agents how to use Remind's MCP tools. This covers:
 
 - **Capture** — When and how to use `remember` (including fact collisions)
-- **Recall** — Semantic, entity, and topic-scoped queries with time-travel
+- **Recall** — Semantic, entity, and label-scoped queries with time-travel
 - **Curation** — Using `snapshot` and `apply` for batch memory management
 
 ## Docker

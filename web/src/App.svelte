@@ -8,12 +8,11 @@
   import EpisodeTimeline from './components/EpisodeTimeline.svelte';
   import MemoryHealth from './components/MemoryHealth.svelte';
   import EntityGraph from './components/EntityGraph.svelte';
-  import TopicList from './components/TopicList.svelte';
   import DatabaseSelector from './components/DatabaseSelector.svelte';
-  import TopicSelector from './components/TopicSelector.svelte';
+  import LabelFilter from './components/LabelFilter.svelte';
 
   // Icons
-  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Activity, Network, PanelLeftClose, PanelLeft, FolderOpen } from 'lucide-svelte';
+  import { Home, Tag, History, Lightbulb, Moon, Sun, Monitor, Activity, Network, PanelLeftClose, PanelLeft } from 'lucide-svelte';
 
   let initialized = false;
 
@@ -70,7 +69,6 @@
     { view: 'episodes', label: 'Episodes', icon: History },
     { view: 'entities', label: 'Entities', icon: Tag },
     { view: 'concepts', label: 'Concepts', icon: Lightbulb },
-    { view: 'topics', label: 'Topics', icon: FolderOpen },
     { view: 'memory-health', label: 'Memory Status', icon: Activity },
     { view: 'entity-graph', label: 'Entity Graph', icon: Network },
   ];
@@ -116,7 +114,7 @@
       </div>
       {#if !$sidebarCollapsed}
         <DatabaseSelector />
-        <TopicSelector />
+        <LabelFilter />
       {/if}
     </div>
 
@@ -173,8 +171,6 @@
         <EpisodeTimeline />
       {:else if $currentView === 'concepts'}
         <ConceptList />
-      {:else if $currentView === 'topics'}
-        <TopicList />
       {:else if $currentView === 'memory-health'}
         <MemoryHealth />
       {:else if $currentView === 'entity-graph'}

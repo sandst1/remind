@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-08
+
+### Removed
+
+- **Topics** — The `Topic` model, `topic_id` fields on episodes/concepts, the `topic`/`set_topic` `apply` ops, the `topics`/`topic:<id>` `snapshot` scopes, the CLI `topics` group and `--topic`/`--clear-topic` flags, the five topic MCP tools, the REST `/api/v1/topics` endpoints, and topic management in the web UI have all been removed. **Breaking**: existing databases are migrated automatically on first run — each `topic_id` becomes a `topic=<name>` label, and the legacy `topics` table and columns are dropped. `remind-mcp` was never truly a place for user-managed taxonomy; that belongs in an application built on top of the substrate.
+
+### Added
+
+- **Labels** — A generic `key=value` tagging primitive on episodes and concepts (`dict[str, list[str]]`), replacing topics. Unlike the old `topic_id` post-filter, labels are pushed down as a pre-filter directly into vector search across all three backends (brute-force, pgvector, sqlite-vec). New `label`/`unlabel` `apply` ops, `labels`/`label:<key>=<value>` `snapshot` scopes, `-l/--label` flags on `remember`/`recall`, a `labels` parameter on the Python and MCP APIs, a `?label=key:value` REST filter, and a read-only label filter in the web UI (replacing the topic selector). See [Labels](https://sandst1.github.io/remind/concepts/labels).
+- **Lexical recall channel** — A second, independent full-text search channel (SQLite FTS5, PostgreSQL `tsvector`, or MySQL `FULLTEXT`, auto-detected) fused with vector search via weighted Reciprocal Rank Fusion, so exact identifiers an embedding might miss are still recoverable. New config: `lexical_enabled`, `rrf_k`; `hybrid_keyword_weight` now controls the lexical arm's weight in the fusion.
+- **Recall budget controls** — `recall()` accepts `max_chars` (rank-aware truncation that drops whole low-ranked items to fit), `min_score` (a relevance floor below which results are dropped even if `k` budget remains), and `timeout_ms` (a soft deadline that returns best-so-far instead of raising). New config: `recall_max_chars`, `recall_min_score`, `recall_timeout_ms`; new CLI flags `--max-chars`, `--min-score`, `--timeout-ms`; matching MCP/Python parameters.
+- **Change feed** — An append-only `events` table, written atomically inside the same transaction as the write it describes, covering `remember`, `supersede`, `conflict`, `resolve`, `dismiss`, `concept`, `update`, `label`, `unlabel`, `delete`, `restore`, and `processed`. Poll it with the new `remind events --since <seq>` CLI command, the `events` MCP tool, or `snapshot(scopes="events:<since_seq>")` — an alternative to re-scanning `snapshot pending` for consolidation daemons and sync layers built on top of Remind.
+- **Query-free bootstrap read** — `snapshot(scopes="bootstrap[:<n>]")` returns the top-n highest-confidence, most-corroborated concepts plus the open conflict count and stats, with no embedding call. Deterministic for a given memory state, so it's cheap enough to call every session or place in a system prompt via an injection layer to keep the KV cache warm. Replaces the (never-working) `topic_overview`.
+
 ## [0.12.5] - 2026-08-05
 
 ### Fixed

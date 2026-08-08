@@ -22,7 +22,7 @@ Each concept has:
 | `entity_ids` | Entities linked to this concept |
 | `embedding` | Dense vector for similarity retrieval |
 | `tags` | Searchable tags |
-| `topic` | Knowledge area (e.g., `"architecture"`, `"product"`) |
+| `labels` | Freeform `key=value` tags (e.g., `topic=architecture`); see [Labels](/concepts/labels) |
 | `decay_factor` | Retrieval priority weight (affected by [memory decay](/concepts/memory-decay)) |
 
 ## How concepts differ from episodes
@@ -89,11 +89,11 @@ Good concepts are:
 - **Connected** — Linked to related concepts via typed relations
 - **Grounded** — Traceable back to source episodes
 
-## Topics
+## Labels
 
-Concepts can belong to a **topic** — a knowledge area like `"architecture"` or `"product"`. Topics scope retrieval (queries can be filtered to a specific topic).
+Concepts can carry **labels** — freeform `key=value` tags like `topic=architecture` or `topic=product`. Labels scope retrieval (queries can be pre-filtered to a specific label). See [Labels](/concepts/labels) for details.
 
-Concepts without a topic are treated as general knowledge accessible from any topic context.
+Concepts without matching labels are simply excluded from a label-scoped query; unlabeled concepts are general knowledge accessible from any context.
 
 ## Managing concepts
 
@@ -112,9 +112,9 @@ remind update-concept <id> -s "Refined understanding"
 # Update confidence
 remind update-concept <id> --confidence 0.9
 
-# Reassign or clear topic
-remind update-concept <id> --topic product
-remind update-concept <id> --clear-topic
+# Change or clear labels
+remind update-concept <id> -l topic=product
+remind update-concept <id> --clear-labels
 
 # Soft delete
 remind delete-concept <id>

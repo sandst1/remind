@@ -12,7 +12,7 @@ Store an episode.
 remind remember "content"
 remind remember "content" -t decision          # Typed
 remind remember "content" -e tool:redis        # With entity
-remind remember "content" --topic architecture
+remind remember "content" -l topic=architecture
 remind remember "Cache TTL is 300s" -t fact -e tool:redis --asserted-by alice
 ```
 
@@ -21,7 +21,7 @@ remind remember "Cache TTL is 300s" -t fact -e tool:redis --asserted-by alice
 | `-t, --type` | Episode type: `observation`, `decision`, `question`, `preference`, `meta`, `outcome`, `fact` |
 | `-e, --entity` | Entity tag(s) in `type:name` format. Repeat for multiple. |
 | `-m, --metadata` | JSON metadata string |
-| `--topic` | Knowledge area (e.g., `architecture`, `product`) |
+| `-l, --label` | Label(s) as `key=value`. Repeat for multiple. |
 | `--asserted-by` | Who asserted this information (provenance) |
 | `--source-ref` | Link to the original artifact (URL/permalink) |
 | `--no-embed` | Skip embedding (faster). Useful for bulk imports. |
@@ -39,8 +39,10 @@ remind recall --entity file:src/auth.ts            # Entity-only (no query neede
 remind recall "query" -k 10                        # More results
 remind recall "query" --episode-k 10               # More direct episode matches
 remind recall "query" --episode-k 0                # Concepts only, no episode search
-remind recall "database design" --topic architecture  # Topic-scoped
+remind recall "database design" -l topic=architecture # Label-scoped
 remind recall --as-of 2024-06-01 "cache configuration" # Time-travel
+remind recall "query" --max-chars 2000                 # Cap output size
+remind recall "query" --min-score 0.3 --timeout-ms 500 # Budget controls
 ```
 
 | Flag | Description |
@@ -48,8 +50,11 @@ remind recall --as-of 2024-06-01 "cache configuration" # Time-travel
 | `--entity` | Scope retrieval to an entity (can be used without a query) |
 | `-k` | Number of concepts to return (default: 3) |
 | `--episode-k, -ek` | Number of episodes via direct vector search (default: 5, 0 to disable) |
-| `--topic` | Filter to a knowledge area |
+| `-l, --label` | Pre-filter to a label as `key=value`. Repeat for multiple. |
 | `--as-of` | ISO date/datetime for time-travel (facts valid at that point) |
+| `--max-chars` | Cap the formatted output length; drops lowest-ranked items whole to fit |
+| `--min-score` | Drop concepts/episodes below this activation score even if k budget remains |
+| `--timeout-ms` | Soft deadline; returns best-so-far instead of raising if exceeded |
 
 ### snapshot
 
@@ -60,23 +65,51 @@ remind snapshot pending                  # Unprocessed episodes
 remind snapshot conflicts                # Open conflicts
 remind snapshot pending,conflicts        # Both at once
 remind snapshot entity:tool:redis        # Entity detail
-remind snapshot topic:architecture       # Topic detail
+remind snapshot labels                   # All distinct labels with counts
+remind snapshot label:topic=architecture # Label detail
 remind snapshot concept:abc123           # Concept detail
 remind snapshot recent:20                # Recent episodes
 remind snapshot stats                    # Statistics
 remind snapshot query:cache              # Semantic search
+remind snapshot events:42                # Change-feed events after seq 42
+remind snapshot bootstrap                # Query-free stable context
 ```
+
+`bootstrap[:<n>]` needs no embedding call and returns the same result for the same memory state, so it's cheap enough to call at the start of every session — a good default for grounding before running targeted queries.
 
 | Scope | Description |
 |-------|-------------|
 | `pending` | Unprocessed episodes with entities |
 | `conflicts` | Open conflicts with fact context |
 | `entity:<id>` | Entity detail with episodes and fact clusters |
-| `topic:<id>` | Topic detail with episodes and concepts |
+| `labels` | All distinct `key=value` labels in use, with counts |
+| `label:<key>=<value>` | All episodes and concepts carrying a label |
 | `concept:<id>` | Concept detail with facts and history |
 | `recent:<n>` | N most recent episodes |
 | `stats` | Memory statistics |
 | `query:<text>` | Semantic search for concepts |
+| `events[:<since_seq>]` | Change-feed events with `seq > since_seq` (default 0). Prefer `remind events`. |
+| `bootstrap[:<n>]` | Query-free stable context: top-n actionable concepts by confidence + open conflicts + stats (default 10) |
+
+### events
+
+Poll the append-only change feed of writes. Use this instead of re-scanning `snapshot pending` to detect new activity.
+
+```bash
+remind events                                  # All events from the start
+remind events --since 42                       # Only events after seq 42
+remind events --kind conflict_opened --since 42 # Filter to one kind
+remind events --limit 50 --pretty
+```
+
+| Flag | Description |
+|------|-------------|
+| `--since` | Only return events with `seq` greater than this (default: 0) |
+| `--limit` | Maximum number of events to return (default: 200) |
+| `--kind` | Filter to a single event kind, e.g. `remembered`, `conflict_opened` |
+| `-p, --pretty` | Pretty-print JSON output |
+
+Returns `{since_seq, count, events, next_since_seq}`. `kind` is one of `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, `processed`. Save `next_since_seq` and pass it as `--since` on the next poll.
 
 ### apply
 
@@ -164,14 +197,6 @@ remind conflicts dismiss <id> --note "staging vs prod"
 | `resolve <id> <winning_fact_id>` | `--note`, `--by` |
 | `dismiss <id>` | `--note`, `--by` |
 
-## Topic management
-
-```bash
-remind topics list               # List all topics with stats
-remind topics overview <name>    # Top concepts for a topic
-remind topics overview <name> -k 10   # More results
-```
-
 ## Episode filters
 
 ```bash
@@ -193,11 +218,11 @@ remind entity-relations file:src/auth.ts  # Entity relationships
 ```bash
 # Update
 remind update-episode <id> -c "Corrected content"
-remind update-episode <id> --topic architecture
-remind update-episode <id> --clear-topic
+remind update-episode <id> -l topic=architecture
+remind update-episode <id> --clear-labels
 remind update-concept <id> -s "Refined summary" --confidence 0.9
-remind update-concept <id> --topic product
-remind update-concept <id> --clear-topic
+remind update-concept <id> -l topic=product
+remind update-concept <id> --clear-labels
 
 # Soft delete (recoverable)
 remind delete-episode <id>

@@ -19,15 +19,15 @@ remind snapshot stats pending
 ## recall
 
 ```bash
-remind recall "authentication issues"                  # Semantic search (grouped by topic)
+remind recall "authentication issues"                  # Semantic search
 remind recall "auth" --entity file:src/auth.ts         # Everything about a specific entity
-remind recall "database design" --topic architecture   # Topic-scoped
+remind recall "database design" -l topic=architecture  # Label-scoped
 remind recall "caching" -k 10                          # More results
 remind recall --as-of 2026-01-15 "cache configuration" # What we believed then
 ```
 
 - `--entity type:name` retrieves all memories linked to a file/person/tool — use it when working on a specific file or asking about a specific person.
-- `--topic` restricts to a knowledge area (cross-topic results are penalized, not excluded). Without it, results are grouped by topic.
+- `-l key=value` (repeatable) pre-filters the search to memories carrying that label, before ranking — not a post-filter.
 - `--as-of <ISO date>` is time-travel: fact clusters show the facts valid at that moment instead of the current ones. Use for "what did we believe / what was the config back then" questions.
 - `-k` / `--episode-k` control how many concepts / direct episode matches return.
 
@@ -70,7 +70,7 @@ Trust currently-valid facts over your assumptions; they carry provenance and sup
 - Any other badge — Custom concept type
 
 ### When you see OPEN CONFLICTS
-Memory contains contradicting claims about the retrieved topic. **Do not silently pick one.**
+Memory contains contradicting claims about the retrieved subject. **Do not silently pick one.**
 1. Surface the conflict to the user, OR
 2. Run the curation workflow to resolve it:
    - `remind snapshot conflicts` to see details
@@ -91,13 +91,13 @@ remind snapshot concepts                      # All concepts
 remind snapshot episodes:20                   # Recent 20 episodes
 remind snapshot entities                      # All entities with mention counts
 remind snapshot entities:person               # Filter entities by type
-remind snapshot topics                        # All topics with stats
+remind snapshot labels                        # All distinct labels with counts
 remind snapshot decisions:10                  # Recent 10 decision episodes
 remind snapshot questions                     # Open question episodes
 
 # Detail scopes
 remind snapshot entity:concept:caching        # All data for an entity
-remind snapshot topic:architecture            # All data for a topic
+remind snapshot label:topic=architecture      # All data for a label
 remind snapshot concept:abc123                # Concept detail with facts, history
 remind snapshot "query:authentication issues" # Semantic search as JSON
 ```

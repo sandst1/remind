@@ -54,14 +54,14 @@ Is it worth remembering?
 
 ```bash
 remind remember "Use Redis for caching" -t decision -e tool:redis -e concept:caching
-remind remember "Retry-with-backoff fixed flaky deploys" -t outcome --topic infra
+remind remember "Retry-with-backoff fixed flaky deploys" -t outcome -l topic=infra
 remind remember "Cache TTL is 600 seconds" -t fact --asserted-by alice --source-ref "https://slack.com/..."
-remind remember "User wants retry-after headers on 429s" -t preference --topic product
+remind remember "User wants retry-after headers on 429s" -t preference -l topic=product
 ```
 
 - **Type** (`-t`): Always set the type explicitly when you know it.
 - **Entities** (`-e`): `type:name` format (`file`, `function`, `class`, `person`, `concept`, `tool`, `project`). Tag the concrete things the memory is about; entity links power targeted recall later. See "Entity relationships" below to capture how entities relate.
-- **Topic** (`--topic`): topic ID or name; groups related memories.
+- **Labels** (`-l key=value`, repeatable): freeform tags; there's no built-in "topic" entity — `topic` is just a label key you choose to use to group related memories.
 - **Provenance**: `--asserted-by <who>` (person or `agent:<name>`) and `--source-ref <url>` whenever the information came from somewhere specific. Provenance is what makes later conflict resolution possible — "alice said X on 2026-03-01" beats "X".
 
 Write clear standalone statements: "User prefers tabs" not "tabs". A memory is read without the conversation that produced it.

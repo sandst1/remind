@@ -4,7 +4,7 @@ import type {
   Concept,
   Episode,
   Entity,
-  Topic,
+  LabelInfo,
   DatabaseInfo,
   EntityGraphData,
 } from './types';
@@ -44,14 +44,14 @@ export const entitiesTotal = writable(0);
 export const entitiesLoading = writable(false);
 export const entitiesError = writable<string | null>(null);
 
-// Topics
-export const topics = writable<Topic[]>([]);
-export const topicsLoading = writable(false);
-export const topicsError = writable<string | null>(null);
-export const selectedTopic = writable<string | null>(null);
+// Labels
+export const labels = writable<LabelInfo[]>([]);
+export const labelsLoading = writable(false);
+export const labelsError = writable<string | null>(null);
+export const selectedLabel = writable<{ key: string; value: string } | null>(null);
 
 // Navigation
-export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'memory-health' | 'entity-graph' | 'topics';
+export type View = 'dashboard' | 'entities' | 'episodes' | 'concepts' | 'memory-health' | 'entity-graph';
 export const currentView = writable<View>('dashboard');
 
 // Entity Graph (network) visualization state

@@ -39,7 +39,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from remind.models import (
     Concept, Conflict, Episode, Evidence, Fact, Relation, RelationType,
     Entity, EntityType, EntityRelation, EpisodeType,
-    Topic, canonicalize_entity_name,
+    canonicalize_entity_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,6 +104,66 @@ def _check_pgvector() -> bool:
     except ImportError:
         _PGVECTOR_AVAILABLE = False
     return _PGVECTOR_AVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# Lexical (keyword) backend detection
+# ---------------------------------------------------------------------------
+
+_SQLITE_FTS5_AVAILABLE: Optional[bool] = None
+
+
+def _check_sqlite_fts5() -> bool:
+    """Check if this Python's SQLite build has the FTS5 extension compiled in."""
+    global _SQLITE_FTS5_AVAILABLE
+    if _SQLITE_FTS5_AVAILABLE is not None:
+        return _SQLITE_FTS5_AVAILABLE
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("CREATE VIRTUAL TABLE _fts5_probe USING fts5(x)")
+        _SQLITE_FTS5_AVAILABLE = True
+    except sqlite3.OperationalError:
+        _SQLITE_FTS5_AVAILABLE = False
+    finally:
+        conn.close()
+    return _SQLITE_FTS5_AVAILABLE
+
+
+def _fts5_match_query(raw_query: str) -> Optional[str]:
+    """Turn free text into a safe FTS5 MATCH expression: each word becomes a
+    quoted phrase token, ORed together so any matching term contributes to
+    the bm25 rank. Returns None if there are no usable terms."""
+    import re
+
+    terms = re.findall(r"\w+", raw_query or "", re.UNICODE)
+    if not terms:
+        return None
+    return " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
+
+
+def _lexical_label_where(
+    table: str, labels: Optional[dict[str, str]], params: dict
+) -> list[str]:
+    """Build EXISTS clauses ANDing a label filter into a lexical query
+    against *table* (main table name, e.g. "concepts"), mutating *params*
+    in place with the bind values."""
+    clauses = []
+    if not labels:
+        return clauses
+    subject_type = _LABEL_SUBJECT_TYPE_BY_TABLE.get(table, table.rstrip("s"))
+    params["subject_type"] = subject_type
+    for i, (key, value) in enumerate(labels.items()):
+        alias = f"ll{i}"
+        clauses.append(
+            f"EXISTS (SELECT 1 FROM labels {alias} WHERE {alias}.subject_type = :subject_type "
+            f"AND {alias}.subject_id = {table}.id AND {alias}.key = :lex_label_key_{i} "
+            f"AND {alias}.value = :lex_label_value_{i})"
+        )
+        params[f"lex_label_key_{i}"] = key
+        params[f"lex_label_value_{i}"] = value
+    return clauses
 
 
 class MemoryStore(ABC):
@@ -315,18 +375,40 @@ class MemoryStore(ABC):
 
     # Embedding-based retrieval
     @abstractmethod
-    def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
-        """Find concepts by embedding similarity. Returns (concept, similarity) pairs."""
+    def find_by_embedding(
+        self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Concept, float]]:
+        """Find concepts by embedding similarity. Returns (concept, similarity) pairs.
+
+        Args:
+            labels: If set, only concepts matching ALL given key=value label
+                filters are considered. Applied as a pre-filter, not a
+                post-filter, so top-k results are not under-returned.
+        """
         ...
 
     @abstractmethod
-    def find_episodes_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple["Episode", float]]:
-        """Find episodes by embedding similarity. Returns (episode, similarity) pairs."""
+    def find_episodes_by_embedding(
+        self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple["Episode", float]]:
+        """Find episodes by embedding similarity. Returns (episode, similarity) pairs.
+
+        Args:
+            labels: If set, only episodes matching ALL given key=value label
+                filters are considered.
+        """
         ...
 
     @abstractmethod
-    def find_entities_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Entity, float]]:
-        """Find entities by embedding similarity. Returns (entity, similarity) pairs."""
+    def find_entities_by_embedding(
+        self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Entity, float]]:
+        """Find entities by embedding similarity. Returns (entity, similarity) pairs.
+
+        Args:
+            labels: If set, only entities matching ALL given key=value label
+                filters are considered.
+        """
         ...
 
     @abstractmethod
@@ -346,6 +428,23 @@ class MemoryStore(ABC):
             active_only: If True (default), only return facts with valid_to IS NULL.
         """
         ...
+
+    # Lexical (keyword) retrieval — fused with embedding results via RRF
+    def search_concepts_lexical(
+        self, query: str, k: int = 10, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Concept, float]]:
+        """Keyword search over concept title+summary. Returns (concept, score)
+        pairs ranked best-first. Empty list if no lexical backend is active
+        or the query has no searchable terms. Default: unsupported (base
+        class); overridden by backends that detect a lexical index."""
+        return []
+
+    def search_episodes_lexical(
+        self, query: str, k: int = 10, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple["Episode", float]]:
+        """Keyword search over episode title+content. Returns (episode, score)
+        pairs ranked best-first. See :meth:`search_concepts_lexical`."""
+        return []
 
     @abstractmethod
     def find_facts_by_entity_name(
@@ -717,6 +816,31 @@ class MemoryStore(ABC):
         """Set a metadata value. Updates if key exists."""
         ...
 
+    # Change feed
+    def emit_event(
+        self,
+        kind: str,
+        subject_type: str,
+        subject_id: str,
+        payload: Optional[dict] = None,
+    ) -> None:
+        """Append a row to the change feed. When called inside
+        ``store.transaction()``, the event commits atomically with whatever
+        write it describes. Default: no-op (base class); overridden by
+        backends that maintain the ``events`` table."""
+        return None
+
+    def get_events(
+        self,
+        since_seq: int = 0,
+        limit: int = 100,
+        kind: Optional[str] = None,
+    ) -> list[dict]:
+        """Read change-feed events with ``seq > since_seq``, oldest first.
+        Default: empty (base class); overridden by backends that maintain
+        the ``events`` table."""
+        return []
+
     # Statistics
     @abstractmethod
     def get_stats(self) -> dict:
@@ -754,20 +878,59 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return float(np.dot(a_arr, b_arr) / (norm_a * norm_b))
 
 
+def _label_escalation_steps(k: int, allowed_ids: Optional[set]) -> list[int]:
+    """Fetch-size steps for a sqlite-vec KNN search that is post-filtered by
+    a resolved label ID set. Without a filter, a single 2k pass matches
+    prior (unfiltered) behavior. With a filter, escalate the candidate pool
+    (k, 4k, 16k relative to the initial 2k) since matches may be sparse
+    among the label-filtered subset.
+    """
+    if allowed_ids is None:
+        return [k * 2]
+    return [k * 2, k * 8, k * 32]
+
+
+_LABEL_SUBJECT_TYPE_BY_TABLE = {"concepts": "concept", "episodes": "episode", "entities": "entity"}
+
+
+def _pgvector_label_query(
+    table: str,
+    select_cols: str,
+    vec_param: str,
+    k: int,
+    labels: Optional[dict[str, str]],
+    order_by: str,
+) -> tuple[str, dict]:
+    """Build a pgvector query string + params with an optional labels
+    EXISTS pre-filter, ANDed across all given key=value pairs. Runs inside
+    the main ORDER BY ... LIMIT query, so it is index-assisted and exact
+    (no post-filter under-return like the sqlite-vec path needs)."""
+    params: dict = {"query": vec_param, "k": k * 2}
+    where_clauses = [f"{table}.embedding_vec IS NOT NULL"]
+    if labels:
+        subject_type = _LABEL_SUBJECT_TYPE_BY_TABLE[table]
+        params["subject_type"] = subject_type
+        for i, (key, value) in enumerate(labels.items()):
+            alias = f"l{i}"
+            where_clauses.append(
+                f"EXISTS (SELECT 1 FROM labels {alias} WHERE {alias}.subject_type = :subject_type "
+                f"AND {alias}.subject_id = {table}.id AND {alias}.key = :label_key_{i} "
+                f"AND {alias}.value = :label_value_{i})"
+            )
+            params[f"label_key_{i}"] = key
+            params[f"label_value_{i}"] = value
+    query = (
+        f"SELECT {select_cols} FROM {table} WHERE " + " AND ".join(where_clauses)
+        + f" ORDER BY {order_by} LIMIT :k"
+    )
+    return query, params
+
+
 # ---------------------------------------------------------------------------
 # Table definitions
 # ---------------------------------------------------------------------------
 
 metadata_obj = MetaData()
-
-topics_table = Table(
-    "topics", metadata_obj,
-    Column("id", String, primary_key=True),
-    Column("name", Text, nullable=False),
-    Column("description", Text, nullable=False, server_default=""),
-    Column("created_at", DateTime, server_default=func.now()),
-    Column("updated_at", DateTime, server_default=func.now()),
-)
 
 concepts_table = Table(
     "concepts", metadata_obj,
@@ -778,7 +941,6 @@ concepts_table = Table(
     Column("embedding", LargeBinary, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
     Column("updated_at", DateTime, server_default=func.now()),
-    Column("topic_id", Text, nullable=True),
 )
 
 episodes_table = Table(
@@ -790,7 +952,6 @@ episodes_table = Table(
     Column("consolidated", Boolean, default=False),
     Column("timestamp", DateTime, server_default=func.now()),
     Column("embedding", LargeBinary, nullable=True),
-    Column("topic_id", Text, nullable=True),
 )
 
 relations_table = Table(
@@ -889,11 +1050,39 @@ metadata_table = Table(
     Column("value", Text, nullable=True),
 )
 
+# Generic key/value labels on any subject (episode | concept | fact). This is
+# the substrate's only grouping primitive — deliberately more general than
+# the "topic" concept it replaced, and designed to be pushed down as a
+# pre-filter into vector search rather than applied as a post-filter.
+labels_table = Table(
+    "labels", metadata_obj,
+    Column("subject_type", String, nullable=False),
+    Column("subject_id", String, nullable=False),
+    Column("key", String, nullable=False),
+    Column("value", String, nullable=False),
+    PrimaryKeyConstraint("subject_type", "subject_id", "key", "value"),
+)
+Index("idx_labels_kv", labels_table.c.key, labels_table.c.value)
+Index("idx_labels_subject", labels_table.c.subject_type, labels_table.c.subject_id)
+
+# Append-only change feed. Written inside the same transaction as the write
+# it describes, so consolidation daemons and sync layers can poll
+# "since seq N" instead of re-scanning `snapshot pending` on every tick.
+events_table = Table(
+    "events", metadata_obj,
+    Column("seq", Integer, primary_key=True, autoincrement=True),
+    Column("ts", DateTime, server_default=func.now()),
+    Column("kind", String, nullable=False),  # remembered | superseded | conflict_opened | conflict_resolved | conflict_dismissed | concept_created | concept_updated | labeled | unlabeled | deleted | restored | processed
+    Column("subject_type", String, nullable=False),  # episode | concept | fact | conflict
+    Column("subject_id", String, nullable=False),
+    Column("payload", JSON, nullable=True),
+)
+Index("idx_events_kind", events_table.c.kind)
+Index("idx_events_subject", events_table.c.subject_type, events_table.c.subject_id)
+
 # Indexes defined separately to keep Table definitions clean
 Index("idx_episodes_consolidated", episodes_table.c.consolidated)
 Index("idx_episodes_timestamp", episodes_table.c.timestamp)
-Index("idx_episodes_topic_id", episodes_table.c.topic_id)
-Index("idx_concepts_topic_id", concepts_table.c.topic_id)
 Index("idx_relations_source", relations_table.c.source_id)
 Index("idx_relations_target", relations_table.c.target_id)
 Index("idx_relations_type", relations_table.c.type)
@@ -971,11 +1160,15 @@ class SQLAlchemyMemoryStore(MemoryStore):
         # Vector backend state
         self._vec_backend: Optional[str] = None  # "sqlite-vec", "pgvector", or None
         self._vec_dimensions: Optional[int] = None
-        
+
+        # Lexical backend state
+        self._fts_backend: Optional[str] = None  # "fts5", "tsvector", "fulltext", or None
+
         # Transaction state (thread-local for safety)
         self._local = threading.local()
 
         self._setup_vector_backend()
+        self._setup_lexical_backend()
         self._init_db()
 
     def _setup_vector_backend(self) -> None:
@@ -999,6 +1192,20 @@ class SQLAlchemyMemoryStore(MemoryStore):
         else:
             backend = "SQLite" if _is_sqlite(self.engine) else self.engine.dialect.name
             logger.info(f"Vector backend: brute-force (no native vector extension for {backend})")
+
+    def _setup_lexical_backend(self) -> None:
+        """Detect the appropriate lexical (keyword/BM25) search backend."""
+        if _is_sqlite(self.engine) and _check_sqlite_fts5():
+            self._fts_backend = "fts5"
+            logger.info("Lexical backend: SQLite FTS5")
+        elif self.engine.dialect.name == "postgresql":
+            self._fts_backend = "tsvector"
+            logger.info("Lexical backend: PostgreSQL tsvector")
+        elif self.engine.dialect.name == "mysql":
+            self._fts_backend = "fulltext"
+            logger.info("Lexical backend: MySQL FULLTEXT")
+        else:
+            logger.info(f"Lexical backend: none available for {self.engine.dialect.name}")
 
     @contextmanager
     def _connect(self):
@@ -1049,9 +1256,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
         metadata_obj.create_all(self.engine)
         self._run_migrations()
         self._init_vector_tables()
+        self._init_lexical_index()
         self._backfill_facts_from_specifics()
         self._backfill_conflicts_from_concepts()
         self._backfill_evidence_from_source_episodes()
+        self._backfill_labels_from_topics()
 
     def _backfill_facts_from_specifics(self) -> None:
         """One-time backfill: turn legacy fact_cluster `specifics` strings
@@ -1162,6 +1371,135 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
         self.set_metadata("evidence_backfill_v1", "done")
 
+    def _backfill_labels_from_topics(self) -> None:
+        """One-time backfill: convert legacy topic assignments into labels
+        (key="topic", value=<topic name or id>), mirror them into the JSON
+        `data` blob, then drop the now-unused `topics` table and the
+        `topic_id` columns on episodes/concepts. Guarded by a metadata flag
+        so it runs once per database.
+
+        Uses raw schema inspection rather than the SQLAlchemy metadata
+        (which no longer declares these objects) so it still finds them on
+        pre-0.13 databases.
+        """
+        if self.get_metadata("labels_backfill_v1"):
+            return
+
+        insp = inspect(self.engine)
+        has_topics_table = insp.has_table("topics")
+        has_ep_topic_col = insp.has_table("episodes") and any(
+            c["name"] == "topic_id" for c in insp.get_columns("episodes")
+        )
+        has_concept_topic_col = insp.has_table("concepts") and any(
+            c["name"] == "topic_id" for c in insp.get_columns("concepts")
+        )
+
+        if has_topics_table or has_ep_topic_col or has_concept_topic_col:
+            topic_names: dict[str, str] = {}
+            if has_topics_table:
+                with self.engine.connect() as conn:
+                    rows = conn.execute(text("SELECT id, name FROM topics")).fetchall()
+                topic_names = {r[0]: r[1] for r in rows if r[1]}
+
+            migrated = 0
+            if has_ep_topic_col:
+                migrated += self._migrate_topic_column_to_labels(
+                    "episode", episodes_table, topic_names
+                )
+            if has_concept_topic_col:
+                migrated += self._migrate_topic_column_to_labels(
+                    "concept", concepts_table, topic_names
+                )
+
+            if migrated:
+                logger.info(f"Backfilled {migrated} topic assignments into labels")
+
+            self._drop_legacy_topic_schema(has_topics_table, has_ep_topic_col, has_concept_topic_col)
+
+        self.set_metadata("labels_backfill_v1", "done")
+
+    def _migrate_topic_column_to_labels(
+        self, subject_type: str, table: Table, topic_names: dict[str, str]
+    ) -> int:
+        """Copy a legacy topic_id column's values into the labels table and
+        the JSON data blob for one subject type. Returns rows migrated."""
+        migrated = 0
+        with self._connect() as conn:
+            rows = conn.execute(text(
+                f"SELECT id, data, topic_id FROM {table.name} "
+                f"WHERE topic_id IS NOT NULL AND topic_id != ''"
+            )).fetchall()
+            for row_id, data_raw, topic_id in rows:
+                value = topic_names.get(topic_id, topic_id)
+                if not value:
+                    continue
+                data = _parse_json(data_raw)
+                labels = data.get("labels") or {}
+                topic_values = labels.setdefault("topic", [])
+                if value not in topic_values:
+                    topic_values.append(value)
+                data["labels"] = labels
+                conn.execute(
+                    table.update().where(table.c.id == row_id).values(data=_dump_json(data))
+                )
+                self._sync_labels(conn, subject_type, row_id, labels)
+                migrated += 1
+        return migrated
+
+    def _drop_legacy_topic_schema(
+        self, has_topics_table: bool, has_ep_topic_col: bool, has_concept_topic_col: bool
+    ) -> None:
+        """Best-effort removal of the pre-0.13 topics table/columns.
+
+        Wrapped so failures (e.g. SQLite < 3.35 lacking DROP COLUMN) are
+        tolerated: the column becomes a harmless orphan since it is no
+        longer part of the SQLAlchemy metadata either way.
+        """
+        dialect = self.engine.dialect.name
+        with self.engine.connect() as conn:
+            for stmt in (
+                "DROP INDEX IF EXISTS idx_episodes_topic_id",
+                "DROP INDEX IF EXISTS idx_concepts_topic_id",
+            ):
+                try:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+
+            if has_ep_topic_col:
+                try:
+                    conn.execute(text("ALTER TABLE episodes DROP COLUMN topic_id"))
+                    conn.commit()
+                    logger.info("Migration: Dropped topic_id column from episodes table")
+                except Exception:
+                    conn.rollback()
+                    logger.warning(
+                        "Migration: Could not drop episodes.topic_id (unsupported by this "
+                        "database version); leaving it as an unused column"
+                    )
+
+            if has_concept_topic_col:
+                try:
+                    conn.execute(text("ALTER TABLE concepts DROP COLUMN topic_id"))
+                    conn.commit()
+                    logger.info("Migration: Dropped topic_id column from concepts table")
+                except Exception:
+                    conn.rollback()
+                    logger.warning(
+                        "Migration: Could not drop concepts.topic_id (unsupported by this "
+                        "database version); leaving it as an unused column"
+                    )
+
+            if has_topics_table:
+                try:
+                    conn.execute(text("DROP TABLE IF EXISTS topics"))
+                    conn.commit()
+                    logger.info("Migration: Dropped topics table")
+                except Exception:
+                    conn.rollback()
+                    logger.warning("Migration: Could not drop topics table")
+
     def _run_migrations(self):
         """Run additive schema migrations for backwards compatibility."""
         insp = inspect(self.engine)
@@ -1195,23 +1533,6 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 conn.execute(text("ALTER TABLE episodes ADD COLUMN embedding BYTEA" if not _is_sqlite(self.engine) else "ALTER TABLE episodes ADD COLUMN embedding BLOB"))
                 conn.commit()
                 logger.info("Migration: Added embedding column to episodes table")
-
-            if not _has_column("episodes", "topic_id"):
-                conn.execute(text("ALTER TABLE episodes ADD COLUMN topic_id TEXT"))
-                conn.commit()
-                logger.info("Migration: Added topic_id column to episodes table")
-
-            if not _has_column("concepts", "topic_id"):
-                conn.execute(text("ALTER TABLE concepts ADD COLUMN topic_id TEXT"))
-                conn.commit()
-                logger.info("Migration: Added topic_id column to concepts table")
-
-            # Ensure topics table exists (create_all handles new installs;
-            # this covers upgrades where tables were already created without it)
-            if not insp.has_table("topics"):
-                topics_table.create(self.engine)
-                conn.commit()
-                logger.info("Migration: Created topics table")
 
             try:
                 entity_count = conn.execute(text("SELECT COUNT(*) FROM entities")).scalar()
@@ -1380,6 +1701,366 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     f"UPDATE {table} SET embedding_vec = :vec WHERE id = :id"
                 ), {"vec": vec_str, "id": row.id})
 
+    # ------------------------------------------------------------------
+    # Lexical (keyword/BM25) index setup
+    # ------------------------------------------------------------------
+
+    def _init_lexical_index(self) -> None:
+        """Create the lexical search index if a backend was detected."""
+        if self._fts_backend == "fts5":
+            self._init_sqlite_fts_tables()
+        elif self._fts_backend == "tsvector":
+            self._init_postgres_tsvector()
+        elif self._fts_backend == "fulltext":
+            self._init_mysql_fulltext()
+
+    def _init_sqlite_fts_tables(self) -> None:
+        """Create standalone FTS5 virtual tables, manually kept in sync on
+        write (mirrors the vec0 sync pattern used for embeddings)."""
+        with self.engine.connect() as conn:
+            existing = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='fts_concepts'")
+            ).fetchone()
+            if not existing:
+                conn.execute(text(
+                    "CREATE VIRTUAL TABLE fts_concepts USING fts5(concept_id UNINDEXED, text)"
+                ))
+                self._backfill_sqlite_fts(conn, "concepts")
+                conn.commit()
+                logger.info("Created fts_concepts table (FTS5)")
+
+            existing = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='fts_episodes'")
+            ).fetchone()
+            if not existing:
+                conn.execute(text(
+                    "CREATE VIRTUAL TABLE fts_episodes USING fts5(episode_id UNINDEXED, text)"
+                ))
+                self._backfill_sqlite_fts(conn, "episodes")
+                conn.commit()
+                logger.info("Created fts_episodes table (FTS5)")
+
+    def _backfill_sqlite_fts(self, conn, table: str) -> None:
+        """Populate a fts5 table from existing rows in the main table."""
+        if table == "concepts":
+            rows = conn.execute(
+                select(concepts_table.c.id, concepts_table.c.title, concepts_table.c.summary)
+            ).fetchall()
+            for row in rows:
+                text_val = " ".join(filter(None, [row.title, row.summary])).strip()
+                if text_val:
+                    conn.execute(text(
+                        "INSERT INTO fts_concepts(concept_id, text) VALUES (:id, :text)"
+                    ), {"id": row.id, "text": text_val})
+        elif table == "episodes":
+            rows = conn.execute(
+                select(episodes_table.c.id, episodes_table.c.title, episodes_table.c.content)
+            ).fetchall()
+            for row in rows:
+                text_val = " ".join(filter(None, [row.title, row.content])).strip()
+                if text_val:
+                    conn.execute(text(
+                        "INSERT INTO fts_episodes(episode_id, text) VALUES (:id, :text)"
+                    ), {"id": row.id, "text": text_val})
+
+    def _init_postgres_tsvector(self) -> None:
+        """Add a generated, auto-maintained tsvector column + GIN index.
+
+        Being a STORED generated column, Postgres keeps it in sync on every
+        write with no application-level hook needed.
+        """
+        insp = inspect(self.engine)
+        with self.engine.connect() as conn:
+            for table_name, cols in (
+                ("concepts", ("title", "summary")),
+                ("episodes", ("title", "content")),
+            ):
+                if _has_column_in_list(insp.get_columns(table_name), "text_search"):
+                    continue
+                col_expr = " || ' ' || ".join(f"coalesce({c}, '')" for c in cols)
+                try:
+                    conn.execute(text(
+                        f"ALTER TABLE {table_name} ADD COLUMN text_search tsvector "
+                        f"GENERATED ALWAYS AS (to_tsvector('english', {col_expr})) STORED"
+                    ))
+                    conn.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_text_search "
+                        f"ON {table_name} USING GIN (text_search)"
+                    ))
+                    conn.commit()
+                    logger.info(f"Created {table_name}.text_search tsvector column + GIN index")
+                except Exception as e:
+                    logger.warning(f"Could not create tsvector index on {table_name}: {e}")
+                    conn.rollback()
+
+    def _init_mysql_fulltext(self) -> None:
+        """Add FULLTEXT indexes on existing text columns. MySQL maintains
+        these automatically on write, same as any other index."""
+        with self.engine.connect() as conn:
+            for table_name, idx_name, cols in (
+                ("concepts", "ft_concepts", "title, summary"),
+                ("episodes", "ft_episodes", "title, content"),
+            ):
+                try:
+                    existing = conn.execute(text(
+                        "SELECT COUNT(*) FROM information_schema.statistics "
+                        "WHERE table_schema = DATABASE() AND table_name = :t AND index_name = :i"
+                    ), {"t": table_name, "i": idx_name}).scalar()
+                    if not existing:
+                        conn.execute(text(
+                            f"ALTER TABLE {table_name} ADD FULLTEXT INDEX {idx_name} ({cols})"
+                        ))
+                        conn.commit()
+                        logger.info(f"Created FULLTEXT index {idx_name} on {table_name}")
+                except Exception as e:
+                    logger.warning(f"Could not create FULLTEXT index on {table_name}: {e}")
+                    conn.rollback()
+
+    def _upsert_fts_concept(self, conn, concept_id: str, title: Optional[str], summary: Optional[str]) -> None:
+        """Sync a concept's searchable text into the FTS5 index (SQLite only;
+        Postgres/MySQL maintain their indexes automatically on write)."""
+        if self._fts_backend != "fts5":
+            return
+        text_val = " ".join(filter(None, [title, summary])).strip()
+        conn.execute(text("DELETE FROM fts_concepts WHERE concept_id = :id"), {"id": concept_id})
+        if text_val:
+            conn.execute(text(
+                "INSERT INTO fts_concepts(concept_id, text) VALUES (:id, :text)"
+            ), {"id": concept_id, "text": text_val})
+
+    def _upsert_fts_episode(self, conn, episode_id: str, title: Optional[str], content: Optional[str]) -> None:
+        """Sync an episode's searchable text into the FTS5 index (SQLite only)."""
+        if self._fts_backend != "fts5":
+            return
+        text_val = " ".join(filter(None, [title, content])).strip()
+        conn.execute(text("DELETE FROM fts_episodes WHERE episode_id = :id"), {"id": episode_id})
+        if text_val:
+            conn.execute(text(
+                "INSERT INTO fts_episodes(episode_id, text) VALUES (:id, :text)"
+            ), {"id": episode_id, "text": text_val})
+
+    def _delete_fts_concept(self, conn, concept_id: str) -> None:
+        if self._fts_backend == "fts5":
+            conn.execute(text("DELETE FROM fts_concepts WHERE concept_id = :id"), {"id": concept_id})
+
+    def _delete_fts_episode(self, conn, episode_id: str) -> None:
+        if self._fts_backend == "fts5":
+            conn.execute(text("DELETE FROM fts_episodes WHERE episode_id = :id"), {"id": episode_id})
+
+    def search_concepts_lexical(
+        self, query: str, k: int = 10, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Concept, float]]:
+        if not query or not query.strip():
+            return []
+        if self._fts_backend == "fts5":
+            return self._search_concepts_fts5(query, k, labels)
+        elif self._fts_backend == "tsvector":
+            return self._search_concepts_tsvector(query, k, labels)
+        elif self._fts_backend == "fulltext":
+            return self._search_concepts_mysql_fulltext(query, k, labels)
+        return []
+
+    def _search_concepts_fts5(
+        self, query: str, k: int, labels: Optional[dict[str, str]]
+    ) -> list[tuple[Concept, float]]:
+        match = _fts5_match_query(query)
+        if not match:
+            return []
+        allowed_ids = self._resolve_label_ids("concept", labels)
+        if allowed_ids is not None and not allowed_ids:
+            return []
+        with self._connect() as conn:
+            results: list[tuple[Concept, float]] = []
+            for fetch_k in _label_escalation_steps(k, allowed_ids):
+                try:
+                    rows = conn.execute(text(
+                        "SELECT concept_id, rank FROM fts_concepts WHERE fts_concepts MATCH :q "
+                        "ORDER BY rank LIMIT :k"
+                    ), {"q": match, "k": fetch_k}).fetchall()
+                except Exception:
+                    logger.warning("FTS5 concept search failed", exc_info=True)
+                    return []
+
+                results = []
+                for i, row in enumerate(rows):
+                    if allowed_ids is not None and row.concept_id not in allowed_ids:
+                        continue
+                    concept = self._get_concept_from_conn(conn, row.concept_id)
+                    if concept is None:
+                        continue
+                    results.append((concept, 1.0 / (1.0 + i)))
+
+                if len(results) >= k or len(rows) < fetch_k:
+                    break
+
+            return results[:k]
+
+    def _search_concepts_tsvector(
+        self, query: str, k: int, labels: Optional[dict[str, str]]
+    ) -> list[tuple[Concept, float]]:
+        with self._connect() as conn:
+            params: dict = {"q": query, "k": k}
+            where_clauses = ["text_search @@ plainto_tsquery('english', :q)"]
+            where_clauses.extend(_lexical_label_where("concepts", labels, params))
+            query_sql = (
+                "SELECT id, data, embedding, "
+                "ts_rank_cd(text_search, plainto_tsquery('english', :q)) AS score "
+                "FROM concepts WHERE " + " AND ".join(where_clauses)
+                + " ORDER BY score DESC LIMIT :k"
+            )
+            try:
+                rows = conn.execute(text(query_sql), params).fetchall()
+            except Exception:
+                logger.warning("tsvector concept search failed", exc_info=True)
+                return []
+
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                if row.embedding:
+                    data["embedding"] = _bytes_to_embedding(row.embedding)
+                results.append((Concept.from_dict(data), float(row.score)))
+            return results[:k]
+
+    def _search_concepts_mysql_fulltext(
+        self, query: str, k: int, labels: Optional[dict[str, str]]
+    ) -> list[tuple[Concept, float]]:
+        with self._connect() as conn:
+            params: dict = {"q": query, "k": k}
+            where_clauses = ["MATCH(title, summary) AGAINST (:q IN NATURAL LANGUAGE MODE)"]
+            where_clauses.extend(_lexical_label_where("concepts", labels, params))
+            query_sql = (
+                "SELECT id, data, embedding, "
+                "MATCH(title, summary) AGAINST (:q IN NATURAL LANGUAGE MODE) AS score "
+                "FROM concepts WHERE " + " AND ".join(where_clauses)
+                + " ORDER BY score DESC LIMIT :k"
+            )
+            try:
+                rows = conn.execute(text(query_sql), params).fetchall()
+            except Exception:
+                logger.warning("MySQL FULLTEXT concept search failed", exc_info=True)
+                return []
+
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                if row.embedding:
+                    data["embedding"] = _bytes_to_embedding(row.embedding)
+                results.append((Concept.from_dict(data), float(row.score)))
+            return results[:k]
+
+    def search_episodes_lexical(
+        self, query: str, k: int = 10, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Episode, float]]:
+        if not query or not query.strip():
+            return []
+        if self._fts_backend == "fts5":
+            return self._search_episodes_fts5(query, k, labels)
+        elif self._fts_backend == "tsvector":
+            return self._search_episodes_tsvector(query, k, labels)
+        elif self._fts_backend == "fulltext":
+            return self._search_episodes_mysql_fulltext(query, k, labels)
+        return []
+
+    def _search_episodes_fts5(
+        self, query: str, k: int, labels: Optional[dict[str, str]]
+    ) -> list[tuple[Episode, float]]:
+        match = _fts5_match_query(query)
+        if not match:
+            return []
+        allowed_ids = self._resolve_label_ids("episode", labels)
+        if allowed_ids is not None and not allowed_ids:
+            return []
+        with self._connect() as conn:
+            results: list[tuple[Episode, float]] = []
+            for fetch_k in _label_escalation_steps(k, allowed_ids):
+                try:
+                    rows = conn.execute(text(
+                        "SELECT episode_id, rank FROM fts_episodes WHERE fts_episodes MATCH :q "
+                        "ORDER BY rank LIMIT :k"
+                    ), {"q": match, "k": fetch_k}).fetchall()
+                except Exception:
+                    logger.warning("FTS5 episode search failed", exc_info=True)
+                    return []
+
+                results = []
+                for i, row in enumerate(rows):
+                    if allowed_ids is not None and row.episode_id not in allowed_ids:
+                        continue
+                    ep = self._get_episode_from_conn(conn, row.episode_id)
+                    if ep is None:
+                        continue
+                    results.append((ep, 1.0 / (1.0 + i)))
+
+                if len(results) >= k or len(rows) < fetch_k:
+                    break
+
+            return results[:k]
+
+    def _search_episodes_tsvector(
+        self, query: str, k: int, labels: Optional[dict[str, str]]
+    ) -> list[tuple[Episode, float]]:
+        with self._connect() as conn:
+            params: dict = {"q": query, "k": k}
+            where_clauses = ["text_search @@ plainto_tsquery('english', :q)"]
+            where_clauses.extend(_lexical_label_where("episodes", labels, params))
+            query_sql = (
+                "SELECT id, data, embedding, "
+                "ts_rank_cd(text_search, plainto_tsquery('english', :q)) AS score "
+                "FROM episodes WHERE " + " AND ".join(where_clauses)
+                + " ORDER BY score DESC LIMIT :k"
+            )
+            try:
+                rows = conn.execute(text(query_sql), params).fetchall()
+            except Exception:
+                logger.warning("tsvector episode search failed", exc_info=True)
+                return []
+
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                ep = Episode.from_dict(data)
+                if row.embedding:
+                    ep.embedding = _bytes_to_embedding(row.embedding)
+                results.append((ep, float(row.score)))
+            return results[:k]
+
+    def _search_episodes_mysql_fulltext(
+        self, query: str, k: int, labels: Optional[dict[str, str]]
+    ) -> list[tuple[Episode, float]]:
+        with self._connect() as conn:
+            params: dict = {"q": query, "k": k}
+            where_clauses = ["MATCH(title, content) AGAINST (:q IN NATURAL LANGUAGE MODE)"]
+            where_clauses.extend(_lexical_label_where("episodes", labels, params))
+            query_sql = (
+                "SELECT id, data, embedding, "
+                "MATCH(title, content) AGAINST (:q IN NATURAL LANGUAGE MODE) AS score "
+                "FROM episodes WHERE " + " AND ".join(where_clauses)
+                + " ORDER BY score DESC LIMIT :k"
+            )
+            try:
+                rows = conn.execute(text(query_sql), params).fetchall()
+            except Exception:
+                logger.warning("MySQL FULLTEXT episode search failed", exc_info=True)
+                return []
+
+            results = []
+            for row in rows:
+                data = _parse_json(row.data)
+                if data.get("deleted_at"):
+                    continue
+                ep = Episode.from_dict(data)
+                if row.embedding:
+                    ep.embedding = _bytes_to_embedding(row.embedding)
+                results.append((ep, float(row.score)))
+            return results[:k]
+
     def _ensure_vec_dimensions(self, embedding: list[float], conn=None) -> None:
         """Record embedding dimensions on first use and create vector tables.
 
@@ -1534,11 +2215,12 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     embedding=_embedding_to_bytes(concept.embedding),
                     created_at=concept.created_at,
                     updated_at=concept.updated_at,
-                    topic_id=concept.topic_id,
                 )
             )
             self._sync_relations(conn, concept)
+            self._sync_labels(conn, "concept", concept.id, concept.labels)
             self._upsert_vec_concept(conn, concept.id, concept.embedding)
+            self._upsert_fts_concept(conn, concept.id, concept.title, concept.summary)
         return concept.id
 
     def _sync_relations(self, conn, concept: Concept):
@@ -1610,11 +2292,12 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     data=_dump_json(data),
                     embedding=_embedding_to_bytes(concept.embedding),
                     updated_at=concept.updated_at,
-                    topic_id=concept.topic_id,
                 )
             )
             self._sync_relations(conn, concept)
+            self._sync_labels(conn, "concept", concept.id, concept.labels)
             self._upsert_vec_concept(conn, concept.id, concept.embedding)
+            self._upsert_fts_concept(conn, concept.id, concept.title, concept.summary)
 
     def delete_concept(self, id: str) -> bool:
         with self._connect() as conn:
@@ -1655,8 +2338,14 @@ class SQLAlchemyMemoryStore(MemoryStore):
     def purge_concept(self, id: str) -> bool:
         with self._connect() as conn:
             self._delete_vec_concept(conn, id)
+            self._delete_fts_concept(conn, id)
             # SQLite doesn't enforce FK cascades by default; clean up fact rows explicitly
             conn.execute(facts_table.delete().where(facts_table.c.cluster_id == id))
+            conn.execute(
+                labels_table.delete().where(
+                    (labels_table.c.subject_type == "concept") & (labels_table.c.subject_id == id)
+                )
+            )
             result = conn.execute(
                 concepts_table.delete().where(concepts_table.c.id == id)
             )
@@ -1700,7 +2389,6 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     concepts_table.c.id,
                     concepts_table.c.title,
                     concepts_table.c.summary,
-                    concepts_table.c.topic_id,
                     concepts_table.c.data,
                 )
             ).fetchall()
@@ -1713,7 +2401,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     "id": row.id,
                     "title": row.title,
                     "summary": row.summary,
-                    "topic_id": row.topic_id,
+                    "labels": data.get("labels") or {},
                     "confidence": data.get("confidence"),
                     "instance_count": data.get("instance_count"),
                     "tags": data.get("tags", []),
@@ -1724,40 +2412,63 @@ class SQLAlchemyMemoryStore(MemoryStore):
     # Embedding-based retrieval
     # ------------------------------------------------------------------
 
-    def find_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Concept, float]]:
-        if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
-            return self._find_concepts_sqlite_vec(embedding, k)
-        elif self._vec_backend == "pgvector" and self._vec_dimensions:
-            return self._find_concepts_pgvector(embedding, k)
-        return self._find_concepts_brute_force(embedding, k)
+    def _resolve_label_ids(
+        self, subject_type: str, labels: Optional[dict[str, str]]
+    ) -> Optional[set[str]]:
+        """Resolve a label filter to a subject ID set, or None if unfiltered."""
+        if not labels:
+            return None
+        return self.find_subject_ids_by_labels(subject_type, labels)
 
-    def _find_concepts_sqlite_vec(self, embedding: list[float], k: int) -> list[tuple[Concept, float]]:
+    def find_by_embedding(
+        self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Concept, float]]:
+        if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
+            return self._find_concepts_sqlite_vec(embedding, k, labels)
+        elif self._vec_backend == "pgvector" and self._vec_dimensions:
+            return self._find_concepts_pgvector(embedding, k, labels)
+        return self._find_concepts_brute_force(embedding, k, labels)
+
+    def _find_concepts_sqlite_vec(
+        self, embedding: list[float], k: int, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Concept, float]]:
+        allowed_ids = self._resolve_label_ids("concept", labels)
+        if allowed_ids is not None and not allowed_ids:
+            return []
         query_vec = np.array(embedding, dtype=np.float32)
         with self._connect() as conn:
-            rows = conn.execute(text(
-                "SELECT concept_id, distance FROM vec_concepts "
-                "WHERE embedding MATCH :query AND k = :k"
-            ), {"query": query_vec.tobytes(), "k": k * 2}).fetchall()
+            results: list[tuple[Concept, float]] = []
+            for fetch_k in _label_escalation_steps(k, allowed_ids):
+                rows = conn.execute(text(
+                    "SELECT concept_id, distance FROM vec_concepts "
+                    "WHERE embedding MATCH :query AND k = :k"
+                ), {"query": query_vec.tobytes(), "k": fetch_k}).fetchall()
 
-            results = []
-            for row in rows:
-                concept = self._get_concept_from_conn(conn, row.concept_id)
-                if concept is None:
-                    continue
-                distance = row.distance if row.distance is not None else 1.0
-                similarity = 1.0 - distance
-                results.append((concept, similarity))
+                results = []
+                for row in rows:
+                    if allowed_ids is not None and row.concept_id not in allowed_ids:
+                        continue
+                    concept = self._get_concept_from_conn(conn, row.concept_id)
+                    if concept is None:
+                        continue
+                    distance = row.distance if row.distance is not None else 1.0
+                    results.append((concept, 1.0 - distance))
+
+                if len(results) >= k or len(rows) < fetch_k:
+                    break
 
             return results[:k]
 
-    def _find_concepts_pgvector(self, embedding: list[float], k: int) -> list[tuple[Concept, float]]:
+    def _find_concepts_pgvector(
+        self, embedding: list[float], k: int, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Concept, float]]:
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
         with self._connect() as conn:
-            rows = conn.execute(text(
-                "SELECT id, data, embedding, embedding_vec <=> :query AS distance "
-                "FROM concepts WHERE embedding_vec IS NOT NULL "
-                "ORDER BY embedding_vec <=> :query LIMIT :k"
-            ), {"query": vec_str, "k": k * 2}).fetchall()
+            query, params = _pgvector_label_query(
+                "concepts", "id, data, embedding, embedding_vec <=> :query AS distance",
+                vec_str, k, labels, order_by="embedding_vec <=> :query",
+            )
+            rows = conn.execute(text(query), params).fetchall()
 
             results = []
             for row in rows:
@@ -1771,7 +2482,12 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
             return results[:k]
 
-    def _find_concepts_brute_force(self, embedding: list[float], k: int) -> list[tuple[Concept, float]]:
+    def _find_concepts_brute_force(
+        self, embedding: list[float], k: int, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Concept, float]]:
+        allowed_ids = self._resolve_label_ids("concept", labels)
+        if allowed_ids is not None and not allowed_ids:
+            return []
         with self._connect() as conn:
             rows = conn.execute(
                 select(concepts_table.c.data, concepts_table.c.embedding)
@@ -1782,6 +2498,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
             for row in rows:
                 data = _parse_json(row.data)
                 if data.get("deleted_at"):
+                    continue
+                if allowed_ids is not None and data.get("id") not in allowed_ids:
                     continue
                 if not row.embedding:
                     continue
@@ -1808,40 +2526,55 @@ class SQLAlchemyMemoryStore(MemoryStore):
             data["embedding"] = _bytes_to_embedding(row.embedding)
         return Concept.from_dict(data)
 
-    def find_episodes_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Episode, float]]:
+    def find_episodes_by_embedding(
+        self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Episode, float]]:
         if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
-            return self._find_episodes_sqlite_vec(embedding, k)
+            return self._find_episodes_sqlite_vec(embedding, k, labels)
         elif self._vec_backend == "pgvector" and self._vec_dimensions:
-            return self._find_episodes_pgvector(embedding, k)
-        return self._find_episodes_brute_force(embedding, k)
+            return self._find_episodes_pgvector(embedding, k, labels)
+        return self._find_episodes_brute_force(embedding, k, labels)
 
-    def _find_episodes_sqlite_vec(self, embedding: list[float], k: int) -> list[tuple[Episode, float]]:
+    def _find_episodes_sqlite_vec(
+        self, embedding: list[float], k: int, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Episode, float]]:
+        allowed_ids = self._resolve_label_ids("episode", labels)
+        if allowed_ids is not None and not allowed_ids:
+            return []
         query_vec = np.array(embedding, dtype=np.float32)
         with self._connect() as conn:
-            rows = conn.execute(text(
-                "SELECT episode_id, distance FROM vec_episodes "
-                "WHERE embedding MATCH :query AND k = :k"
-            ), {"query": query_vec.tobytes(), "k": k * 2}).fetchall()
+            results: list[tuple[Episode, float]] = []
+            for fetch_k in _label_escalation_steps(k, allowed_ids):
+                rows = conn.execute(text(
+                    "SELECT episode_id, distance FROM vec_episodes "
+                    "WHERE embedding MATCH :query AND k = :k"
+                ), {"query": query_vec.tobytes(), "k": fetch_k}).fetchall()
 
-            results = []
-            for row in rows:
-                ep = self._get_episode_from_conn(conn, row.episode_id)
-                if ep is None:
-                    continue
-                distance = row.distance if row.distance is not None else 1.0
-                similarity = 1.0 - distance
-                results.append((ep, similarity))
+                results = []
+                for row in rows:
+                    if allowed_ids is not None and row.episode_id not in allowed_ids:
+                        continue
+                    ep = self._get_episode_from_conn(conn, row.episode_id)
+                    if ep is None:
+                        continue
+                    distance = row.distance if row.distance is not None else 1.0
+                    results.append((ep, 1.0 - distance))
+
+                if len(results) >= k or len(rows) < fetch_k:
+                    break
 
             return results[:k]
 
-    def _find_episodes_pgvector(self, embedding: list[float], k: int) -> list[tuple[Episode, float]]:
+    def _find_episodes_pgvector(
+        self, embedding: list[float], k: int, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Episode, float]]:
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
         with self._connect() as conn:
-            rows = conn.execute(text(
-                "SELECT id, data, embedding, embedding_vec <=> :query AS distance "
-                "FROM episodes WHERE embedding_vec IS NOT NULL "
-                "ORDER BY embedding_vec <=> :query LIMIT :k"
-            ), {"query": vec_str, "k": k * 2}).fetchall()
+            query, params = _pgvector_label_query(
+                "episodes", "id, data, embedding, embedding_vec <=> :query AS distance",
+                vec_str, k, labels, order_by="embedding_vec <=> :query",
+            )
+            rows = conn.execute(text(query), params).fetchall()
 
             results = []
             for row in rows:
@@ -1856,7 +2589,12 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
             return results[:k]
 
-    def _find_episodes_brute_force(self, embedding: list[float], k: int) -> list[tuple[Episode, float]]:
+    def _find_episodes_brute_force(
+        self, embedding: list[float], k: int, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Episode, float]]:
+        allowed_ids = self._resolve_label_ids("episode", labels)
+        if allowed_ids is not None and not allowed_ids:
+            return []
         with self._connect() as conn:
             rows = conn.execute(
                 select(episodes_table.c.data, episodes_table.c.embedding)
@@ -1867,6 +2605,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
             for row in rows:
                 data = _parse_json(row.data)
                 if data.get("deleted_at"):
+                    continue
+                if allowed_ids is not None and data.get("id") not in allowed_ids:
                     continue
                 if not row.embedding:
                     continue
@@ -1899,47 +2639,61 @@ class SQLAlchemyMemoryStore(MemoryStore):
     # Entity embedding-based retrieval
     # ------------------------------------------------------------------
 
-    def find_entities_by_embedding(self, embedding: list[float], k: int = 5) -> list[tuple[Entity, float]]:
+    def find_entities_by_embedding(
+        self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Entity, float]]:
         if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
-            return self._find_entities_sqlite_vec(embedding, k)
+            return self._find_entities_sqlite_vec(embedding, k, labels)
         elif self._vec_backend == "pgvector" and self._vec_dimensions:
-            return self._find_entities_pgvector(embedding, k)
-        return self._find_entities_brute_force(embedding, k)
+            return self._find_entities_pgvector(embedding, k, labels)
+        return self._find_entities_brute_force(embedding, k, labels)
 
-    def _find_entities_sqlite_vec(self, embedding: list[float], k: int) -> list[tuple[Entity, float]]:
+    def _find_entities_sqlite_vec(
+        self, embedding: list[float], k: int, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Entity, float]]:
+        allowed_ids = self._resolve_label_ids("entity", labels)
+        if allowed_ids is not None and not allowed_ids:
+            return []
         query_vec = np.array(embedding, dtype=np.float32)
         with self._connect() as conn:
-            # Check if vec_entities table exists
-            try:
-                rows = conn.execute(text(
-                    "SELECT entity_id, distance FROM vec_entities "
-                    "WHERE embedding MATCH :vec ORDER BY distance LIMIT :k"
-                ), {"vec": query_vec.tobytes(), "k": k * 2}).fetchall()
-            except Exception:
-                # Fall back to brute force if vec table doesn't exist
-                return self._find_entities_brute_force(embedding, k)
+            results: list[tuple[Entity, float]] = []
+            for fetch_k in _label_escalation_steps(k, allowed_ids):
+                try:
+                    rows = conn.execute(text(
+                        "SELECT entity_id, distance FROM vec_entities "
+                        "WHERE embedding MATCH :vec ORDER BY distance LIMIT :k"
+                    ), {"vec": query_vec.tobytes(), "k": fetch_k}).fetchall()
+                except Exception:
+                    # Fall back to brute force if vec table doesn't exist
+                    return self._find_entities_brute_force(embedding, k, labels)
 
-            results = []
-            for row in rows:
-                entity = self.get_entity(row.entity_id)
-                if entity:
-                    similarity = 1.0 - row.distance
-                    results.append((entity, similarity))
+                results = []
+                for row in rows:
+                    if allowed_ids is not None and row.entity_id not in allowed_ids:
+                        continue
+                    entity = self.get_entity(row.entity_id)
+                    if entity:
+                        results.append((entity, 1.0 - row.distance))
+
+                if len(results) >= k or len(rows) < fetch_k:
+                    break
 
             return results[:k]
 
-    def _find_entities_pgvector(self, embedding: list[float], k: int) -> list[tuple[Entity, float]]:
+    def _find_entities_pgvector(
+        self, embedding: list[float], k: int, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Entity, float]]:
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
         with self._connect() as conn:
             try:
-                rows = conn.execute(text(
-                    "SELECT id, data, embedding_vec <=> :vec AS distance "
-                    "FROM entities WHERE embedding_vec IS NOT NULL "
-                    "ORDER BY embedding_vec <=> :vec LIMIT :k"
-                ), {"vec": vec_str, "k": k * 2}).fetchall()
+                query, params = _pgvector_label_query(
+                    "entities", "id, data, embedding_vec <=> :query AS distance",
+                    vec_str, k, labels, order_by="embedding_vec <=> :query",
+                )
+                rows = conn.execute(text(query), params).fetchall()
             except Exception:
                 # Fall back to brute force if vector column doesn't exist
-                return self._find_entities_brute_force(embedding, k)
+                return self._find_entities_brute_force(embedding, k, labels)
 
             results = []
             for row in rows:
@@ -1950,7 +2704,12 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
             return results[:k]
 
-    def _find_entities_brute_force(self, embedding: list[float], k: int) -> list[tuple[Entity, float]]:
+    def _find_entities_brute_force(
+        self, embedding: list[float], k: int, labels: Optional[dict[str, str]] = None
+    ) -> list[tuple[Entity, float]]:
+        allowed_ids = self._resolve_label_ids("entity", labels)
+        if allowed_ids is not None and not allowed_ids:
+            return []
         with self._connect() as conn:
             rows = conn.execute(
                 select(entities_table.c.data, entities_table.c.embedding)
@@ -1960,6 +2719,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
             results = []
             for row in rows:
                 data = _parse_json(row.data)
+                if allowed_ids is not None and data.get("id") not in allowed_ids:
+                    continue
                 if not row.embedding:
                     continue
                 stored = _bytes_to_embedding(row.embedding)
@@ -2272,10 +3033,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     consolidated=episode.consolidated,
                     timestamp=episode.timestamp,
                     embedding=_embedding_to_bytes(episode.embedding),
-                    topic_id=episode.topic_id,
                 )
             )
+            self._sync_labels(conn, "episode", episode.id, episode.labels)
             self._upsert_vec_episode(conn, episode.id, episode.embedding)
+            self._upsert_fts_episode(conn, episode.id, episode.title, episode.content)
         return episode.id
 
     def add_episodes_batch(self, episodes: list[Episode]) -> list[str]:
@@ -2294,10 +3056,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
                         consolidated=episode.consolidated,
                         timestamp=episode.timestamp,
                         embedding=_embedding_to_bytes(episode.embedding),
-                        topic_id=episode.topic_id,
                     )
                 )
+                self._sync_labels(conn, "episode", episode.id, episode.labels)
                 self._upsert_vec_episode(conn, episode.id, episode.embedding)
+                self._upsert_fts_episode(conn, episode.id, episode.title, episode.content)
                 ids.append(episode.id)
             return ids
 
@@ -2350,10 +3113,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     consolidated=episode.consolidated,
                     timestamp=episode.timestamp,
                     embedding=_embedding_to_bytes(episode.embedding),
-                    topic_id=episode.topic_id,
                 )
             )
+            self._sync_labels(conn, "episode", episode.id, episode.labels)
             self._upsert_vec_episode(conn, episode.id, episode.embedding)
+            self._upsert_fts_episode(conn, episode.id, episode.title, episode.content)
 
     def delete_episode(self, id: str) -> bool:
         with self._connect() as conn:
@@ -2402,6 +3166,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
     def purge_episode(self, id: str) -> bool:
         with self._connect() as conn:
             self._delete_vec_episode(conn, id)
+            self._delete_fts_episode(conn, id)
             conn.execute(
                 entity_relations_table.delete()
                 .where(entity_relations_table.c.source_episode_id == id)
@@ -2409,6 +3174,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
             conn.execute(
                 mentions_table.delete()
                 .where(mentions_table.c.episode_id == id)
+            )
+            conn.execute(
+                labels_table.delete().where(
+                    (labels_table.c.subject_type == "episode") & (labels_table.c.subject_id == id)
+                )
             )
             result = conn.execute(
                 episodes_table.delete().where(episodes_table.c.id == id)
@@ -3555,6 +4325,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 except OperationalError:
                     pass
             conn.execute(relations_table.delete())
+            conn.execute(labels_table.delete().where(labels_table.c.subject_type == "concept"))
             result = conn.execute(concepts_table.delete())
             return result.rowcount
 
@@ -3562,6 +4333,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
         with self._connect() as conn:
             conn.execute(entity_relations_table.delete())
             conn.execute(mentions_table.delete())
+            conn.execute(labels_table.delete().where(labels_table.c.subject_type == "entity"))
             result = conn.execute(entities_table.delete())
             return result.rowcount
 
@@ -3729,6 +4501,52 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 )
 
     # ------------------------------------------------------------------
+    # Change feed
+    # ------------------------------------------------------------------
+
+    def emit_event(
+        self,
+        kind: str,
+        subject_type: str,
+        subject_id: str,
+        payload: Optional[dict] = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                events_table.insert().values(
+                    kind=kind,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    payload=_dump_json(payload) if payload is not None else None,
+                )
+            )
+
+    def get_events(
+        self,
+        since_seq: int = 0,
+        limit: int = 100,
+        kind: Optional[str] = None,
+    ) -> list[dict]:
+        with self._connect() as conn:
+            query = select(events_table).where(events_table.c.seq > since_seq)
+            if kind:
+                query = query.where(events_table.c.kind == kind)
+            query = query.order_by(events_table.c.seq.asc()).limit(limit)
+            rows = conn.execute(query).fetchall()
+            events = []
+            for row in rows:
+                payload = _parse_json(row.payload) if row.payload else None
+                events.append({
+                    "seq": row.seq,
+                    "ts": row.ts.isoformat() if row.ts else None,
+                    "kind": row.kind,
+                    "subject_type": row.subject_type,
+                    "subject_id": row.subject_id,
+                    "payload": payload,
+                })
+            return events
+
+    # ------------------------------------------------------------------
     # Statistics
     # ------------------------------------------------------------------
 
@@ -3839,154 +4657,127 @@ class SQLAlchemyMemoryStore(MemoryStore):
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
-    # Topic operations
+    # Label operations
     # ------------------------------------------------------------------
 
-    def create_topic(self, topic: Topic) -> Topic:
-        with self._connect() as conn:
-            conn.execute(
-                topics_table.insert().values(
-                    id=topic.id,
-                    name=topic.name,
-                    description=topic.description,
-                    created_at=topic.created_at,
-                    updated_at=topic.updated_at,
-                )
+    def _sync_labels(self, conn, subject_type: str, subject_id: str, labels: dict) -> None:
+        """Replace all label rows for a subject with the given key->values map."""
+        conn.execute(
+            labels_table.delete().where(
+                (labels_table.c.subject_type == subject_type)
+                & (labels_table.c.subject_id == subject_id)
             )
-        return topic
-
-    def get_topic(self, topic_id: str) -> Optional[Topic]:
-        with self._connect() as conn:
-            row = conn.execute(
-                select(topics_table).where(topics_table.c.id == topic_id)
-            ).fetchone()
-            if not row:
-                return None
-            return Topic(
-                id=row.id,
-                name=row.name,
-                description=row.description or "",
-                created_at=row.created_at if isinstance(row.created_at, datetime) else datetime.now(),
-                updated_at=row.updated_at if isinstance(row.updated_at, datetime) else datetime.now(),
-            )
-
-    def get_topic_by_name(self, name: str) -> Optional[Topic]:
-        """Look up a topic by its display name (case-insensitive)."""
-        with self._connect() as conn:
-            row = conn.execute(
-                select(topics_table).where(
-                    func.lower(topics_table.c.name) == name.lower()
-                )
-            ).fetchone()
-            if not row:
-                return None
-            return Topic(
-                id=row.id,
-                name=row.name,
-                description=row.description or "",
-                created_at=row.created_at if isinstance(row.created_at, datetime) else datetime.now(),
-                updated_at=row.updated_at if isinstance(row.updated_at, datetime) else datetime.now(),
-            )
-
-    def get_all_topics(self) -> list[Topic]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                select(topics_table).order_by(topics_table.c.name)
-            ).fetchall()
-            return [
-                Topic(
-                    id=row.id,
-                    name=row.name,
-                    description=row.description or "",
-                    created_at=row.created_at if isinstance(row.created_at, datetime) else datetime.now(),
-                    updated_at=row.updated_at if isinstance(row.updated_at, datetime) else datetime.now(),
-                )
-                for row in rows
-            ]
-
-    def update_topic(self, topic: Topic) -> Topic:
-        topic.updated_at = datetime.now()
-        with self._connect() as conn:
-            conn.execute(
-                topics_table.update()
-                .where(topics_table.c.id == topic.id)
-                .values(
-                    name=topic.name,
-                    description=topic.description,
-                    updated_at=topic.updated_at,
-                )
-            )
-        return topic
-
-    def delete_topic(self, topic_id: str) -> bool:
-        with self._connect() as conn:
-            result = conn.execute(
-                topics_table.delete().where(topics_table.c.id == topic_id)
-            )
-            return result.rowcount > 0
-
-    def get_topic_stats(self) -> list[dict]:
-        """Get all topics with episode/concept counts and latest activity."""
-        topics = self.get_all_topics()
-        if not topics:
-            return []
-
-        with self._connect() as conn:
-            ep_rows = conn.execute(
-                select(
-                    episodes_table.c.topic_id,
-                    func.count().label("cnt"),
-                    func.max(episodes_table.c.timestamp).label("latest"),
-                )
-                .where(episodes_table.c.topic_id.isnot(None))
-                .group_by(episodes_table.c.topic_id)
-            ).fetchall()
-            ep_map = {row.topic_id: {"count": row.cnt, "latest": row.latest} for row in ep_rows}
-
-            concept_rows = conn.execute(
-                select(
-                    concepts_table.c.topic_id,
-                    func.count().label("cnt"),
-                )
-                .where(concepts_table.c.topic_id.isnot(None))
-                .group_by(concepts_table.c.topic_id)
-            ).fetchall()
-            concept_map = {row.topic_id: row.cnt for row in concept_rows}
-
-        results = []
-        for t in topics:
-            ep_info = ep_map.get(t.id, {"count": 0, "latest": None})
-            latest = ep_info["latest"]
-            if isinstance(latest, datetime):
-                latest = latest.isoformat()
-            results.append({
-                **t.to_dict(),
-                "episode_count": ep_info["count"],
-                "concept_count": concept_map.get(t.id, 0),
-                "latest_activity": latest,
-            })
-        results.sort(key=lambda x: x["latest_activity"] or "", reverse=True)
-        return results
-
-    def get_concepts_by_topic(self, topic_id: str) -> list[Concept]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                select(concepts_table.c.data, concepts_table.c.embedding)
-                .where(concepts_table.c.topic_id == topic_id)
-            ).fetchall()
-            concepts = []
-            for row in rows:
-                data = _parse_json(row.data)
-                if data.get("deleted_at"):
+        )
+        for key, values in (labels or {}).items():
+            if not key:
+                continue
+            values_list = values if isinstance(values, list) else [values]
+            seen_values = set()
+            for value in values_list:
+                if not value or value in seen_values:
                     continue
-                if row.embedding:
-                    data["embedding"] = _bytes_to_embedding(row.embedding)
-                concepts.append(Concept.from_dict(data))
-            concepts.sort(
-                key=lambda c: (c.confidence or 0) * (c.instance_count or 0),
-                reverse=True,
+                seen_values.add(value)
+                conn.execute(
+                    labels_table.insert().values(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        key=key,
+                        value=value,
+                    )
+                )
+
+    def set_labels(self, subject_type: str, subject_id: str, labels: dict[str, list[str]]) -> None:
+        """Replace all labels on a subject (episode | concept | fact) with *labels*."""
+        with self._connect() as conn:
+            self._sync_labels(conn, subject_type, subject_id, labels)
+
+    def add_label(self, subject_type: str, subject_id: str, key: str, value: str) -> None:
+        """Add a single key=value label to a subject, leaving existing labels intact."""
+        with self._connect() as conn:
+            try:
+                conn.execute(
+                    labels_table.insert().values(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        key=key,
+                        value=value,
+                    )
+                )
+            except IntegrityError:
+                pass  # already labeled with this exact key=value
+
+    def remove_label(
+        self, subject_type: str, subject_id: str, key: str, value: Optional[str] = None
+    ) -> int:
+        """Remove a label from a subject. If *value* is None, removes all
+        values for *key*. Returns the number of rows removed."""
+        with self._connect() as conn:
+            cond = (
+                (labels_table.c.subject_type == subject_type)
+                & (labels_table.c.subject_id == subject_id)
+                & (labels_table.c.key == key)
             )
-            return concepts
+            if value is not None:
+                cond = cond & (labels_table.c.value == value)
+            result = conn.execute(labels_table.delete().where(cond))
+            return result.rowcount
+
+    def get_labels(self, subject_type: str, subject_id: str) -> dict[str, list[str]]:
+        """Get all labels on a subject as a key -> [values] map."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(labels_table.c.key, labels_table.c.value).where(
+                    (labels_table.c.subject_type == subject_type)
+                    & (labels_table.c.subject_id == subject_id)
+                )
+            ).fetchall()
+        result: dict[str, list[str]] = {}
+        for key, value in rows:
+            result.setdefault(key, []).append(value)
+        return result
+
+    def find_subject_ids_by_labels(
+        self, subject_type: str, label_filters: dict[str, str]
+    ) -> set[str]:
+        """Find subject IDs matching ALL of the given key=value label filters
+        (AND across keys). Returns an empty set if *label_filters* is empty
+        or no subject matches every filter."""
+        if not label_filters:
+            return set()
+        with self._connect() as conn:
+            result_ids: Optional[set[str]] = None
+            for key, value in label_filters.items():
+                rows = conn.execute(
+                    select(labels_table.c.subject_id).where(
+                        (labels_table.c.subject_type == subject_type)
+                        & (labels_table.c.key == key)
+                        & (labels_table.c.value == value)
+                    )
+                ).fetchall()
+                ids = {r[0] for r in rows}
+                result_ids = ids if result_ids is None else (result_ids & ids)
+                if not result_ids:
+                    return set()
+        return result_ids or set()
+
+    def get_distinct_labels(self, subject_type: Optional[str] = None) -> list[dict]:
+        """List distinct key/value pairs currently in use, with counts.
+
+        Powers label-filter UIs without exposing full subject listings.
+        """
+        with self._connect() as conn:
+            stmt = select(
+                labels_table.c.key,
+                labels_table.c.value,
+                func.count().label("count"),
+            )
+            if subject_type:
+                stmt = stmt.where(labels_table.c.subject_type == subject_type)
+            stmt = stmt.group_by(labels_table.c.key, labels_table.c.value).order_by(
+                labels_table.c.key, labels_table.c.value
+            )
+            rows = conn.execute(stmt).fetchall()
+        return [{"key": r.key, "value": r.value, "count": r.count} for r in rows]
 
     def export_data(self) -> dict:
         with self._connect() as conn:

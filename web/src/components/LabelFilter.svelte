@@ -1,51 +1,58 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { selectedTopic, topics, currentDb } from '../lib/stores';
-  import { fetchTopics } from '../lib/api';
-  import { FolderOpen, X } from 'lucide-svelte';
+  import { selectedLabel, labels, currentDb } from '../lib/stores';
+  import { fetchLabels } from '../lib/api';
+  import { Tag, X } from 'lucide-svelte';
 
   let mounted = false;
 
   onMount(() => {
     mounted = true;
-    loadTopics();
+    loadLabels();
   });
 
   $: if (mounted && $currentDb) {
-    loadTopics();
+    loadLabels();
   }
 
-  async function loadTopics() {
+  async function loadLabels() {
     if (!$currentDb) return;
     try {
-      const result = await fetchTopics();
-      topics.set(result.topics);
+      const result = await fetchLabels();
+      labels.set(result.labels);
     } catch {
       // ignore
     }
   }
 
+  $: selectedValue = $selectedLabel ? `${$selectedLabel.key}:${$selectedLabel.value}` : '';
+
   function handleChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value;
-    selectedTopic.set(value || null);
+    if (!value) {
+      selectedLabel.set(null);
+      return;
+    }
+    const [key, val] = value.split(':');
+    selectedLabel.set({ key, value: val });
   }
 
   function clear() {
-    selectedTopic.set(null);
+    selectedLabel.set(null);
   }
 </script>
 
-<div class="topic-selector">
+<div class="label-filter">
   <div class="select-wrapper">
-    <FolderOpen size={14} />
-    <select value={$selectedTopic ?? ''} onchange={handleChange}>
-      <option value="">All topics</option>
-      {#each $topics as t}
-        <option value={t.id}>{t.name}</option>
+    <Tag size={14} />
+    <select value={selectedValue} onchange={handleChange}>
+      <option value="">All labels</option>
+      {#each $labels as l}
+        <option value={`${l.key}:${l.value}`}>{l.key}={l.value} ({l.count})</option>
       {/each}
     </select>
-    {#if $selectedTopic}
-      <button class="clear-btn" onclick={clear} title="Clear topic filter">
+    {#if $selectedLabel}
+      <button class="clear-btn" onclick={clear} title="Clear label filter">
         <X size={12} />
       </button>
     {/if}
@@ -53,7 +60,7 @@
 </div>
 
 <style>
-  .topic-selector {
+  .label-filter {
     width: 100%;
   }
 

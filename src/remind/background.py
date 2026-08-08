@@ -283,8 +283,11 @@ def request_recall_worker(
     episode_k: int,
     context: Optional[str],
     entity: Optional[str],
-    topic: Optional[str],
+    labels: Optional[dict[str, str]],
     raw: bool,
+    max_chars: Optional[int] = None,
+    min_score: Optional[float] = None,
+    timeout_ms: Optional[int] = None,
     timeout_seconds: float = RECALL_WORKER_RPC_TIMEOUT_SECONDS,
 ) -> Optional[dict[str, Any]]:
     """Send a recall request to a running recall worker."""
@@ -295,7 +298,10 @@ def request_recall_worker(
         "episode_k": episode_k,
         "context": context,
         "entity": entity,
-        "topic": topic,
+        "labels": labels,
         "raw": raw,
+        "max_chars": max_chars,
+        "min_score": min_score,
+        "timeout_ms": timeout_ms,
     }
     return _rpc_call_unix_socket(socket_path, payload, timeout_seconds=timeout_seconds)

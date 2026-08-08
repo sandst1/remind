@@ -24,7 +24,7 @@ Basic usage:
     response = await llm.complete(f"{context}\\n\\nUser: {message}")
 """
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 # Core models
 from remind.models import (
@@ -36,7 +36,6 @@ from remind.models import (
     Fact,
     Relation,
     RelationType,
-    Topic,
     Entity,
     EntityType,
     EntityRelation,
@@ -99,7 +98,6 @@ __all__ = [
     "EntityType",
     "EntityRelation",
     "EpisodeType",
-    "Topic",
     # Freeform concept type constants
     "CONCEPT_TYPE_FACT",
     "CONCEPT_TYPE_FACT_CLUSTER",

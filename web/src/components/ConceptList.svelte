@@ -7,11 +7,10 @@
     conceptsError,
     conceptPath,
     currentDb,
-    topics,
-    selectedTopic,
+    selectedLabel,
   } from '../lib/stores';
   import { fetchConcepts, fetchConcept, fetchEpisode } from '../lib/api';
-  import type { Concept, Episode, Topic } from '../lib/types';
+  import type { Concept, Episode } from '../lib/types';
   import {
     Search,
     ChevronRight,
@@ -36,8 +35,6 @@
   let expandedEpisodes: Record<string, Episode | null> = {};
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  $: topicMap = Object.fromEntries(($topics || []).map((t: Topic) => [t.id, t.name]));
-
   let allConcepts: Concept[] = [];
   let loadGen = 0;
 
@@ -45,9 +42,9 @@
     mounted = true;
   });
 
-  // React to database and topic filter (see EpisodeTimeline — topic must be read here).
+  // React to database and label filter (see EpisodeTimeline — label must be read here).
   $: if (mounted && $currentDb) {
-    void $selectedTopic;
+    void $selectedLabel;
     loadAll();
     conceptPath.set([]);
   }
@@ -80,8 +77,9 @@
       let total = Infinity;
       const collected: Concept[] = [];
 
+      const labelParam = $selectedLabel ? `${$selectedLabel.key}:${$selectedLabel.value}` : undefined;
       while (offset < total) {
-        const response = await fetchConcepts({ offset, limit: batchSize, topic: $selectedTopic || undefined });
+        const response = await fetchConcepts({ offset, limit: batchSize, label: labelParam });
         if (gen !== loadGen) return;
         total = response.total;
         collected.push(...response.concepts);
@@ -306,9 +304,11 @@
               </div>
               <div class="concept-summary">{concept.summary}</div>
               <div class="concept-footer">
-                {#if concept.topic_id}
-                  <span class="topic-badge">{topicMap[concept.topic_id] || concept.topic_id}</span>
-                {/if}
+                {#each Object.entries(concept.labels || {}) as [key, values]}
+                  {#each values as value}
+                    <span class="label-chip">{key}={value}</span>
+                  {/each}
+                {/each}
                 {#if concept.tags.length > 0}
                   <div class="concept-tags">
                     {#each concept.tags.slice(0, 3) as tag}
@@ -812,7 +812,7 @@
     color: var(--color-text-secondary);
   }
 
-  .topic-badge {
+  .label-chip {
     padding: 2px 8px;
     background: var(--color-accent-bg, rgba(99, 102, 241, 0.1));
     color: var(--color-accent);

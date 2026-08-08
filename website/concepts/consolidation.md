@@ -19,7 +19,7 @@ Remind provides the tools; the agent provides the judgment.
 During work, store raw experiences:
 
 ```
-remember(content="Rate limiting is at gateway level", topic="architecture")
+remember(content="Rate limiting is at gateway level", labels="topic=architecture")
 remember(content="Max connections is 100", episode_type="fact", entities="tool:postgres")
 ```
 
@@ -118,3 +118,29 @@ recall(query="cache config", as_of="2024-06-01")
 ```
 
 This shows what facts were valid at that point in time, not the current values. Useful for debugging "what did we believe then".
+
+## Change feed
+
+`snapshot(scopes="pending")` is a good fit for an interactive agent curating at session boundaries, but it's the wrong tool for a background process that needs to react to writes continuously — re-scanning the full pending set on every tick doesn't scale and can't tell "processed episode" apart from "new episode since I last looked".
+
+The **events** table is an append-only outbox for exactly that case. Every successful `remember` and every successful `apply` op writes one row, in the same transaction as the change it describes:
+
+```
+events()                                       # All events from the start
+events(since_seq=42)                           # Only events after seq 42
+events(since_seq=42, kind="conflict_opened")   # Filter to one kind
+```
+
+```json
+{
+  "since_seq": 42,
+  "count": 2,
+  "events": [
+    {"seq": 43, "ts": "2026-01-01T12:00:00", "kind": "remembered", "subject_type": "episode", "subject_id": "ep_abc", "payload": null},
+    {"seq": 44, "ts": "2026-01-01T12:00:05", "kind": "conflict_opened", "subject_type": "conflict", "subject_id": "conflict_xyz", "payload": null}
+  ],
+  "next_since_seq": 44
+}
+```
+
+`kind` is one of `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, `processed`. Persist `next_since_seq` and pass it back as `since_seq` on the next poll — a consolidation daemon, a sync layer replicating into another system, or a notification hook can all be built on this without touching Remind's internals. Also available as `remind events --since <seq>` on the CLI and `snapshot(scopes="events:<since_seq>")`.

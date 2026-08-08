@@ -226,16 +226,21 @@ class TestApplyEngineExecution:
         return ApplyEngine(memory_store, mock_embedding)
     
     @pytest.mark.asyncio
-    async def test_topic_creation(self, engine, memory_store):
-        result = await engine.apply([
-            {"op": "topic", "name": "Architecture Decisions"},
+    async def test_label_and_unlabel_episode(self, engine, memory_store):
+        episode = Episode(content="Label me")
+        memory_store.add_episode(episode)
+
+        labeled = await engine.apply([
+            {"op": "label", "id": episode.id, "key": "topic", "value": "architecture"},
         ])
-        
-        assert result.success
-        
-        topic = memory_store.get_topic("architecture-decisions")
-        assert topic is not None
-        assert topic.name == "Architecture Decisions"
+        assert labeled.success
+        assert memory_store.get_labels("episode", episode.id) == {"topic": ["architecture"]}
+
+        unlabeled = await engine.apply([
+            {"op": "unlabel", "id": episode.id, "key": "topic", "value": "architecture"},
+        ])
+        assert unlabeled.success
+        assert memory_store.get_labels("episode", episode.id) == {}
     
     @pytest.mark.asyncio
     async def test_processed_marks_episodes(self, engine, memory_store):
@@ -274,6 +279,36 @@ class TestApplyEngineExecution:
         
         assert result.success
         assert result.ops_executed == 1
+
+    @pytest.mark.asyncio
+    async def test_remember_emits_change_feed_event(self, engine, memory_store):
+        result = await engine.apply([{"op": "remember", "content": "Test"}])
+        assert result.success
+
+        events = memory_store.get_events()
+        assert len(events) == 1
+        assert events[0]["kind"] == "remembered"
+        assert events[0]["subject_type"] == "episode"
+        assert events[0]["subject_id"] == result.results[0].id
+
+    @pytest.mark.asyncio
+    async def test_dry_run_does_not_emit_change_feed_event(self, engine, memory_store):
+        await engine.apply([{"op": "remember", "content": "Test"}], dry_run=True)
+        assert memory_store.get_events() == []
+
+    @pytest.mark.asyncio
+    async def test_label_emits_change_feed_event(self, engine, memory_store):
+        episode = Episode(content="Label me")
+        memory_store.add_episode(episode)
+
+        await engine.apply([
+            {"op": "label", "id": episode.id, "key": "topic", "value": "architecture"},
+        ])
+
+        events = memory_store.get_events(kind="labeled")
+        assert len(events) == 1
+        assert events[0]["subject_type"] == "episode"
+        assert events[0]["subject_id"] == episode.id
 
 
 class TestApplyEngineConflictOperations:

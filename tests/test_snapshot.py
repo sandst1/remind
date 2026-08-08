@@ -11,7 +11,7 @@ from remind.snapshot import (
     _concept_to_dict,
     _fact_to_dict,
 )
-from remind.models import Episode, Concept, Fact, Conflict, Entity, EntityType, Topic
+from remind.models import Episode, Concept, Fact, Conflict, Entity, EntityType
 
 
 class TestParseScopes:
@@ -343,33 +343,124 @@ class TestSnapshotEngineStats:
         assert result["stats"]["concept_types"]["fact_cluster"] == 1
 
 
-class TestSnapshotEngineTopic:
-    """Tests for topic scope."""
+class TestSnapshotEngineLabel:
+    """Tests for label scopes."""
     
     @pytest.fixture
     def engine(self, memory_store, mock_embedding):
         return SnapshotEngine(memory_store, mock_embedding)
     
     @pytest.mark.asyncio
-    async def test_topic_not_found(self, engine):
-        result = await engine.snapshot(["topic:nonexistent"])
+    async def test_label_scope_requires_key_and_value(self, engine):
+        result = await engine.snapshot(["label:nonexistent"])
         
-        assert "error" in result["topic:nonexistent"]
+        assert "error" in result["label:nonexistent"]
     
     @pytest.mark.asyncio
-    async def test_topic_with_data(self, engine, memory_store):
-        topic = Topic(id="arch", name="Architecture", description="")
-        memory_store.create_topic(topic)
-        
-        ep = Episode(content="Test", topic_id="arch")
+    async def test_label_with_data(self, engine, memory_store):
+        ep = Episode(content="Test", labels={"topic": ["architecture"]})
         memory_store.add_episode(ep)
         
-        result = await engine.snapshot(["topic:arch"])
+        result = await engine.snapshot(["label:topic=architecture"])
         
-        key = "topic:arch"
+        key = "label:topic=architecture"
         assert key in result
-        assert result[key]["topic"]["name"] == "Architecture"
+        assert result[key]["key"] == "topic"
+        assert result[key]["value"] == "architecture"
         assert result[key]["episode_count"] == 1
+    
+    @pytest.mark.asyncio
+    async def test_labels_scope_lists_distinct_pairs(self, engine, memory_store):
+        ep = Episode(content="Test", labels={"topic": ["architecture"]})
+        memory_store.add_episode(ep)
+        
+        result = await engine.snapshot(["labels"])
+        
+        assert result["labels"]["count"] == 1
+
+
+class TestSnapshotEngineEvents:
+    """Tests for the events:<since_seq> change-feed scope."""
+
+    @pytest.fixture
+    def engine(self, memory_store, mock_embedding):
+        return SnapshotEngine(memory_store, mock_embedding)
+
+    @pytest.mark.asyncio
+    async def test_events_scope_defaults_to_since_zero(self, engine, memory_store):
+        memory_store.emit_event("remembered", "episode", "ep1")
+        memory_store.emit_event("remembered", "episode", "ep2")
+
+        result = await engine.snapshot(["events"])
+
+        assert result["events"]["since_seq"] == 0
+        assert result["events"]["count"] == 2
+        assert result["events"]["next_since_seq"] == result["events"]["events"][-1]["seq"]
+
+    @pytest.mark.asyncio
+    async def test_events_scope_with_since_seq(self, engine, memory_store):
+        memory_store.emit_event("remembered", "episode", "ep1")
+        memory_store.emit_event("remembered", "episode", "ep2")
+        first_seq = memory_store.get_events()[0]["seq"]
+
+        result = await engine.snapshot([f"events:{first_seq}"])
+
+        assert result["events"]["since_seq"] == first_seq
+        assert result["events"]["count"] == 1
+        assert result["events"]["events"][0]["subject_id"] == "ep2"
+
+
+class TestSnapshotEngineBootstrap:
+    """Tests for the query-free bootstrap[:n] scope."""
+
+    @pytest.fixture
+    def engine(self, memory_store, mock_embedding):
+        return SnapshotEngine(memory_store, mock_embedding)
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_ranks_by_confidence_then_instance_count(self, engine, memory_store):
+        low = Concept(summary="Low confidence", confidence=0.3, instance_count=5)
+        high = Concept(summary="High confidence", confidence=0.9, instance_count=1)
+        memory_store.add_concept(low)
+        memory_store.add_concept(high)
+
+        result = await engine.snapshot(["bootstrap"])
+
+        ids = [c["id"] for c in result["bootstrap"]["concepts"]]
+        assert ids == [high.id, low.id]
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_respects_n(self, engine, memory_store):
+        for i in range(5):
+            memory_store.add_concept(Concept(summary=f"Concept {i}", confidence=0.5 + i * 0.01))
+
+        result = await engine.snapshot(["bootstrap:2"])
+
+        assert result["bootstrap"]["count"] == 2
+        assert len(result["bootstrap"]["concepts"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_excludes_non_actionable_concepts(self, engine, memory_store):
+        actionable = Concept(summary="Actionable", confidence=0.5, actionable=True)
+        context_only = Concept(summary="Context only", confidence=0.9, actionable=False)
+        memory_store.add_concept(actionable)
+        memory_store.add_concept(context_only)
+
+        result = await engine.snapshot(["bootstrap"])
+
+        ids = [c["id"] for c in result["bootstrap"]["concepts"]]
+        assert ids == [actionable.id]
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_includes_conflicts_and_stats(self, engine, memory_store):
+        conflict = Conflict(kind="fact", fact_a_id="fact:a", fact_b_id="fact:b", status="open")
+        memory_store.add_conflict(conflict)
+
+        result = await engine.snapshot(["bootstrap"])
+
+        assert result["bootstrap"]["open_conflicts"] == 1
+        assert "stats" in result["bootstrap"]
+        assert result["bootstrap"]["stats"]["total_concepts"] == 0
 
 
 class TestSnapshotEngineMultipleScopes:

@@ -24,7 +24,7 @@ curl -X POST http://localhost:8765/api/v1/snapshot?db=my-project \
   -d '{"scopes": ["pending", "conflicts"]}'
 ```
 
-Scopes: `pending`, `conflicts`, `entity:<id>`, `topic:<id>`, `concept:<id>`, `recent:<n>`, `stats`, `query:<text>`.
+Scopes: `pending`, `conflicts`, `entity:<id>`, `labels`, `label:<key>=<value>`, `concept:<id>`, `recent:<n>`, `stats`, `query:<text>`.
 
 ## Apply
 
@@ -40,7 +40,7 @@ See [MCP Tools — apply](/reference/mcp-tools#apply) for the full op vocabulary
 
 ## Concepts
 
-**`GET /concepts`** — Paginated concept list. Params: `page`, `limit`.
+**`GET /concepts`** — Paginated concept list. Params: `page`, `limit`, `label` (repeatable `key:value`, filters to concepts carrying all given labels).
 
 **`GET /concepts/{id}`** — Concept detail with source episodes. For fact clusters, includes a `facts` array (active facts plus superseded history).
 
@@ -48,11 +48,19 @@ See [MCP Tools — apply](/reference/mcp-tools#apply) for the full op vocabulary
 
 ## Episodes
 
-**`GET /episodes`** — Paginated episodes. Params: `page`, `limit`, `type`.
+**`GET /episodes`** — Paginated episodes. Params: `page`, `limit`, `type`, `label` (repeatable `key:value`, filters to episodes carrying all given labels).
 
 **`GET /episodes/{id}`** — Episode detail.
 
 **`GET /episodes/deleted`** — List soft-deleted episodes.
+
+## Labels
+
+**`GET /labels`** — List distinct `key=value` labels in use, with counts. Params: `subject_type` (`episode` or `concept`, optional).
+
+```bash
+curl "http://localhost:8765/api/v1/labels?db=my-project&subject_type=concept"
+```
 
 ## Entities
 
@@ -85,7 +93,7 @@ curl "http://localhost:8765/api/v1/conflicts?db=my-project&status=open"
 ```bash
 curl -X POST http://localhost:8765/api/v1/query?db=my-project \
   -H "Content-Type: application/json" \
-  -d '{"query": "authentication approach"}'
+  -d '{"query": "authentication approach", "labels": {"topic": "architecture"}}'
 ```
 
 ## Databases

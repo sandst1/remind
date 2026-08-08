@@ -83,34 +83,29 @@ def slugify(name: str) -> str:
     return s.strip("-")
 
 
-@dataclass
-class Topic:
-    """A managed knowledge area that groups episodes and concepts."""
-
-    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    name: str = ""
-    description: str = ""
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "description": self.description,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "Topic":
-        return cls(
-            id=data["id"],
-            name=data.get("name", ""),
-            description=data.get("description", ""),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.now(),
-        )
+def normalize_labels(labels: Optional[dict]) -> dict[str, list[str]]:
+    """Normalize a flexible label input (a single string or a list per key)
+    into a canonical key -> [values] map, dropping empty keys/values and
+    de-duplicating while preserving order.
+    """
+    if not labels:
+        return {}
+    result: dict[str, list[str]] = {}
+    for key, values in labels.items():
+        key = str(key).strip() if key else ""
+        if not key:
+            continue
+        values_list = values if isinstance(values, list) else [values]
+        cleaned: list[str] = []
+        seen = set()
+        for v in values_list:
+            v = str(v).strip() if v else ""
+            if v and v not in seen:
+                seen.add(v)
+                cleaned.append(v)
+        if cleaned:
+            result[key] = cleaned
+    return result
 
 
 # Valid entity type prefixes for ID validation
@@ -560,8 +555,9 @@ class Concept:
     embedding: Optional[list[float]] = None
     tags: list[str] = field(default_factory=list)
 
-    # FK to Topic.id
-    topic_id: Optional[str] = None
+    # Freeform key -> values labels (e.g. {"topic": ["architecture"]}).
+    # Multi-valued so a subject can carry more than one value per key.
+    labels: dict[str, list[str]] = field(default_factory=dict)
 
     # Decay tracking
     last_accessed: Optional[datetime] = None
@@ -610,7 +606,7 @@ class Concept:
             "exceptions": self.exceptions,
             "embedding": self.embedding,
             "tags": self.tags,
-            "topic_id": self.topic_id,
+            "labels": self.labels,
             "last_accessed": self.last_accessed.isoformat() if self.last_accessed else None,
             "access_count": self.access_count,
             "decay_factor": self.decay_factor,
@@ -642,7 +638,7 @@ class Concept:
             exceptions=data.get("exceptions", []),
             embedding=data.get("embedding"),
             tags=data.get("tags", []),
-            topic_id=data.get("topic_id") or data.get("topic"),
+            labels=data.get("labels") or {},
             last_accessed=datetime.fromisoformat(data["last_accessed"]) if data.get("last_accessed") else None,
             access_count=data.get("access_count", 0),
             decay_factor=data.get("decay_factor", 1.0),
@@ -718,8 +714,8 @@ class Episode:
     # Optional metadata
     metadata: dict = field(default_factory=dict)
 
-    # FK to Topic.id
-    topic_id: Optional[str] = None
+    # Freeform key -> values labels (e.g. {"topic": ["architecture"]}).
+    labels: dict[str, list[str]] = field(default_factory=dict)
 
     # Origin of this episode (e.g. "agent", "slack", "github", "manual")
     source_type: Optional[str] = None
@@ -769,7 +765,7 @@ class Episode:
             "relations_extracted": self.relations_extracted,
             "confidence": self.confidence,
             "metadata": self.metadata,
-            "topic_id": self.topic_id,
+            "labels": self.labels,
             "source_type": self.source_type,
             "asserted_by": self.asserted_by,
             "source_ref": self.source_ref,
@@ -811,7 +807,7 @@ class Episode:
             relations_extracted=data.get("relations_extracted", False),
             confidence=data.get("confidence", 1.0),
             metadata=data.get("metadata", {}),
-            topic_id=data.get("topic_id") or data.get("topic"),
+            labels=data.get("labels") or {},
             source_type=data.get("source_type"),
             asserted_by=data.get("asserted_by"),
             source_ref=data.get("source_ref"),

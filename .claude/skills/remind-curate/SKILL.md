@@ -1,11 +1,11 @@
 ---
 name: remind-curate
-description: Maintain Remind memory quality. Use when recall output shows an OPEN CONFLICTS warning, the user corrects previously stored information, stored memories are outdated or misfiled, topics need reorganizing, a work session is wrapping up, or after ingesting multiple documents from different sources or time periods. This is also the consolidation procedure — run at session end to process pending episodes.
+description: Maintain Remind memory quality. Use when recall output shows an OPEN CONFLICTS warning, the user corrects previously stored information, stored memories are outdated or misfiled, labels need reorganizing, a work session is wrapping up, or after ingesting multiple documents from different sources or time periods. This is also the consolidation procedure — run at session end to process pending episodes.
 ---
 
 # Remind - Curating Memory
 
-Keep the memory layer trustworthy: process pending episodes into concepts, triage contradictions, correct or retire stale items, and keep topics organized.
+Keep the memory layer trustworthy: process pending episodes into concepts, triage contradictions, correct or retire stale items, and keep labels consistent.
 
 **Curation is where your reasoning turns raw episodes into lasting knowledge.** Remind stores facts deterministically but relies on you to form patterns, identify relationships, and resolve conflicts.
 
@@ -23,16 +23,17 @@ At session boundaries or when cleaning up memory:
 ### 1. Read current state
 
 ```bash
-remind snapshot pending conflicts
+remind snapshot pending conflicts health
 ```
 
 This returns JSON with:
 - **pending.episodes**: Unprocessed episodes with their entities
 - **conflicts.conflicts**: Open conflicts with full fact details
+- **health**: Summary of issues needing attention (pending count, open conflicts, orphan concepts)
 
 ### 2. Find contradictions before forming concepts
 
-**This step is mandatory after bulk document ingestion.** For each major topic area in the pending episodes, run a recall query to surface what is already in the store:
+**This step is mandatory after bulk document ingestion.** For each major theme in the pending episodes, run a recall query to surface what is already in the store:
 
 ```bash
 remind recall "structural system framing" -k 8
@@ -211,7 +212,7 @@ Use when a concept covers multiple distinct things. Creates new concepts linked 
 remind update-episode <id> -c "Corrected information"    # Fix content
 remind update-episode <id> -t decision                   # Fix misclassified type
 remind update-concept <id> -s "Refined summary"
-remind update-episode <id> --topic architecture          # Move to another topic
+remind update-episode <id> -l topic=architecture         # Re-label
 ```
 
 When the user corrects a stored fact, prefer capturing the new assertion (with provenance) and using `supersede` to handle it — this preserves history.
@@ -227,17 +228,25 @@ remind restore-episode <id>
 
 Delete for noise and mistakes. For facts that changed over time, don't delete — supersession keeps history queryable via `--as-of`.
 
-## Topics
+## Labels
+
+Labels are freeform `key=value` tags, not a managed entity — there's nothing to create or delete, just apply or remove them on episodes/concepts:
 
 ```bash
-remind apply 'topic name="Architecture" description="System design decisions"'
+remind apply << 'EOF'
+label id=c-123 key=topic value=architecture
+unlabel id=c-123 key=topic value=infra
+EOF
 ```
 
 Or via CLI:
 ```bash
-remind topics create "Architecture" -d "System design decisions and patterns"
-remind topics update architecture -n "System Architecture" -d "Updated description"
+remind update-concept c-123 -l topic=architecture
+remind snapshot labels                    # See all distinct labels in use
+remind snapshot label:topic=architecture  # Everything under one label
 ```
+
+If the same `key=value` pairs recur across many episodes/concepts, that's a sign of a real grouping worth keeping consistent — reuse existing keys rather than inventing near-duplicates (`topic=infra` vs `area=infra`).
 
 ## Compact format reference
 
@@ -255,8 +264,8 @@ split id=<id> into=<new_id1>,<new_id2> "reason for split"
 resolve id=<conflict_id> winner=<fact_id> by=<who> "resolution note"
 dismiss id=<conflict_id> "dismissal note"
 processed ids=<ep_id1>,<ep_id2>
-topic name="Name" description="Description"
-set_topic id=<episode_or_concept_id> topic=<topic_id>
+label id=<episode_or_concept_id> key=<key> value=<value>
+unlabel id=<episode_or_concept_id> key=<key> value=<value>
 delete id=<id>
 restore id=<id>
 update id=<id> content="new content" (or title/summary for concepts)

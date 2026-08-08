@@ -21,8 +21,8 @@ async def main():
     memory.remember("Chose PostgreSQL over MySQL for persistence", episode_type=EpisodeType.DECISION)
     memory.remember("User prefers dark mode in the IDE", episode_type=EpisodeType.PREFERENCE)
 
-    # Topic-scoped episodes
-    memory.remember("Use event sourcing for audit trail", topic="architecture")
+    # Label-scoped episodes
+    memory.remember("Use event sourcing for audit trail", labels={"topic": "architecture"})
 
     # Fact episodes — clustered automatically, collisions detected
     result = memory.remember(
@@ -38,11 +38,14 @@ async def main():
     context = await memory.recall("What programming preferences?")
     print(context)
 
-    # Topic-scoped retrieval
-    context = await memory.recall("database design", topic="architecture")
+    # Label-scoped retrieval
+    context = await memory.recall("database design", labels={"topic": "architecture"})
 
     # Time-travel: facts valid at a past point in time
     context = await memory.recall("cache configuration", as_of="2024-06-01")
+
+    # Budget controls: cap output size, drop weak matches, bound latency
+    context = await memory.recall("auth", max_chars=2000, min_score=0.3, timeout_ms=500)
 
 asyncio.run(main())
 ```

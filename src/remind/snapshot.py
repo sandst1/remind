@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
-from remind.models import Concept, Episode, Fact, Conflict, Entity, Topic
+from remind.models import Concept, Episode, Fact, Conflict, Entity
 from remind.store import MemoryStore
 from remind.providers.base import EmbeddingProvider
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class SnapshotScope:
     """Parsed scope specification."""
     
-    scope_type: str  # pending, conflicts, entity, topic, concept, recent, stats, query
+    scope_type: str  # pending, conflicts, entity, label, concept, recent, stats, query
     value: Optional[str] = None  # For scopes with parameters
 
 
@@ -53,8 +53,8 @@ def _episode_to_dict(episode: Episode) -> dict:
         "entity_ids": episode.entity_ids or [],
         "processed": episode.consolidated,
     }
-    if episode.topic_id:
-        d["topic_id"] = episode.topic_id
+    if episode.labels:
+        d["labels"] = episode.labels
     if episode.asserted_by:
         d["asserted_by"] = episode.asserted_by
     if episode.source_ref:
@@ -77,8 +77,8 @@ def _concept_to_dict(concept: Concept) -> dict:
         "entity_ids": concept.entity_ids or [],
         "source_episodes": concept.source_episodes or [],
     }
-    if concept.topic_id:
-        d["topic_id"] = concept.topic_id
+    if concept.labels:
+        d["labels"] = concept.labels
     if concept.concept_type in ("fact_cluster", "fact"):
         d["specifics"] = concept.specifics
     return d
@@ -155,15 +155,6 @@ def _entity_to_dict(entity: Entity) -> dict:
     }
 
 
-def _topic_to_dict(topic: Topic) -> dict:
-    """Convert topic to dict for snapshot output."""
-    return {
-        "id": topic.id,
-        "name": topic.name,
-        "description": topic.description,
-    }
-
-
 class SnapshotEngine:
     """Engine for generating memory snapshots."""
     
@@ -183,11 +174,13 @@ class SnapshotEngine:
                 - "pending": Unprocessed episodes
                 - "conflicts": Open conflicts with fact details
                 - "entity:<id>": Episodes and concepts for entity
-                - "topic:<id>": Episodes and concepts for topic
+                - "labels": Distinct key/value labels in use, with counts
+                - "label:<key>=<value>": Episodes and concepts carrying this label
                 - "concept:<id>": Concept detail with facts and history
                 - "recent:<n>": N most recent episodes
                 - "stats": Memory statistics
                 - "query:<text>": Semantic search results
+                - "events:<since_seq>": Change-feed events with seq > since_seq
         
         Returns:
             Combined JSON document with all requested scopes
@@ -207,9 +200,13 @@ class SnapshotEngine:
             elif scope.scope_type == "entity":
                 key = f"entity:{scope.value}"
                 result[key] = self._scope_entity(scope.value)
-            elif scope.scope_type == "topic":
-                key = f"topic:{scope.value}"
-                result[key] = self._scope_topic(scope.value)
+            elif scope.scope_type == "labels":
+                result["labels"] = self._scope_labels()
+            elif scope.scope_type == "label":
+                label_key, label_value = (None, None)
+                if scope.value and "=" in scope.value:
+                    label_key, label_value = scope.value.split("=", 1)
+                result[f"label:{scope.value}"] = self._scope_label(label_key, label_value)
             elif scope.scope_type == "concept":
                 key = f"concept:{scope.value}"
                 result[key] = self._scope_concept(scope.value)
@@ -228,8 +225,6 @@ class SnapshotEngine:
                 result["episodes"] = self._scope_episodes(n)
             elif scope.scope_type == "entities":
                 result["entities"] = self._scope_entities(scope.value)
-            elif scope.scope_type == "topics":
-                result["topics"] = self._scope_topics()
             elif scope.scope_type == "decisions":
                 n = int(scope.value) if scope.value else 20
                 result["decisions"] = self._scope_by_type("decision", n)
@@ -238,6 +233,12 @@ class SnapshotEngine:
                 result["questions"] = self._scope_by_type("question", n)
             elif scope.scope_type == "health":
                 result["health"] = self._scope_health()
+            elif scope.scope_type == "events":
+                since_seq = int(scope.value) if scope.value else 0
+                result["events"] = self._scope_events(since_seq)
+            elif scope.scope_type == "bootstrap":
+                n = int(scope.value) if scope.value else 10
+                result["bootstrap"] = self._scope_bootstrap(n)
             else:
                 result[f"error:{scope.scope_type}"] = f"Unknown scope type: {scope.scope_type}"
         
@@ -297,19 +298,69 @@ class SnapshotEngine:
             "fact_clusters": [_concept_to_dict(c) for c in clusters],
         }
     
-    def _scope_topic(self, topic_id: str) -> dict[str, Any]:
-        """Get all data for a specific topic."""
-        topic = self.store.get_topic(topic_id)
-        if not topic:
-            return {"error": f"Topic not found: {topic_id}"}
-        
-        # Get episodes and concepts for this topic
-        all_episodes = self.store.get_all_episodes()
-        episodes = [ep for ep in all_episodes if ep.topic_id == topic_id]
-        concepts = self.store.get_concepts_by_topic(topic_id)
-        
+    def _scope_events(self, since_seq: int = 0) -> dict[str, Any]:
+        """Change-feed events with seq > since_seq, oldest first, capped at 200.
+
+        Lets consolidation daemons and sync layers poll incrementally
+        instead of re-scanning `pending` on every tick.
+        """
+        events = self.store.get_events(since_seq=since_seq, limit=200)
         return {
-            "topic": _topic_to_dict(topic),
+            "since_seq": since_seq,
+            "count": len(events),
+            "events": events,
+            "next_since_seq": events[-1]["seq"] if events else since_seq,
+        }
+
+    def _scope_bootstrap(self, n: int = 10) -> dict[str, Any]:
+        """Query-free, deterministic context read.
+
+        Returns the highest-confidence, most-corroborated concepts plus
+        open conflict count and stats. Unlike `query:<text>`, this needs no
+        embedding call and its output is stable across turns for the same
+        memory state, so an injection layer can place it in the system
+        prompt and keep the KV cache warm instead of re-running semantic
+        search on every turn.
+        """
+        concepts = [c for c in self.store.get_all_concepts() if c.actionable]
+        concepts.sort(key=lambda c: (c.confidence, c.instance_count), reverse=True)
+        top = concepts[:n] if n else concepts
+
+        concept_dicts = []
+        for c in top:
+            d = _concept_to_dict(c)
+            d["instance_count"] = c.instance_count
+            concept_dicts.append(d)
+
+        return {
+            "count": len(concept_dicts),
+            "concepts": concept_dicts,
+            "open_conflicts": self.store.count_conflicts(status="open"),
+            "stats": self._scope_stats(),
+        }
+
+    def _scope_labels(self) -> dict[str, Any]:
+        """List distinct key/value labels currently in use, with counts."""
+        labels = self.store.get_distinct_labels()
+        return {
+            "count": len(labels),
+            "labels": labels,
+        }
+
+    def _scope_label(self, key: Optional[str], value: Optional[str]) -> dict[str, Any]:
+        """Get all episodes and concepts carrying a specific key=value label."""
+        if not key or value is None:
+            return {"error": "label scope requires 'key=value' (e.g. label:topic=architecture)"}
+
+        episode_ids = self.store.find_subject_ids_by_labels("episode", {key: value})
+        concept_ids = self.store.find_subject_ids_by_labels("concept", {key: value})
+
+        episodes = [ep for ep in (self.store.get_episode(eid) for eid in episode_ids) if ep]
+        concepts = [c for c in (self.store.get_concept(cid) for cid in concept_ids) if c]
+
+        return {
+            "key": key,
+            "value": value,
             "episode_count": len(episodes),
             "concept_count": len(concepts),
             "episodes": [_episode_to_dict(ep) for ep in episodes],
@@ -451,33 +502,6 @@ class SnapshotEngine:
             "entities": entity_dicts,
         }
 
-    def _scope_topics(self) -> dict[str, Any]:
-        """List all topics with episode and concept counts."""
-        topics = self.store.get_all_topics()
-        
-        # Count episodes and concepts per topic
-        topic_episode_counts: dict[str, int] = {}
-        for ep in self.store.get_all_episodes():
-            if ep.topic_id:
-                topic_episode_counts[ep.topic_id] = topic_episode_counts.get(ep.topic_id, 0) + 1
-        
-        topic_concept_counts: dict[str, int] = {}
-        for concept in self.store.get_all_concepts():
-            if concept.topic_id:
-                topic_concept_counts[concept.topic_id] = topic_concept_counts.get(concept.topic_id, 0) + 1
-        
-        topic_dicts = []
-        for topic in topics:
-            d = _topic_to_dict(topic)
-            d["episode_count"] = topic_episode_counts.get(topic.id, 0)
-            d["concept_count"] = topic_concept_counts.get(topic.id, 0)
-            topic_dicts.append(d)
-        
-        return {
-            "count": len(topic_dicts),
-            "topics": topic_dicts,
-        }
-
     def _scope_by_type(self, episode_type: str, n: int) -> dict[str, Any]:
         """Filter episodes by type."""
         episodes = self.store.get_episodes_by_type(episode_type, limit=n)
@@ -497,11 +521,18 @@ class SnapshotEngine:
         stale_concepts = [c for c in all_concepts
                          if getattr(c, "decay_factor", 1.0) < 0.3]
         
-        # Topic distribution
-        topic_counts: dict[str, int] = {}
+        # Label key distribution — which grouping dimensions are in use,
+        # and how many episodes carry none at all.
+        label_key_counts: dict[str, int] = {}
+        unlabeled = 0
         for ep in self.store.get_all_episodes():
-            t = ep.topic_id or "(no topic)"
-            topic_counts[t] = topic_counts.get(t, 0) + 1
+            if not ep.labels:
+                unlabeled += 1
+                continue
+            for key in ep.labels:
+                label_key_counts[key] = label_key_counts.get(key, 0) + 1
+        if unlabeled:
+            label_key_counts["(unlabeled)"] = unlabeled
         
         issues = []
         if pending_count:
@@ -520,5 +551,5 @@ class SnapshotEngine:
             "open_conflicts": len(open_conflicts),
             "orphan_concepts": len(orphan_concepts),
             "stale_concepts": len(stale_concepts),
-            "topic_distribution": topic_counts,
+            "label_distribution": label_key_counts,
         }

@@ -5,7 +5,7 @@ import type {
   ConflictStatus,
   Episode,
   Entity,
-  Topic,
+  LabelInfo,
   GraphData,
   EntityGraphData,
   QueryResult,
@@ -77,7 +77,8 @@ export interface FetchConceptsOptions {
   offset?: number;
   limit?: number;
   search?: string;
-  topic?: string;
+  /** Label filter as "key:value" */
+  label?: string;
 }
 
 export interface ConceptsResponse {
@@ -90,7 +91,7 @@ export async function fetchConcepts(options: FetchConceptsOptions = {}): Promise
   if (options.offset !== undefined) params.offset = String(options.offset);
   if (options.limit !== undefined) params.limit = String(options.limit);
   if (options.search) params.search = options.search;
-  if (options.topic) params.topic = options.topic;
+  if (options.label) params.label = options.label;
   return fetchJson<ConceptsResponse>(apiUrl('/concepts', params));
 }
 
@@ -108,7 +109,8 @@ export interface FetchEpisodesOptions {
   start_date?: string;
   end_date?: string;
   search?: string;
-  topic?: string;
+  /** Label filter as "key:value" */
+  label?: string;
 }
 
 export interface EpisodesResponse {
@@ -125,7 +127,7 @@ export async function fetchEpisodes(options: FetchEpisodesOptions = {}): Promise
   if (options.start_date) params.start_date = options.start_date;
   if (options.end_date) params.end_date = options.end_date;
   if (options.search) params.search = options.search;
-  if (options.topic) params.topic = options.topic;
+  if (options.label) params.label = options.label;
   return fetchJson<EpisodesResponse>(apiUrl('/episodes', params));
 }
 
@@ -287,37 +289,17 @@ export async function dismissConflict(
   });
 }
 
-// Topics
+// Labels
 
-export interface TopicsResponse {
-  topics: Topic[];
+export interface LabelsResponse {
+  labels: LabelInfo[];
   total: number;
 }
 
-export async function fetchTopics(): Promise<TopicsResponse> {
-  return fetchJson<TopicsResponse>(apiUrl('/topics'));
-}
-
-export async function fetchTopic(id: string): Promise<Topic> {
-  return fetchJson<Topic>(apiUrl(`/topics/${id}`));
-}
-
-export async function createTopic(name: string, description: string = ''): Promise<Topic> {
-  return fetchJson<Topic>(apiUrl('/topics'), {
-    method: 'POST',
-    body: JSON.stringify({ name, description }),
-  });
-}
-
-export async function updateTopic(id: string, updates: { name?: string; description?: string }): Promise<Topic> {
-  return fetchJson<Topic>(apiUrl(`/topics/${id}`), {
-    method: 'PUT',
-    body: JSON.stringify(updates),
-  });
-}
-
-export async function deleteTopic(id: string): Promise<{ deleted: boolean }> {
-  return fetchJson<{ deleted: boolean }>(apiUrl(`/topics/${id}`), { method: 'DELETE' });
+export async function fetchLabels(subjectType?: string): Promise<LabelsResponse> {
+  const params: Record<string, string> = {};
+  if (subjectType) params.subject_type = subjectType;
+  return fetchJson<LabelsResponse>(apiUrl('/labels', params));
 }
 
 // Chat

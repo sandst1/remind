@@ -15,8 +15,8 @@ Query: "What authentication approach should we use?"
                "Auth module architecture" (0.82)
                "Password hashing with bcrypt" (0.75)
 
-2b. FUSE     → Embedding score is blended with keyword overlap
-               score = (1 - keyword_weight) × embedding + keyword_weight × keyword
+2b. FUSE     → Embedding ranking is fused with a lexical (full-text) search
+               ranking via weighted Reciprocal Rank Fusion
                (configurable via hybrid_keyword_weight, default 0.3)
 
 3. SPREAD    → Activated concepts propagate through relations
@@ -41,27 +41,42 @@ Consider how human memory works. You don't search for "that restaurant" by scann
 
 Spreading activation retrieves concepts you didn't directly query for but are meaningfully connected. Asking about "auth" might activate "rate limiting" (which is part of the auth system) even though "rate limiting" has no embedding similarity to "auth."
 
-## Hybrid keyword scoring
+## Lexical recall channel and RRF fusion
 
-By default, retrieval fuses embedding similarity with keyword overlap (controlled by `hybrid_keyword_weight`, default `0.3`). This helps surface concepts that contain exact query terms which embeddings alone might miss — for instance, specific tool names, config keys, or technical terms.
+Vector similarity alone can miss exact identifiers — specific tool names, config keys, error codes, or other technical terms that an embedding may not represent distinctly. To catch these, Remind runs a second, independent recall channel: a **lexical (full-text) search** over the same concepts and episodes, using whichever full-text backend the database supports:
 
-The formula is:
+| Backend | Mechanism |
+|---------|-----------|
+| SQLite | [FTS5](https://sqlite.org/fts5.html) virtual tables, kept in sync on every write |
+| PostgreSQL | Generated `tsvector` columns with a GIN index |
+| MySQL | `FULLTEXT` indexes |
+
+The backend is detected automatically at startup (`lexical_enabled`, default `true`); if none is available, retrieval silently falls back to pure vector search.
+
+Vector and lexical results are combined using **weighted Reciprocal Rank Fusion (RRF)** rather than blending raw scores — RRF only needs each channel's *ranking*, so cosine similarity and BM25-style lexical scores don't need to be on comparable scales:
 
 ```
-score = (1 - weight) × embedding_similarity + weight × keyword_overlap
+fused(id) = (1 - weight) / (rrf_k + vector_rank(id) + 1)
+          +      weight  / (rrf_k + lexical_rank(id) + 1)
 ```
 
-Where `keyword_overlap` is the fraction of query tokens (2+ chars) found in the concept's title and summary. Set `hybrid_keyword_weight` to `0.0` for pure embedding search or `1.0` for pure keyword matching.
+`weight` is `hybrid_keyword_weight` (default `0.3`) — the lexical arm's share of the fusion. `rrf_k` (default `60`) dampens the influence of rank position; higher values flatten the curve so lower-ranked results still contribute. The fused scores are then min-max normalized so the top match is `1.0`, keeping results comparable to the `[0, 1]` similarity range that `activation_threshold`/`min_activation` are calibrated against.
+
+If the lexical channel returns nothing (disabled, no backend, or no matching terms), fusion degrades to the raw vector similarity untouched — pure-embedding recall is unaffected.
+
+Set `hybrid_keyword_weight` to `0.0` to disable the lexical arm and use pure embedding search, or higher to weight exact-term matches more heavily.
 
 Configure via `~/.remind/remind.config.json`:
 
 ```json
 {
-  "hybrid_keyword_weight": 0.3
+  "hybrid_keyword_weight": 0.3,
+  "lexical_enabled": true,
+  "rrf_k": 60
 }
 ```
 
-Or environment variable: `REMIND_HYBRID_KEYWORD_WEIGHT=0.3`
+Or environment variables: `REMIND_HYBRID_KEYWORD_WEIGHT=0.3`, `REMIND_LEXICAL_ENABLED=true`, `REMIND_RRF_K=60`
 
 ## Reranking
 
@@ -168,11 +183,11 @@ Direct episode results appear first in the recall output under a **RELEVANT EPIS
 
 Use `--episode-k 0` (CLI) or `episode_k=0` (Python/MCP) to disable direct episode search and use only concept-level retrieval.
 
-## Topic-scoped retrieval
+## Label-scoped retrieval
 
-When a `topic` is provided to recall, initial concept matches are filtered to that topic (plus untopiced general concepts). Cross-topic concepts can still surface through spreading activation, but receive a 0.4x penalty — they need stronger relation evidence to appear in results.
+When `labels` are provided to recall, they're pushed down as a pre-filter into the vector search itself — not applied afterward to the top-k. Only episodes/concepts carrying a matching `key=value` label are eligible to be returned. See [Labels](/concepts/labels) for how the pre-filter is implemented per backend.
 
-This reduces noise when querying a specific knowledge area while still allowing relevant cross-domain insights to surface.
+This reduces noise when querying a specific knowledge area, at the cost of excluding unlabeled or differently-labeled results entirely — unlike the old topic filter, there's no cross-label leakage with a penalty.
 
 ## Fact clusters in recall output
 
@@ -217,6 +232,38 @@ The retrieval algorithm has a few key parameters:
 - **Spread decay** — How much activation reduces per hop (default: 0.5 per hop)
 - **Spread depth** — Number of hops to propagate (default: 2)
 
+## Recall budget controls
+
+`recall()` also accepts three cost/size guardrails, each with a config default (`recall_max_chars`, `recall_min_score`, `recall_timeout_ms`) so they can be set once and left alone:
+
+- **max_chars** — Caps the formatted output length. When the rendered text would exceed this, the lowest-ranked concepts and episodes are dropped *whole* — never truncated mid-item — until it fits. Useful for bounding how much context a single recall call injects into a prompt.
+- **min_score** — Floor below which concepts/episodes are dropped even if the `k`/`episode_k` budget has room left. Distinct from `min_activation` in that it also applies to direct episode results, not just concepts.
+- **timeout_ms** — Soft deadline for the whole retrieval. If exceeded, remaining phases (spreading activation, reranking) are skipped and results are built from whatever was already gathered — recall returns best-so-far instead of raising.
+
+None of the three are enabled by default (`None`), preserving existing behavior until explicitly configured.
+
+## Query-free bootstrap read
+
+`recall()` and `snapshot(scopes="query:<text>")` both need an embedding call and return different results depending on the query. Sometimes you want the opposite: a stable, deterministic slice of "what does this memory currently know" that doesn't change between calls unless the underlying data changes — cheap enough to run at the start of every session, or to place in a system prompt via an injection layer without busting the KV cache on every turn.
+
+`snapshot(scopes="bootstrap[:<n>]")` (default `n=10`) returns exactly that: the top-n **actionable** concepts ranked by `(confidence, instance_count)` descending, plus the open conflict count and memory stats — no embedding call involved.
+
+```bash
+remind snapshot bootstrap        # Top 10 concepts + conflicts + stats
+remind snapshot bootstrap:5      # Top 5
+```
+
+```json
+{
+  "bootstrap": {
+    "count": 5,
+    "concepts": [ /* top concepts, most confident + corroborated first */ ],
+    "open_conflicts": 2,
+    "stats": { "total_episodes": 143, "total_concepts": 37, "..." : "..." }
+  }
+}
+```
+
 ## Decay factor
 
 Each concept has a `decay_factor` (0.0–1.0) that multiplies its activation score during retrieval. This implements [memory decay](/concepts/memory-decay) — concepts that haven't been recalled recently rank lower. Frequently-recalled concepts maintain high decay factors.
@@ -232,8 +279,10 @@ remind recall --entity module:auth           # Entity-only (no query needed)
 remind recall "performance" -k 10            # More results
 remind recall "auth" --episode-k 10          # More direct episode matches
 remind recall "auth" --episode-k 0           # Concepts only, no episodes
-remind recall "database design" --topic architecture  # Topic-scoped
+remind recall "database design" -l topic=architecture # Label-scoped
 remind recall --as-of 2026-01-15 "cache config"       # Time-travel
+remind recall "auth" --max-chars 2000                 # Cap output size
+remind recall "auth" --min-score 0.3 --timeout-ms 500 # Budget controls
 ```
 
 ```python [Python]
@@ -242,8 +291,10 @@ context = await memory.recall("auth", entity="module:auth")
 context = await memory.recall(entity="module:auth")       # Entity-only
 context = await memory.recall("auth", episode_k=10)       # More episode matches
 context = await memory.recall("auth", episode_k=0)        # Concepts only
-context = await memory.recall("database design", topic="architecture")  # Topic-scoped
+context = await memory.recall("database design", labels={"topic": "architecture"})  # Label-scoped
 context = await memory.recall("cache config", as_of="2026-01-15")  # Time-travel
+context = await memory.recall("auth", max_chars=2000)     # Cap output size
+context = await memory.recall("auth", min_score=0.3, timeout_ms=500)  # Budget controls
 ```
 
 ```text [MCP]
@@ -252,7 +303,9 @@ recall(query="auth", entity="module:auth")
 recall(entity="module:auth")
 recall(query="auth", episode_k=10)
 recall(query="auth", episode_k=0)
-recall(query="database design", topic="architecture")
+recall(query="auth", max_chars=2000)
+recall(query="auth", min_score=0.3, timeout_ms=500)
+recall(query="database design", labels="topic=architecture")
 recall(query="cache config", as_of="2026-01-15")
 ```
 

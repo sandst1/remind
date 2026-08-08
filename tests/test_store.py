@@ -557,3 +557,60 @@ class TestSQLiteMemoryStore:
         rels = store.get_entity_relations("other:act")
         assert any(r.target_id == "subject:law" for r in rels)
 
+
+class TestChangeFeed:
+    """Tests for the append-only events table."""
+
+    @pytest.fixture
+    def store(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        store = SQLiteMemoryStore(path)
+        yield store
+        os.unlink(path)
+
+    def test_emit_and_get_events(self, store):
+        store.emit_event("remembered", "episode", "ep1")
+        store.emit_event("remembered", "episode", "ep2", payload={"content": "hello"})
+
+        events = store.get_events()
+        assert len(events) == 2
+        assert events[0]["kind"] == "remembered"
+        assert events[0]["subject_id"] == "ep1"
+        assert events[0]["seq"] < events[1]["seq"]
+        assert events[1]["payload"] == {"content": "hello"}
+
+    def test_get_events_since_seq(self, store):
+        store.emit_event("remembered", "episode", "ep1")
+        store.emit_event("remembered", "episode", "ep2")
+        first_seq = store.get_events()[0]["seq"]
+
+        events = store.get_events(since_seq=first_seq)
+        assert len(events) == 1
+        assert events[0]["subject_id"] == "ep2"
+
+    def test_get_events_filters_by_kind(self, store):
+        store.emit_event("remembered", "episode", "ep1")
+        store.emit_event("deleted", "episode", "ep1")
+
+        events = store.get_events(kind="deleted")
+        assert len(events) == 1
+        assert events[0]["kind"] == "deleted"
+
+    def test_get_events_respects_limit(self, store):
+        for i in range(5):
+            store.emit_event("remembered", "episode", f"ep{i}")
+
+        events = store.get_events(limit=2)
+        assert len(events) == 2
+
+    def test_events_commit_atomically_with_transaction(self, store):
+        episode = Episode(content="Transactional")
+        with store.transaction():
+            store.add_episode(episode)
+            store.emit_event("remembered", "episode", episode.id)
+
+        events = store.get_events()
+        assert len(events) == 1
+        assert events[0]["subject_id"] == episode.id
+

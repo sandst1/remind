@@ -46,6 +46,12 @@ Create `~/.remind/remind.config.json`:
   },
 
   "hybrid_keyword_weight": 0.3,
+  "lexical_enabled": true,
+  "rrf_k": 60,
+
+  "recall_max_chars": null,
+  "recall_min_score": null,
+  "recall_timeout_ms": null,
 
   "fact_cluster_jaccard_threshold": 0.5,
 
@@ -106,7 +112,7 @@ If your project-local config contains API keys or other secrets, make sure `.rem
 
 ### CLI output mode
 
-`cli_output_mode` sets the default for browse/list commands (`status`, `topics`, etc.): `table` (human-readable, default), `json` (full structured stdout), or `compact-json` (minimal objects).
+`cli_output_mode` sets the default for browse/list commands (`status`, `entities`, etc.): `table` (human-readable, default), `json` (full structured stdout), or `compact-json` (minimal objects).
 
 - Per command: `--json`, `--compact-json`, or `--table`
 - Environment: `REMIND_CLI_OUTPUT_MODE=table`, `json`, or `compact-json`
@@ -123,7 +129,12 @@ Every config-file setting has a corresponding environment variable. Environment 
 |---|---|---|---|
 | `EMBEDDING_PROVIDER` | `embedding_provider` | string | `local` |
 | `REMIND_HYBRID_KEYWORD_WEIGHT` | `hybrid_keyword_weight` | float | `0.3` |
+| `REMIND_LEXICAL_ENABLED` | `lexical_enabled` | bool | `true` |
+| `REMIND_RRF_K` | `rrf_k` | int | `60` |
 | `REMIND_RECALL_INITIAL_CANDIDATES` | `recall_initial_candidates` | int | `10` |
+| `REMIND_RECALL_MAX_CHARS` | `recall_max_chars` | int | `null` |
+| `REMIND_RECALL_MIN_SCORE` | `recall_min_score` | float | `null` |
+| `REMIND_RECALL_TIMEOUT_MS` | `recall_timeout_ms` | int | `null` |
 | `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
 | `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `REMIND_FACT_CLUSTER_JACCARD_THRESHOLD` | `fact_cluster_jaccard_threshold` | float | `0.5` |
@@ -295,10 +306,22 @@ Lower values create larger clusters (more facts grouped together). Higher values
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `hybrid_keyword_weight` | `0.3` | Blend between embedding similarity and keyword overlap. `0.0` = pure embedding, `1.0` = pure keyword. |
+| `hybrid_keyword_weight` | `0.3` | Weight of the lexical (full-text) arm in RRF fusion against the vector arm. `0.0` = pure embedding, `1.0` = pure lexical. |
+| `lexical_enabled` | `true` | Whether to query the lexical (FTS5/tsvector/FULLTEXT) backend at all. No-op if the database has no supported backend. |
+| `rrf_k` | `60` | Reciprocal Rank Fusion rank-damping constant. Higher values flatten the curve so lower-ranked results still contribute. |
 | `recall_initial_candidates` | `10` | How many initial embedding candidates to fetch before spreading activation and reranking. |
 
-The default `0.3` keyword weight means 70% embedding similarity + 30% keyword overlap. See [Retrieval](/concepts/retrieval) for details.
+The default `0.3` keyword weight means the vector and lexical rankings are fused with 70%/30% weight. See [Retrieval](/concepts/retrieval) for details.
+
+## Recall budget controls
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `recall_max_chars` | `null` | Cap the formatted output length; drops lowest-ranked concepts/episodes whole (never mid-item) until it fits. |
+| `recall_min_score` | `null` | Drop concepts/episodes below this activation score even if k/episode_k budget remains. |
+| `recall_timeout_ms` | `null` | Soft deadline for a recall call; returns best-so-far instead of raising if exceeded. |
+
+All three are disabled by default and can be overridden per-call (`recall(max_chars=..., min_score=..., timeout_ms=...)`, or `--max-chars`/`--min-score`/`--timeout-ms` on the CLI).
 
 ## Reranking
 

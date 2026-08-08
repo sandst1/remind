@@ -97,12 +97,51 @@ async def get_memory() -> MemoryInterface:
 # MCP Tool Implementations
 # ============================================================================
 
+def _parse_labels_str(labels: Optional[str]) -> Optional[dict[str, list[str]]]:
+    """Parse a comma-separated 'key=value,key2=value2' string into a labels dict."""
+    if not labels:
+        return None
+    result: dict[str, list[str]] = {}
+    for item in labels.split(","):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        key, _, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not key or not value:
+            continue
+        values = result.setdefault(key, [])
+        if value not in values:
+            values.append(value)
+    return result or None
+
+
+def _parse_label_filter_str(labels: Optional[str]) -> Optional[dict[str, str]]:
+    """Parse a comma-separated 'key=value,key2=value2' string into a single-value filter dict."""
+    if not labels:
+        return None
+    result: dict[str, str] = {}
+    for item in labels.split(","):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        key, _, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if key and value:
+            result[key] = value
+    return result or None
+
+
+def _format_labels_dict(labels: dict) -> str:
+    return ", ".join(f"{k}={v}" for k, values in labels.items() for v in values)
+
+
 async def tool_remember(
     content: str, 
     metadata: Optional[str] = None,
     episode_type: Optional[str] = None,
     entities: Optional[str] = None,
-    topic: Optional[str] = None,
+    labels: Optional[str] = None,
     source_type: Optional[str] = None,
     asserted_by: Optional[str] = None,
     source_ref: Optional[str] = None,
@@ -123,13 +162,15 @@ async def tool_remember(
     entity_list = None
     if entities:
         entity_list = [e.strip() for e in entities.split(",") if e.strip()]
+
+    label_dict = _parse_labels_str(labels)
     
     result = await memory.remember(
         content, 
         metadata=meta,
         episode_type=ep_type,
         entities=entity_list,
-        topic=topic,
+        labels=label_dict,
         source_type=source_type,
         asserted_by=asserted_by,
         source_ref=source_ref,
@@ -141,8 +182,8 @@ async def tool_remember(
         lines.append(f"  Type: {ep_type}")
     if entity_list:
         lines.append(f"  Entities: {', '.join(entity_list)}")
-    if topic:
-        lines.append(f"  Topic: {topic}")
+    if label_dict:
+        lines.append(f"  Labels: {_format_labels_dict(label_dict)}")
     if source_type:
         lines.append(f"  Source: {source_type}")
     if asserted_by:
@@ -210,14 +251,18 @@ async def tool_recall(
     context: Optional[str] = None,
     entity: Optional[str] = None,
     episode_k: Optional[int] = None,
-    topic: Optional[str] = None,
+    labels: Optional[str] = None,
     as_of: Optional[str] = None,
+    max_chars: Optional[int] = None,
+    min_score: Optional[float] = None,
+    timeout_ms: Optional[int] = None,
 ) -> str:
     """Retrieve relevant memories for a query."""
     memory = await get_memory()
     return await memory.recall(
         query=query, k=k, context=context, entity=entity,
-        episode_k=episode_k, topic=topic, as_of=as_of,
+        episode_k=episode_k, labels=_parse_label_filter_str(labels), as_of=as_of,
+        max_chars=max_chars, min_score=min_score, timeout_ms=timeout_ms,
     )
 
 
@@ -261,24 +306,17 @@ async def tool_snapshot(scopes: str) -> str:
     return json.dumps(result, indent=2, default=str)
 
 
-async def tool_list_topics() -> str:
-    """List all topics with episode/concept counts and latest activity."""
+async def tool_events(since_seq: int = 0, limit: int = 200, kind: Optional[str] = None) -> str:
+    """Read the append-only change feed."""
     memory = await get_memory()
-    topics = memory.list_topics()
-
-    if not topics:
-        return "No topics found. Use 'create_topic' to add one, or pass 'topic' when remembering."
-
-    lines = ["TOPICS:\n"]
-    for t in topics:
-        desc = f" — {t['description']}" if t.get("description") else ""
-        lines.append(
-            f"  [{t['id']}] {t['name']}{desc}: "
-            f"{t['episode_count']} episodes, "
-            f"{t['concept_count']} concepts, "
-            f"latest: {t.get('latest_activity', '')}"
-        )
-    return "\n".join(lines)
+    matched_events = memory.store.get_events(since_seq=since_seq, limit=limit, kind=kind)
+    result = {
+        "since_seq": since_seq,
+        "count": len(matched_events),
+        "events": matched_events,
+        "next_since_seq": matched_events[-1]["seq"] if matched_events else since_seq,
+    }
+    return json.dumps(result, indent=2, default=str)
 
 
 def _format_conflict_lines(memory, conflicts) -> list[str]:
@@ -350,63 +388,6 @@ async def tool_dismiss_conflict(
     except ValueError as e:
         return f"Error: {e}"
     return f"Conflict {conflict.id} dismissed. Both facts remain active."
-
-
-async def tool_create_topic(name: str, description: str = "") -> str:
-    """Create a new topic."""
-    memory = await get_memory()
-    try:
-        topic = memory.create_topic(name, description=description)
-        return f"Created topic '{topic.id}' ({topic.name})"
-    except ValueError as e:
-        return f"Error: {e}"
-
-
-async def tool_update_topic(topic_id: str, name: str = None, description: str = None) -> str:
-    """Update an existing topic's name or description."""
-    memory = await get_memory()
-    updated = memory.update_topic(topic_id, name=name, description=description)
-    if not updated:
-        return f"Topic '{topic_id}' not found."
-    return f"Updated topic '{updated.id}' ({updated.name})"
-
-
-async def tool_delete_topic(topic_id: str) -> str:
-    """Delete a topic (only if no episodes/concepts reference it)."""
-    memory = await get_memory()
-    try:
-        if memory.delete_topic(topic_id):
-            return f"Deleted topic '{topic_id}'."
-        return f"Topic '{topic_id}' not found."
-    except ValueError as e:
-        return f"Error: {e}"
-
-
-async def tool_topic_overview(topic_id: str, k: int = 5) -> str:
-    """Get top concepts for a topic without needing a query."""
-    memory = await get_memory()
-    topic = memory.get_topic(topic_id)
-    concepts = memory.get_topic_overview(topic_id, k=k)
-
-    if not concepts:
-        return f"No concepts found for topic '{topic_id}'."
-
-    label = topic.name if topic else topic_id
-    lines = [f"TOPIC OVERVIEW: {label}\n"]
-    if topic and topic.description:
-        lines.append(f"  {topic.description}\n")
-    for c in concepts:
-        updated = c.updated_at.strftime("%Y-%m-%d %H:%M")
-        title = f"{c.title} " if c.title else ""
-        lines.append(
-            f"  [{c.id}] {title}(confidence: {c.confidence:.2f}, "
-            f"instances: {c.instance_count}, updated: {updated})"
-        )
-        lines.append(f"    {c.summary}")
-        if c.conditions:
-            lines.append(f"    → Applies when: {c.conditions}")
-        lines.append("")
-    return "\n".join(lines)
 
 
 async def tool_inspect(
@@ -715,7 +696,7 @@ async def tool_update_episode(
     spec_ids: Optional[str] = None,
     depends_on: Optional[str] = None,
     priority: Optional[str] = None,
-    topic: Optional[str] = None,
+    labels: Optional[str] = None,
 ) -> str:
     """Update an existing episode."""
     from remind.models import EpisodeType
@@ -740,9 +721,9 @@ async def tool_update_episode(
     if priority:
         meta["priority"] = priority
 
-    topic_kw: Optional[str] = None
-    if topic is not None:
-        topic_kw = "" if topic.strip() == "" else topic.strip()
+    label_dict: Optional[dict[str, list[str]]] = None
+    if labels is not None:
+        label_dict = _parse_labels_str(labels) or {}
 
     updated = memory.update_episode(
         episode_id,
@@ -750,7 +731,7 @@ async def tool_update_episode(
         episode_type=ep_type,
         entities=entity_list,
         metadata=meta if meta else None,
-        topic=topic_kw,
+        labels=label_dict,
     )
 
     if updated:
@@ -770,13 +751,11 @@ async def tool_update_episode(
             lines.append(f"  Depends on: {depends_on}")
         if priority:
             lines.append(f"  Priority: {priority}")
-        if topic is not None:
-            if topic_kw == "":
-                lines.append("  Topic: cleared")
-            elif updated.topic_id:
-                names = memory._get_topic_names()
-                tlabel = names.get(updated.topic_id, updated.topic_id)
-                lines.append(f"  Topic: {tlabel} ({updated.topic_id})")
+        if labels is not None:
+            if not label_dict:
+                lines.append("  Labels: cleared")
+            else:
+                lines.append(f"  Labels: {_format_labels_dict(label_dict)}")
         if content:
             lines.append("  Note: Episode will be re-consolidated")
         return "\n".join(lines)
@@ -811,7 +790,7 @@ async def tool_update_concept(
     confidence: Optional[float] = None,
     tags: Optional[str] = None,
     relations: Optional[str] = None,
-    topic: Optional[str] = None,
+    labels: Optional[str] = None,
 ) -> str:
     """Update an existing concept."""
     memory = await get_memory()
@@ -829,9 +808,9 @@ async def tool_update_concept(
         except _json.JSONDecodeError:
             return f"Invalid relations JSON: {relations}"
 
-    topic_kw: Optional[str] = None
-    if topic is not None:
-        topic_kw = "" if topic.strip() == "" else topic.strip()
+    label_dict: Optional[dict[str, list[str]]] = None
+    if labels is not None:
+        label_dict = _parse_labels_str(labels) or {}
 
     updated = memory.update_concept(
         concept_id,
@@ -840,7 +819,7 @@ async def tool_update_concept(
         confidence=confidence,
         tags=tag_list,
         relations=relations_list,
-        topic=topic_kw,
+        labels=label_dict,
     )
 
     if updated:
@@ -856,13 +835,11 @@ async def tool_update_concept(
             lines.append(f"  Tags: {', '.join(tag_list)}")
         if relations_list is not None:
             lines.append(f"  Relations: {len(relations_list)} set")
-        if topic is not None:
-            if topic_kw == "":
-                lines.append("  Topic: cleared")
-            elif updated.topic_id:
-                names = memory._get_topic_names()
-                tlabel = names.get(updated.topic_id, updated.topic_id)
-                lines.append(f"  Topic: {tlabel} ({updated.topic_id})")
+        if labels is not None:
+            if not label_dict:
+                lines.append("  Labels: cleared")
+            else:
+                lines.append(f"  Labels: {_format_labels_dict(label_dict)}")
         if summary:
             lines.append("  Note: Embedding cleared, will regenerate on next recall")
         return "\n".join(lines)
@@ -955,7 +932,7 @@ def create_mcp_server(config=None):
         metadata: Optional[str] = None,
         episode_type: Optional[str] = None,
         entities: Optional[str] = None,
-        topic: Optional[str] = None,
+        labels: Optional[str] = None,
         source_type: Optional[str] = None,
         asserted_by: Optional[str] = None,
         source_ref: Optional[str] = None,
@@ -986,8 +963,9 @@ def create_mcp_server(config=None):
             entities: Optional comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
                       (auto-detected during consolidation if not provided). Entity links power
                       targeted recall later — tag the concrete things the memory is about.
-            topic: Primary knowledge area this memory belongs to (e.g., "architecture", "product", "infra").
-                   Used to group related memories and scope retrieval.
+            labels: Optional freeform key=value labels, comma-separated (e.g.
+                    "topic=architecture" or "topic=architecture,team=infra"). Used to
+                    scope retrieval later via recall(labels=...) or snapshot(label:<k>=<v>).
             source_type: Origin of this memory (e.g., "agent", "slack", "github", "manual").
             asserted_by: Who asserted this information (e.g., "alice", "agent:cursor").
                          Set it whenever the information came from someone specific —
@@ -999,7 +977,7 @@ def create_mcp_server(config=None):
             Confirmation with episode ID
         """
         return await tool_remember(
-            content, metadata, episode_type, entities, topic, source_type,
+            content, metadata, episode_type, entities, labels, source_type,
             asserted_by=asserted_by, source_ref=source_ref,
         )
     
@@ -1010,8 +988,11 @@ def create_mcp_server(config=None):
         context: Optional[str] = None,
         entity: Optional[str] = None,
         episode_k: Optional[int] = None,
-        topic: Optional[str] = None,
+        labels: Optional[str] = None,
         as_of: Optional[str] = None,
+        max_chars: Optional[int] = None,
+        min_score: Optional[float] = None,
+        timeout_ms: Optional[int] = None,
     ) -> str:
         """Retrieve relevant memories for a query.
 
@@ -1037,16 +1018,28 @@ def create_mcp_server(config=None):
             context: Optional additional context to improve retrieval
             entity: Optional entity ID to retrieve by (e.g., "file:src/auth.ts")
             episode_k: Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable.
-            topic: Restrict recall to this topic. Cross-topic results are penalized
-                   but not excluded. Use list_topics to see available topics.
+            labels: Optional key=value label filter, comma-separated (e.g. "topic=architecture").
+                    Pre-filters candidates to concepts/episodes matching ALL given labels
+                    before vector search runs; spreading activation still follows the
+                    graph beyond the filtered set. Use snapshot("labels") to see what's in use.
             as_of: ISO date/datetime (e.g. "2026-01-15"). Fact clusters show the
                    facts that were valid at that point in time instead of the
                    current ones. Useful for "what did we believe then" questions.
+            max_chars: Cap the formatted output length. When exceeded, the
+                    lowest-ranked concepts/episodes are dropped whole (never
+                    truncated mid-item) until the result fits.
+            min_score: Drop concepts/episodes below this activation score even
+                    if the k/episode_k budget has room left.
+            timeout_ms: Soft deadline for the retrieval. If exceeded, returns
+                    the best results gathered so far instead of raising.
         
         Returns:
             Formatted memory context for injection into prompts
         """
-        return await tool_recall(query, k, context, entity, episode_k=episode_k, topic=topic, as_of=as_of)
+        return await tool_recall(
+            query, k, context, entity, episode_k=episode_k, labels=labels, as_of=as_of,
+            max_chars=max_chars, min_score=min_score, timeout_ms=timeout_ms,
+        )
     
     @mcp.tool()
     async def apply(
@@ -1074,8 +1067,8 @@ def create_mcp_server(config=None):
             concept: Create concept from episodes (as=ref, from=ep_ids, title, content=summary)
             update: Update episode/concept fields (id, content/title/summary)
             link: Add concept relation (from=concept_id, to=concept_id, type=relation_type)
-            topic: Create topic (name, description)
-            set_topic: Assign topic to episode/concept (id, topic=topic_id)
+            label: Add a key=value label to episode/concept (id, key, value)
+            unlabel: Remove a key=value label from episode/concept (id, key, value)
             delete: Soft-delete episode/concept (id)
             restore: Restore soft-deleted item (id)
             processed: Mark episodes as reviewed (ids=ep1,ep2,...)
@@ -1102,11 +1095,14 @@ def create_mcp_server(config=None):
             pending      - Unprocessed episodes with their entities
             conflicts    - Open conflicts with full fact details
             entity:<id>  - Episodes and concepts for an entity
-            topic:<id>   - Episodes and concepts for a topic
+            labels       - All distinct key/value labels in use, with counts
+            label:<k>=<v> - Episodes and concepts carrying this label
             concept:<id> - Concept detail with facts and supersession history
             recent:<n>   - N most recent episodes (default: 10)
             stats        - Memory statistics
             query:<text> - Semantic search results
+            events:<seq> - Change-feed events with seq > <seq> (default: 0). Prefer the events tool.
+            bootstrap:<n> - Query-free stable context: top-n concepts by confidence, open conflicts, stats (default: 10)
         
         Examples:
             "pending conflicts" - Get pending episodes and open conflicts
@@ -1122,72 +1118,25 @@ def create_mcp_server(config=None):
         return await tool_snapshot(scopes)
     
     @mcp.tool()
-    async def list_topics() -> str:
-        """List all topics in memory with episode/concept counts.
+    async def events(since_seq: int = 0, limit: int = 200, kind: Optional[str] = None) -> str:
+        """Read the append-only change feed of writes.
 
-        Topics are managed knowledge areas that group related memories. Use this
-        to understand the structure of stored knowledge before recalling.
-
-        Returns:
-            List of topics with id, name, description, episode count, concept count, latest activity
-        """
-        return await tool_list_topics()
-
-    @mcp.tool()
-    async def create_topic(name: str, description: str = "") -> str:
-        """Create a new topic for grouping memories.
+        Every write (remember, supersede, conflict, resolve, dismiss,
+        concept, update, label, unlabel, delete, restore, processed)
+        appends an event atomically with the write it describes. Poll
+        with since_seq to pick up where you left off, instead of
+        re-scanning the pending snapshot scope on every tick.
 
         Args:
-            name: Display name for the topic (e.g., "Architecture", "Product Design")
-            description: What this topic covers
+            since_seq: Only return events with seq greater than this (default: 0)
+            limit: Maximum number of events to return (default: 200)
+            kind: Optionally filter to a single event kind (e.g. "remembered", "conflict_opened")
 
         Returns:
-            Confirmation with topic ID
+            JSON with the matched events and a next_since_seq cursor to pass on the next poll
         """
-        return await tool_create_topic(name, description)
-
-    @mcp.tool()
-    async def update_topic(topic_id: str, name: str = None, description: str = None) -> str:
-        """Update an existing topic's name or description.
-
-        Args:
-            topic_id: ID of the topic to update
-            name: New display name (or null to keep existing)
-            description: New description (or null to keep existing)
-
-        Returns:
-            Confirmation or error
-        """
-        return await tool_update_topic(topic_id, name, description)
-
-    @mcp.tool()
-    async def delete_topic(topic_id: str) -> str:
-        """Delete a topic (only works if no episodes/concepts reference it).
-
-        Args:
-            topic_id: ID of the topic to delete
-
-        Returns:
-            Confirmation or error
-        """
-        return await tool_delete_topic(topic_id)
-
-    @mcp.tool()
-    async def topic_overview(topic_id: str, k: int = 5) -> str:
-        """Get an overview of a topic's top concepts without a specific query.
-
-        Use this to browse/explore what is known about a topic before drilling
-        down with a targeted recall query.
-
-        Args:
-            topic_id: The topic ID to explore
-            k: Number of top concepts to return (default: 5)
-
-        Returns:
-            Top concepts for the topic, ordered by confidence and evidence
-        """
-        return await tool_topic_overview(topic_id, k)
-
+        return await tool_events(since_seq, limit, kind)
+    
     @mcp.tool()
     async def list_conflicts(status: str = "open", kind: Optional[str] = None) -> str:
         """List detected memory conflicts (contradictions) awaiting triage.
@@ -1368,7 +1317,7 @@ def create_mcp_server(config=None):
         spec_ids: Optional[str] = None,
         depends_on: Optional[str] = None,
         priority: Optional[str] = None,
-        topic: Optional[str] = None,
+        labels: Optional[str] = None,
     ) -> str:
         """Update an existing episode in memory.
 
@@ -1387,13 +1336,14 @@ def create_mcp_server(config=None):
             spec_ids: Comma-separated spec episode IDs to link this task to
             depends_on: Comma-separated task IDs this task depends on
             priority: Priority level: p0, p1, or p2
-            topic: Topic ID or name to assign; empty string clears the episode topic
+            labels: Comma-separated key=value labels to set (replaces all existing labels);
+                    empty string clears them (e.g. "topic=architecture,team=infra")
 
         Returns:
             Confirmation or error message
         """
         return await tool_update_episode(episode_id, content, episode_type, entities,
-                                         plan_id, spec_ids, depends_on, priority, topic)
+                                         plan_id, spec_ids, depends_on, priority, labels)
 
     @mcp.tool()
     async def delete_episode(episode_id: str) -> str:
@@ -1434,7 +1384,7 @@ def create_mcp_server(config=None):
         confidence: Optional[float] = None,
         tags: Optional[str] = None,
         relations: Optional[str] = None,
-        topic: Optional[str] = None,
+        labels: Optional[str] = None,
     ) -> str:
         """Update an existing concept.
 
@@ -1450,12 +1400,13 @@ def create_mcp_server(config=None):
             confidence: New confidence score (0.0-1.0)
             tags: New comma-separated tags
             relations: JSON array of relations, e.g. [{"type":"implies","target_id":"abc","strength":0.7}]
-            topic: Topic ID or name to assign; empty string clears the concept topic
+            labels: Comma-separated key=value labels to set (replaces all existing labels);
+                    empty string clears them (e.g. "topic=architecture,team=infra")
 
         Returns:
             Confirmation or error message
         """
-        return await tool_update_concept(concept_id, title, summary, confidence, tags, relations, topic)
+        return await tool_update_concept(concept_id, title, summary, confidence, tags, relations, labels)
 
     @mcp.tool()
     async def delete_concept(concept_id: str) -> str:

@@ -19,15 +19,15 @@ remind snapshot stats pending
 ## recall
 
 ```bash
-remind recall "authentication issues"                  # Semantic search (grouped by topic)
+remind recall "authentication issues"                  # Semantic search
 remind recall "auth" --entity file:src/auth.ts         # Everything about a specific entity
-remind recall "database design" --topic architecture   # Topic-scoped
+remind recall "database design" -l topic=architecture  # Label-scoped
 remind recall "caching" -k 10                          # More results
 remind recall --as-of 2026-01-15 "cache configuration" # What we believed then
 ```
 
 - `--entity type:name` retrieves all memories linked to a file/person/tool — use it when working on a specific file or asking about a specific person.
-- `--topic` restricts to a knowledge area (cross-topic results are penalized, not excluded). Without it, results are grouped by topic.
+- `-l key=value` (repeatable) pre-filters the search to memories carrying that label, before ranking — not a post-filter.
 - `--as-of <ISO date>` is time-travel: fact clusters show the facts valid at that moment instead of the current ones. Use for "what did we believe / what was the config back then" questions.
 - `-k` / `--episode-k` control how many concepts / direct episode matches return.
 
@@ -49,17 +49,56 @@ remind recall --as-of 2026-01-15 "cache configuration" # What we believed then
 
 Trust currently-valid facts over your assumptions; they carry provenance and supersession history.
 
+## Understanding recall output
+
+### RELEVANT EPISODES (similarity score 0.0-1.0)
+- Higher score = closer embedding match to your query
+- Episodes are raw captures — may contain noise or duplicates
+- **Use for**: recent context, exact quotes, provenance checking
+- Score >0.9: very close match; >0.8: related; <0.7: tangential
+
+### RELEVANT MEMORY (activation score 0.0-1.0)
+- Higher score = more relevant via spreading activation through the concept graph
+- Concepts are curated knowledge — higher signal than raw episodes
+- **Use for**: established patterns, decisions, generalizations
+
+### Concept type badges
+- `[facts]` — Fact cluster with temporal validity; check valid_from/valid_to
+- `[pattern]` — Generalized observation from multiple episodes
+- `[rule]` — If-then relationship with conditions
+- `[hypothesis]` — Uncertain belief, testable
+- Any other badge — Custom concept type
+
+### When you see OPEN CONFLICTS
+Memory contains contradicting claims about the retrieved subject. **Do not silently pick one.**
+1. Surface the conflict to the user, OR
+2. Run the curation workflow to resolve it:
+   - `remind snapshot conflicts` to see details
+   - `remind apply 'resolve id=<conflict_id> winner=<fact_id> note="reason"'`
+
 ## snapshot (structured reads)
 
 For machine-readable memory state, use `snapshot` with combinable scopes:
 
 ```bash
+# Core scopes
 remind snapshot stats                         # Memory statistics
 remind snapshot pending conflicts             # Pending episodes + open conflicts
+remind snapshot health                        # Actionable issues summary
+
+# Browsing scopes (for exploring memory)
+remind snapshot concepts                      # All concepts
+remind snapshot episodes:20                   # Recent 20 episodes
+remind snapshot entities                      # All entities with mention counts
+remind snapshot entities:person               # Filter entities by type
+remind snapshot labels                        # All distinct labels with counts
+remind snapshot decisions:10                  # Recent 10 decision episodes
+remind snapshot questions                     # Open question episodes
+
+# Detail scopes
 remind snapshot entity:concept:caching        # All data for an entity
-remind snapshot topic:architecture            # All data for a topic
+remind snapshot label:topic=architecture      # All data for a label
 remind snapshot concept:abc123                # Concept detail with facts, history
-remind snapshot recent:20                     # Recent episodes
 remind snapshot "query:authentication issues" # Semantic search as JSON
 ```
 
@@ -69,9 +108,9 @@ remind snapshot "query:authentication issues" # Semantic search as JSON
 
 ```bash
 remind snapshot stats                        # Memory size/health overview
-remind inspect                               # List all concepts
-remind inspect <concept_id>                  # Concept detail: facts, history, sources
-remind entities                              # Entities available for --entity recall
+remind snapshot health                       # Actionable issues needing attention
+remind snapshot concepts                     # List all concepts
+remind snapshot entities                     # Entities available for --entity recall
 ```
 
-**Explore workflow**: `snapshot stats` → `recall "<query>"` → `snapshot concept:<id>` for details.
+**Explore workflow**: `snapshot stats health` → `recall "<query>"` → `snapshot concept:<id>` for details.
