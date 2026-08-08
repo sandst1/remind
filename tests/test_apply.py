@@ -243,6 +243,44 @@ class TestApplyEngineExecution:
         assert memory_store.get_labels("episode", episode.id) == {}
     
     @pytest.mark.asyncio
+    async def test_label_via_fact_ref_labels_source_episode(self, engine, memory_store):
+        """A fact-type remember exposes the fact id as its ref, so labelling
+        that ref must fall through to the episode that asserted the fact."""
+        result = await engine.apply([
+            {"op": "remember", "as": "f1", "t": "fact", "content": "Cache TTL is 600s"},
+            {"op": "label", "id": "$f1", "key": "release", "value": "0.13.1"},
+        ])
+
+        assert result.success, result.errors
+        fact_id = result.results[0].id
+        episode_id = memory_store.get_fact(fact_id).source_episode_id
+
+        assert result.results[1].subject_type == "episode"
+        assert result.results[1].id == episode_id
+        assert memory_store.get_labels("episode", episode_id) == {"release": ["0.13.1"]}
+
+        unlabeled = await engine.apply([
+            {"op": "unlabel", "id": fact_id, "key": "release"},
+        ])
+        assert unlabeled.success, unlabeled.errors
+        assert memory_store.get_labels("episode", episode_id) == {}
+
+    @pytest.mark.asyncio
+    async def test_failed_op_is_reported_with_its_own_index_and_type(self, engine, memory_store):
+        """The failing op is appended to results before it raises, so the
+        error must point at it rather than at the op that follows."""
+        result = await engine.apply([
+            {"op": "remember", "t": "observation", "content": "Fine"},
+            {"op": "label", "id": "does-not-exist", "key": "k", "value": "v"},
+            {"op": "remember", "t": "observation", "content": "Never runs"},
+        ])
+
+        assert not result.success
+        assert len(result.errors) == 1
+        assert result.errors[0].op_index == 1
+        assert result.errors[0].op_type == "label"
+
+    @pytest.mark.asyncio
     async def test_processed_marks_episodes(self, engine, memory_store):
         ep1 = Episode(content="Episode 1")
         ep2 = Episode(content="Episode 2")

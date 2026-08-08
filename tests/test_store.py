@@ -558,6 +558,39 @@ class TestSQLiteMemoryStore:
         assert any(r.target_id == "subject:law" for r in rels)
 
 
+class TestLegacySchemaMigration:
+    """Tests for additive migrations against pre-existing databases."""
+
+    def test_adds_embedding_column_to_legacy_entities_table(self):
+        """Databases created before entity embeddings landed have an entities
+        table with no embedding column; every entity read selects that column,
+        so without the migration they fail with OperationalError."""
+        import sqlite3
+
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            conn = sqlite3.connect(path)
+            conn.execute(
+                "CREATE TABLE entities ("
+                "id TEXT PRIMARY KEY, "
+                "type TEXT NOT NULL, "
+                "display_name TEXT, "
+                "data JSON, "
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+            )
+            conn.commit()
+            conn.close()
+
+            store = SQLiteMemoryStore(path)
+
+            entity = Entity(id="tool:redis", type=EntityType.TOOL, display_name="redis")
+            store.add_entity(entity)
+            assert store.get_entity("tool:redis") is not None
+        finally:
+            os.unlink(path)
+
+
 class TestChangeFeed:
     """Tests for the append-only events table."""
 

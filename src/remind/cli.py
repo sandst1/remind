@@ -522,7 +522,8 @@ def apply(ctx, changeset: Optional[str], input_file: Optional[str], dry_run: boo
         console.print(f"[red]✗[/red] Apply failed")
         for err in result.errors:
             loc = f"line {err.line}" if err.line else f"op {err.op_index}"
-            console.print(f"  [{loc}] {err.op_type}: {err.message}")
+            # Escape the leading bracket so Rich does not parse "[op 3]" as markup
+            console.print(f"  \\[{loc}] {err.op_type}: {err.message}")
 
 
 @main.command()

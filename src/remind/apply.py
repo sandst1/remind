@@ -321,15 +321,20 @@ class ApplyEngine:
                         raise RuntimeError(f"Op {i} failed: {result.error}")
         
         except Exception as e:
-            # Transaction rolled back
+            # Transaction rolled back. A failing op is appended to results
+            # before it raises, so the culprit is the last result when that
+            # result is a failure -- not len(results), which is the op after.
+            failed_index = (
+                len(results) - 1 if results and not results[-1].success else len(results)
+            )
             return ApplyResult(
                 success=False,
                 ops_executed=len(results),
                 results=results,
                 errors=[OpError(
                     line=None,
-                    op_index=len(results),
-                    op_type=ops[len(results)]["op"] if len(results) < len(ops) else "",
+                    op_index=failed_index,
+                    op_type=ops[failed_index]["op"] if failed_index < len(ops) else "",
                     message=str(e),
                 )],
             )
@@ -972,6 +977,34 @@ class ApplyEngine:
             ref=ref_name,
         )
     
+    def _resolve_label_target(
+        self, target_id: str
+    ) -> tuple[Optional[Any], Optional[str], str]:
+        """Resolve a label/unlabel target to a labelable object.
+
+        Facts carry no labels of their own, but a `remember` op that creates
+        one exposes the *fact* id as its ref (supersede needs it), so a fact
+        id is redirected to the episode that asserted it.
+
+        Returns (object, subject_type, resolved_id); object is None if the
+        target could not be resolved.
+        """
+        episode = self.store.get_episode(target_id)
+        if episode:
+            return episode, "episode", target_id
+
+        concept = self.store.get_concept(target_id)
+        if concept:
+            return concept, "concept", target_id
+
+        fact = self.store.get_fact(target_id)
+        if fact and fact.source_episode_id:
+            episode = self.store.get_episode(fact.source_episode_id)
+            if episode:
+                return episode, "episode", fact.source_episode_id
+
+        return None, None, target_id
+
     def _op_label(
         self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str]
     ) -> OpResult:
@@ -980,34 +1013,27 @@ class ApplyEngine:
         key = str(op.get("key", "")).strip()
         value = str(op.get("value", "")).strip()
 
-        episode = self.store.get_episode(target_id)
-        subject_type = "episode"
-        if episode:
-            values = episode.labels.setdefault(key, [])
-            if value not in values:
-                values.append(value)
-            episode.updated_at = datetime.now()
-            self.store.update_episode(episode)
+        obj, subject_type, resolved_id = self._resolve_label_target(target_id)
+        if not obj:
+            return OpResult(
+                op_index=index, op_type="label", success=False,
+                error=f"Target not found: {target_id}",
+            )
+
+        values = obj.labels.setdefault(key, [])
+        if value not in values:
+            values.append(value)
+        obj.updated_at = datetime.now()
+        if subject_type == "episode":
+            self.store.update_episode(obj)
         else:
-            subject_type = "concept"
-            concept = self.store.get_concept(target_id)
-            if concept:
-                values = concept.labels.setdefault(key, [])
-                if value not in values:
-                    values.append(value)
-                concept.updated_at = datetime.now()
-                self.store.update_concept(concept)
-            else:
-                return OpResult(
-                    op_index=index, op_type="label", success=False,
-                    error=f"Target not found: {target_id}",
-                )
+            self.store.update_concept(obj)
 
         return OpResult(
             op_index=index,
             op_type="label",
             success=True,
-            id=target_id,
+            id=resolved_id,
             ref=ref_name,
             subject_type=subject_type,
         )
@@ -1023,8 +1049,7 @@ class ApplyEngine:
         key = str(op.get("key", "")).strip()
         value = op.get("value")
 
-        episode = self.store.get_episode(target_id)
-        obj = episode or self.store.get_concept(target_id)
+        obj, subject_type, resolved_id = self._resolve_label_target(target_id)
         if not obj:
             return OpResult(
                 op_index=index, op_type="unlabel", success=False,
@@ -1042,7 +1067,7 @@ class ApplyEngine:
                     obj.labels.pop(key, None)
 
         obj.updated_at = datetime.now()
-        if episode:
+        if subject_type == "episode":
             self.store.update_episode(obj)
         else:
             self.store.update_concept(obj)
@@ -1051,9 +1076,9 @@ class ApplyEngine:
             op_index=index,
             op_type="unlabel",
             success=True,
-            id=target_id,
+            id=resolved_id,
             ref=ref_name,
-            subject_type="episode" if episode else "concept",
+            subject_type=subject_type,
         )
     
     def _op_delete(

@@ -1529,10 +1529,17 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 conn.commit()
                 logger.info("Migration: Added source_episode_ids column to entity_relations table")
 
+            blob_type = "BLOB" if _is_sqlite(self.engine) else "BYTEA"
+
             if not _has_column("episodes", "embedding"):
-                conn.execute(text("ALTER TABLE episodes ADD COLUMN embedding BYTEA" if not _is_sqlite(self.engine) else "ALTER TABLE episodes ADD COLUMN embedding BLOB"))
+                conn.execute(text(f"ALTER TABLE episodes ADD COLUMN embedding {blob_type}"))
                 conn.commit()
                 logger.info("Migration: Added embedding column to episodes table")
+
+            if not _has_column("entities", "embedding"):
+                conn.execute(text(f"ALTER TABLE entities ADD COLUMN embedding {blob_type}"))
+                conn.commit()
+                logger.info("Migration: Added embedding column to entities table")
 
             try:
                 entity_count = conn.execute(text("SELECT COUNT(*) FROM entities")).scalar()
