@@ -2,6 +2,14 @@
 
 All notable changes to Remind.
 
+## [0.13.1] - 2026-08-09
+
+### Fixed
+
+- **Entity reads on pre-0.10.5 databases** — Databases whose `entities` table predates entity embeddings were missing the `embedding` column, so any `remember` or `apply` touching an entity failed with `no such column: entities.embedding`. The additive migration now backfills it.
+- **Labelling a fact created in the same changeset** — A `fact`-type `remember` op exposes the new fact id as its `$ref`, but `label`/`unlabel` only accepted episodes and concepts. A fact id now resolves to the episode that asserted it.
+- **Misattributed `apply` failures** — Errors pointed one op past the failure and named the following op's type, and the CLI swallowed the `[op N]` location as Rich markup. Both now identify the op that actually failed.
+
 ## [0.13.0] - 2026-08-08
 
 ### Removed

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-09
+
+### Fixed
+
+- **Entity reads on pre-0.10.5 databases** — Databases whose `entities` table was created before entity embeddings landed were missing the `embedding` column, and since every entity read selects it, any `remember` or `apply` touching an entity failed with `no such column: entities.embedding`. The additive migration now backfills the column, alongside the existing `episodes.embedding` one.
+- **Labelling a fact created in the same changeset** — A `fact`-type `remember` op exposes the new *fact* id as its `$ref` (which `supersede` needs), but `label`/`unlabel` only accepted episodes and concepts, so `label id=$ref` failed with `Target not found`. Facts carry no labels of their own, so a fact id now resolves to the episode that asserted it.
+- **Misattributed `apply` failures** — A failed op is recorded before it aborts the transaction, so the reported error pointed one op too far, naming the *following* op's type. `remind apply` also rendered the location as Rich markup, swallowing the `[op N]` / `[line N]` prefix entirely. Both now identify the op that actually failed.
+
 ## [0.13.0] - 2026-08-08
 
 ### Removed
