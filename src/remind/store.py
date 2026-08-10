@@ -282,6 +282,11 @@ class MemoryStore(ABC):
         ...
 
     @abstractmethod
+    def get_all_facts(self) -> list[Fact]:
+        """Get all facts, including superseded facts."""
+        ...
+
+    @abstractmethod
     def update_fact(self, fact: Fact) -> None:
         """Update an existing fact row."""
         ...
@@ -776,10 +781,11 @@ class MemoryStore(ABC):
         include_episodes: bool = True,
         include_concepts: bool = True,
         include_entities: bool = True,
+        include_facts: bool = True,
     ) -> dict[str, int]:
         """Clear stored embeddings for selected record types.
 
-        Returns counts for cleared concept, episode, and entity rows.
+        Returns counts for cleared concept, episode, entity, and fact rows.
         """
         ...
 
@@ -2134,9 +2140,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
             if self._vec_backend == "sqlite-vec":
                 conn.execute(text("DROP TABLE IF EXISTS vec_concepts"))
                 conn.execute(text("DROP TABLE IF EXISTS vec_episodes"))
+                conn.execute(text("DROP TABLE IF EXISTS vec_facts"))
             elif self._vec_backend == "pgvector":
                 conn.execute(text("ALTER TABLE concepts DROP COLUMN IF EXISTS embedding_vec"))
                 conn.execute(text("ALTER TABLE episodes DROP COLUMN IF EXISTS embedding_vec"))
+                conn.execute(text("ALTER TABLE facts DROP COLUMN IF EXISTS embedding_vec"))
             # Only commit if we're not inside the outer transaction.
             inside_transaction = (getattr(self._local, 'tx_conn', None) is conn)
             if not inside_transaction:
@@ -2147,9 +2155,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
             if self._vec_backend == "sqlite-vec":
                 fresh_conn.execute(text("DROP TABLE IF EXISTS vec_concepts"))
                 fresh_conn.execute(text("DROP TABLE IF EXISTS vec_episodes"))
+                fresh_conn.execute(text("DROP TABLE IF EXISTS vec_facts"))
             elif self._vec_backend == "pgvector":
                 fresh_conn.execute(text("ALTER TABLE concepts DROP COLUMN IF EXISTS embedding_vec"))
                 fresh_conn.execute(text("ALTER TABLE episodes DROP COLUMN IF EXISTS embedding_vec"))
+                fresh_conn.execute(text("ALTER TABLE facts DROP COLUMN IF EXISTS embedding_vec"))
             fresh_conn.commit()
 
     def _upsert_vec_concept(self, conn, concept_id: str, embedding: Optional[list[float]]) -> None:
@@ -3932,6 +3942,14 @@ class SQLAlchemyMemoryStore(MemoryStore):
             rows = conn.execute(query).fetchall()
             return [self._row_to_fact(row) for row in rows]
 
+    def get_all_facts(self) -> list[Fact]:
+        """Get all facts, including superseded facts."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                select(facts_table).order_by(facts_table.c.valid_from.desc())
+            ).fetchall()
+            return [self._row_to_fact(row) for row in rows]
+
     def find_facts_by_entity_name(
         self,
         bare_name: str,
@@ -4371,10 +4389,12 @@ class SQLAlchemyMemoryStore(MemoryStore):
         include_episodes: bool = True,
         include_concepts: bool = True,
         include_entities: bool = True,
+        include_facts: bool = True,
     ) -> dict[str, int]:
         cleared_concepts = 0
         cleared_episodes = 0
         cleared_entities = 0
+        cleared_facts = 0
 
         with self._connect() as conn:
             if include_concepts:
@@ -4428,10 +4448,28 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     except OperationalError:
                         pass
 
+            if include_facts:
+                result = conn.execute(
+                    facts_table.update().values(embedding=None)
+                )
+                cleared_facts = result.rowcount or 0
+
+                if self._vec_backend == "sqlite-vec":
+                    try:
+                        conn.execute(text("DELETE FROM vec_facts"))
+                    except OperationalError:
+                        pass
+                elif self._vec_backend == "pgvector":
+                    try:
+                        conn.execute(text("UPDATE facts SET embedding_vec = NULL"))
+                    except OperationalError:
+                        pass
+
         return {
             "concepts_cleared": cleared_concepts,
             "episodes_cleared": cleared_episodes,
             "entities_cleared": cleared_entities,
+            "facts_cleared": cleared_facts,
         }
 
     # ------------------------------------------------------------------

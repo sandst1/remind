@@ -148,7 +148,8 @@ The local provider works well for most use cases. Switch to OpenAI or another re
 
 ## Switching providers
 
-When switching embedding providers, you'll need to re-embed existing content:
+When switching embedding providers, re-embed every record type so the database
+does not retain vectors from the previous embedding space:
 
 ```bash
 remind clear-embeddings

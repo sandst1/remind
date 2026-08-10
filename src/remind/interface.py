@@ -569,16 +569,18 @@ class MemoryInterface:
         include_episodes: bool = True,
         include_concepts: bool = True,
         include_entities: bool = True,
+        include_facts: bool = True,
     ) -> dict[str, Optional[int]]:
         """Inspect what a re-embedding run would do."""
-        if not include_episodes and not include_concepts and not include_entities:
-            raise ValueError("Select at least one target: episodes, concepts, or entities.")
+        if not any((include_episodes, include_concepts, include_entities, include_facts)):
+            raise ValueError("Select at least one target: episodes, concepts, entities, or facts.")
         if not self.embedding:
             raise RuntimeError("No embedding provider configured.")
 
         episodes = self.store.get_all_episodes() if include_episodes else []
         concepts = self.store.get_all_concepts() if include_concepts else []
         entities = self.store.get_all_entities() if include_entities else []
+        facts = self.store.get_all_facts() if include_facts else []
 
         stored_dims_raw = self.store.get_metadata("embedding_dimensions")
         stored_dims = int(stored_dims_raw) if stored_dims_raw else None
@@ -590,6 +592,8 @@ class MemoryInterface:
             sample_text = concepts[0].summary
         elif include_entities and entities:
             sample_text = f"{entities[0].type.value}: {entities[0].display_name}"
+        elif include_facts and facts:
+            sample_text = facts[0].statement
 
         target_dims = None
         if sample_text:
@@ -601,6 +605,7 @@ class MemoryInterface:
             "episodes": len(episodes),
             "concepts": len(concepts),
             "entities": len(entities),
+            "facts": len(facts),
             "stored_dimensions": stored_dims,
             "target_dimensions": target_dims,
         }
@@ -610,6 +615,7 @@ class MemoryInterface:
         include_episodes: bool = True,
         include_concepts: bool = True,
         include_entities: bool = True,
+        include_facts: bool = True,
         batch_size: int = 50,
     ) -> dict[str, Optional[int]]:
         """Recompute embeddings for selected record types using current provider."""
@@ -617,6 +623,7 @@ class MemoryInterface:
             include_episodes=include_episodes,
             include_concepts=include_concepts,
             include_entities=include_entities,
+            include_facts=include_facts,
         )
         stored_dims = plan["stored_dimensions"]
         target_dims = plan["target_dimensions"]
@@ -625,7 +632,12 @@ class MemoryInterface:
             stored_dims is not None
             and target_dims is not None
             and stored_dims != target_dims
-            and not (include_episodes and include_concepts and include_entities)
+            and not (
+                include_episodes
+                and include_concepts
+                and include_entities
+                and include_facts
+            )
         ):
             raise ValueError(
                 "Embedding dimensions are changing. Re-embedding only one type "
@@ -636,11 +648,13 @@ class MemoryInterface:
             include_episodes=include_episodes,
             include_concepts=include_concepts,
             include_entities=include_entities,
+            include_facts=include_facts,
         )
 
         concepts_embedded = 0
         episodes_embedded = 0
         entities_embedded = 0
+        facts_embedded = 0
 
         if include_concepts:
             concepts = self.store.get_all_concepts()
@@ -675,11 +689,23 @@ class MemoryInterface:
                     self.store.update_entity(entity)
                     entities_embedded += 1
 
+        if include_facts:
+            facts = self.store.get_all_facts()
+            for i in range(0, len(facts), batch_size):
+                batch = facts[i:i + batch_size]
+                statements = [fact.statement for fact in batch]
+                embeddings = await self.embedding.embed_batch(statements)
+                for fact, embedding in zip(batch, embeddings):
+                    fact.embedding = embedding
+                    self.store.update_fact(fact)
+                    facts_embedded += 1
+
         logger.info(
-            "Re-embedded memory (concepts=%s, episodes=%s, entities=%s, dims=%s->%s)",
+            "Re-embedded memory (concepts=%s, episodes=%s, entities=%s, facts=%s, dims=%s->%s)",
             concepts_embedded,
             episodes_embedded,
             entities_embedded,
+            facts_embedded,
             stored_dims,
             target_dims,
         )
@@ -688,9 +714,11 @@ class MemoryInterface:
             "concepts_embedded": concepts_embedded,
             "episodes_embedded": episodes_embedded,
             "entities_embedded": entities_embedded,
+            "facts_embedded": facts_embedded,
             "concepts_cleared": clear_stats["concepts_cleared"],
             "episodes_cleared": clear_stats["episodes_cleared"],
             "entities_cleared": clear_stats["entities_cleared"],
+            "facts_cleared": clear_stats["facts_cleared"],
             "stored_dimensions": stored_dims,
             "target_dimensions": target_dims,
         }

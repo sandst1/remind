@@ -923,11 +923,21 @@ def embed_episodes(ctx, batch_size: int):
 @click.option("--episodes", is_flag=True, help="Re-embed episodes only")
 @click.option("--concepts", is_flag=True, help="Re-embed concepts only")
 @click.option("--entities", is_flag=True, help="Re-embed entities only")
-@click.option("--all", "all_targets", is_flag=True, help="Re-embed episodes, concepts, and entities (default)")
+@click.option("--facts", is_flag=True, help="Re-embed facts only")
+@click.option("--all", "all_targets", is_flag=True, help="Re-embed every record type (default)")
 @click.option("--batch-size", default=50, help="Number of records to embed per batch")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
-def re_embed(ctx, episodes: bool, concepts: bool, entities: bool, all_targets: bool, batch_size: int, yes: bool):
+def re_embed(
+    ctx,
+    episodes: bool,
+    concepts: bool,
+    entities: bool,
+    facts: bool,
+    all_targets: bool,
+    batch_size: int,
+    yes: bool,
+):
     """Recompute stored embeddings using the current embedding provider.
 
     Use this when embedding model or dimensions change and existing vectors
@@ -940,14 +950,17 @@ def re_embed(ctx, episodes: bool, concepts: bool, entities: bool, all_targets: b
         include_episodes = True
         include_concepts = True
         include_entities = True
-    elif episodes or concepts or entities:
+        include_facts = True
+    elif episodes or concepts or entities or facts:
         include_episodes = episodes
         include_concepts = concepts
         include_entities = entities
+        include_facts = facts
     else:
         include_episodes = True
         include_concepts = True
         include_entities = True
+        include_facts = True
 
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
@@ -955,6 +968,7 @@ def re_embed(ctx, episodes: bool, concepts: bool, entities: bool, all_targets: b
         include_episodes=include_episodes,
         include_concepts=include_concepts,
         include_entities=include_entities,
+        include_facts=include_facts,
     ))
 
     target_parts = []
@@ -964,6 +978,8 @@ def re_embed(ctx, episodes: bool, concepts: bool, entities: bool, all_targets: b
         target_parts.append(f"{plan['concepts']} concepts")
     if include_entities:
         target_parts.append(f"{plan['entities']} entities")
+    if include_facts:
+        target_parts.append(f"{plan['facts']} facts")
     target_summary = ", ".join(target_parts)
 
     console.print("[bold cyan]Re-embed preview[/bold cyan]")
@@ -983,13 +999,39 @@ def re_embed(ctx, episodes: bool, concepts: bool, entities: bool, all_targets: b
         include_episodes=include_episodes,
         include_concepts=include_concepts,
         include_entities=include_entities,
+        include_facts=include_facts,
         batch_size=batch_size,
     ))
     console.print("[green]✓ Re-embed complete[/green]")
     console.print(f"  Re-embedded concepts: {result['concepts_embedded']}")
     console.print(f"  Re-embedded episodes: {result['episodes_embedded']}")
     console.print(f"  Re-embedded entities: {result['entities_embedded']}")
+    console.print(f"  Re-embedded facts: {result['facts_embedded']}")
     console.print(f"  Dimensions: {result['stored_dimensions']} -> {result['target_dimensions']}")
+
+
+@main.command("clear-embeddings")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.pass_context
+def clear_embeddings(ctx, yes: bool):
+    """Clear every stored embedding before a full re-embed."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
+
+    if not yes:
+        if not sys.stdin.isatty():
+            console.print("[red]Error: Use -y/--yes for non-interactive clearing[/red]")
+            raise SystemExit(1)
+        proceed = click.confirm("Clear all stored embeddings?", default=False)
+        if not proceed:
+            console.print("[yellow]Cancelled. No changes made.[/yellow]")
+            return
+
+    result = memory.store.clear_embeddings()
+    console.print("[green]✓ Embeddings cleared[/green]")
+    console.print(f"  Cleared concepts: {result['concepts_cleared']}")
+    console.print(f"  Cleared episodes: {result['episodes_cleared']}")
+    console.print(f"  Cleared entities: {result['entities_cleared']}")
+    console.print(f"  Cleared facts: {result['facts_cleared']}")
 
 
 

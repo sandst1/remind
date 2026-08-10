@@ -245,19 +245,23 @@ remind purge-all                      # All soft-deleted items
 
 ### re-embed
 
-Re-embed all concepts, episodes, and entities. Useful when switching embedding providers or dimensions.
+Re-embed all concepts, episodes, entities, and facts. Useful when switching
+embedding providers or dimensions. `--all` is the default and is required when
+the embedding dimension changes, so no record type retains vectors from the old
+embedding space.
 
 ```bash
-remind re-embed --all                   # Re-embed everything
+remind re-embed --all                   # Re-embed every record type
+remind re-embed --facts                 # Re-embed facts only (same dimensions only)
 remind re-embed --batch-size 100        # Larger batches
 ```
 
 ### clear-embeddings
 
-Clear all embeddings (requires re-embed after).
+Clear all embeddings, including fact embeddings (requires re-embed after).
 
 ```bash
-remind clear-embeddings
+remind clear-embeddings --yes
 ```
 
 ## Export / Import

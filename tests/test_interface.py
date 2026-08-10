@@ -22,6 +22,34 @@ class TestMemoryInterface:
             spread_hops=2,
         )
 
+    @pytest.mark.asyncio
+    async def test_reembed_all_replaces_fact_embeddings(self, memory, mock_embedding):
+        """A full re-embed migrates facts with every other embedding-bearing row."""
+        old_embedding = [0.1, 0.2]
+        concept = Concept(summary="Old concept", embedding=old_embedding)
+        episode = Episode(content="Old episode", embedding=old_embedding)
+        entity = Entity(
+            id="tool:old-tool",
+            type=EntityType.TOOL,
+            display_name="Old tool",
+            embedding=old_embedding,
+        )
+        fact = Fact(statement="Old fact", embedding=old_embedding)
+
+        memory.store.add_concept(concept)
+        memory.store.add_episode(episode)
+        memory.store.add_entity(entity)
+        memory.store.add_fact(fact)
+
+        result = await memory.reembed()
+
+        assert result["facts_embedded"] == 1
+        assert result["facts_cleared"] == 1
+        assert len(memory.store.get_concept(concept.id).embedding) == mock_embedding.dimensions
+        assert len(memory.store.get_episode(episode.id).embedding) == mock_embedding.dimensions
+        assert len(memory.store.get_entity(entity.id).embedding) == mock_embedding.dimensions
+        assert len(memory.store.get_fact(fact.id).embedding) == mock_embedding.dimensions
+
     # =========================================================================
     # remember() tests
     # =========================================================================

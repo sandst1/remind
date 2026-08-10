@@ -22,32 +22,52 @@ class _FakeMemory:
         self.plan_calls = []
         self.reembed_calls = []
 
-    async def get_reembed_plan(self, include_episodes: bool, include_concepts: bool, include_entities: bool = True):
+    async def get_reembed_plan(
+        self,
+        include_episodes: bool,
+        include_concepts: bool,
+        include_entities: bool = True,
+        include_facts: bool = True,
+    ):
         self.plan_calls.append({
             "include_episodes": include_episodes,
             "include_concepts": include_concepts,
+            "include_entities": include_entities,
+            "include_facts": include_facts,
         })
         return {
             "episodes": 4,
             "concepts": 3,
             "entities": 2,
+            "facts": 1,
             "stored_dimensions": 3072,
             "target_dimensions": 1536,
         }
 
-    async def reembed(self, include_episodes: bool, include_concepts: bool, include_entities: bool = True, batch_size: int = 50):
+    async def reembed(
+        self,
+        include_episodes: bool,
+        include_concepts: bool,
+        include_entities: bool = True,
+        include_facts: bool = True,
+        batch_size: int = 50,
+    ):
         self.reembed_calls.append({
             "include_episodes": include_episodes,
             "include_concepts": include_concepts,
+            "include_entities": include_entities,
+            "include_facts": include_facts,
             "batch_size": batch_size,
         })
         return {
             "concepts_embedded": 3,
             "episodes_embedded": 4,
             "entities_embedded": 2,
+            "facts_embedded": 1,
             "concepts_cleared": 3,
             "episodes_cleared": 4,
             "entities_cleared": 2,
+            "facts_cleared": 1,
             "stored_dimensions": 3072,
             "target_dimensions": 1536,
         }
@@ -77,12 +97,71 @@ def test_re_embed_defaults_to_all(monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert fake_memory.plan_calls == [{"include_episodes": True, "include_concepts": True}]
+    assert fake_memory.plan_calls == [{
+        "include_episodes": True,
+        "include_concepts": True,
+        "include_entities": True,
+        "include_facts": True,
+    }]
     assert fake_memory.reembed_calls == [{
         "include_episodes": True,
         "include_concepts": True,
+        "include_entities": True,
+        "include_facts": True,
         "batch_size": 50,
     }]
+    assert "Re-embedded facts: 1" in result.output
+
+
+def test_re_embed_facts_only(monkeypatch):
+    fake_memory = _FakeMemory()
+    _patch_cli_config(monkeypatch)
+    monkeypatch.setattr("remind.cli.get_memory", lambda *_args, **_kwargs: fake_memory)
+
+    result = CliRunner().invoke(
+        main,
+        ["--db", "test", "--embedding", "openai", "re-embed", "--facts", "--yes"],
+    )
+
+    assert result.exit_code == 0
+    assert fake_memory.plan_calls[0] == {
+        "include_episodes": False,
+        "include_concepts": False,
+        "include_entities": False,
+        "include_facts": True,
+    }
+
+
+def test_clear_embeddings_clears_all_record_types(monkeypatch):
+    class FakeStore:
+        def __init__(self):
+            self.calls = 0
+
+        def clear_embeddings(self):
+            self.calls += 1
+            return {
+                "concepts_cleared": 3,
+                "episodes_cleared": 4,
+                "entities_cleared": 2,
+                "facts_cleared": 1,
+            }
+
+    class FakeMemory:
+        def __init__(self):
+            self.store = FakeStore()
+
+    memory = FakeMemory()
+    _patch_cli_config(monkeypatch)
+    monkeypatch.setattr("remind.cli.get_memory", lambda *_args, **_kwargs: memory)
+
+    result = CliRunner().invoke(
+        main,
+        ["--db", "test", "--embedding", "openai", "clear-embeddings", "--yes"],
+    )
+
+    assert result.exit_code == 0
+    assert memory.store.calls == 1
+    assert "Cleared facts: 1" in result.output
 
 
 def test_re_embed_requires_tty_or_yes_flag(monkeypatch):
