@@ -2,6 +2,12 @@
 
 All notable changes to Remind.
 
+## [0.13.2] - 2026-08-10
+
+### Fixed
+
+- **Complete embedding migrations** — `remind re-embed --all` now re-embeds facts and rebuilds their sqlite-vec or pgvector indexes alongside concepts, episodes, and entities, preventing stale-dimension vectors after switching embedding providers. Added `--facts` and the documented `clear-embeddings` command.
+
 ## [0.13.1] - 2026-08-09
 
 ### Fixed
