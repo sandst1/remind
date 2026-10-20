@@ -67,7 +67,7 @@ def export_store(store: Any, mode: str = "portable") -> dict:
             "entities": [r["data"] for r in records["entities"]]}
 
 
-def validate_records(records: dict) -> None:
+def _record_identities(records: dict) -> dict:
     from remind.store import metadata_obj
 
     if not isinstance(records, dict) or set(records) - set(TABLE_NAMES):
@@ -88,6 +88,11 @@ def validate_records(records: dict) -> None:
             seen.add(identity)
             canonical_json(row)
         identities[name] = seen
+    return identities
+
+
+def validate_records(records: dict) -> None:
+    identities = _record_identities(records)
     def require(name: str, identifier: Any) -> None:
         if identifier is not None and (identifier,) not in identities.get(name, set()):
             raise ValueError(f"Dangling reference to {name}: {identifier}")
@@ -135,12 +140,22 @@ def validate_records(records: dict) -> None:
 
 
 def import_store(store: Any, data: dict, replace: bool = False) -> dict:
+    # Validate against the same locked state that will receive the writes.
+    if getattr(store._local, "tx_conn", None) is not None:
+        return _import_store(store, data, replace)
+    with store.transaction():
+        return _import_store(store, data, replace)
+
+
+def _import_store(store: Any, data: dict, replace: bool = False) -> dict:
     from remind.store import metadata_obj
 
     if data.get("version") != FORMAT_VERSION or "records" not in data:
         raise ValueError("Expected a version 4 snapshot")
     import copy
     records = copy.deepcopy(data["records"])
+    # Do not silently collapse duplicate identities while assembling a merge.
+    _record_identities(records)
     # Merge is validated as a complete prospective state, including existing references.
     existing = export_store(store, data.get("mode", "portable"))["records"]
     if not replace and records.get("events") and existing["events"]:

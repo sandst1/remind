@@ -16,11 +16,13 @@ import logging
 import os
 import uuid
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
+from pydantic import TypeAdapter, WithJsonSchema
 
 load_dotenv()
 
@@ -29,6 +31,29 @@ from remind.models import Entity, normalize_entity_name
 from remind.config import REMIND_DIR, resolve_db_path, resolve_db_url, _is_db_url, load_config
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CaptureItem:
+    """One assertion with its type, entities, labels, and source provenance."""
+
+    content: str = field(metadata={"description": "One standalone assertion. Separate facts, decisions, and outcomes into distinct items."})
+    episode_type: Optional[str] = field(default=None, metadata={"description": "Use fact for concrete assertions and factual corrections, decision for choices, outcome for observed results. Defaults to observation."})
+    entities: Optional[list[str]] = field(default=None, metadata={"description": "Entity IDs as a JSON array, not a comma-separated string."})
+    labels: Optional[dict[str, str | list[str]]] = field(default=None, metadata={"description": "Labels as a JSON object, for example {\"area\":\"deployment\"}."})
+    metadata: Optional[dict] = None
+    confidence: float = 1.0
+    source_type: Optional[str] = None
+    asserted_by: Optional[str] = field(default=None, metadata={"description": "The person or agent who asserted this information. A source reference is not a speaker; preserve it in source_ref."})
+    source_ref: Optional[str] = field(default=None, metadata={"description": "The supplied source reference, URI, or permalink (for example ticket:123). When a source is provided, copy it here on every item, including facts, decisions, and outcomes. Do not put it only in asserted_by or the content."})
+
+
+# Enrich the public schema without coercing or filling in the request payload.
+# Receipt hashes must retain omitted fields and caller-supplied numeric types
+# across a server upgrade. MemoryInterface remains the capture validator.
+BatchCaptureItems = Annotated[list[dict], WithJsonSchema({
+    "type": "array", "items": TypeAdapter(CaptureItem).json_schema(),
+})]
 
 # Context variable to track current database path per async context
 _current_db: ContextVar[str] = ContextVar('current_db', default='')
@@ -838,8 +863,20 @@ def create_mcp_server(config=None):
     )
     
     @mcp.tool()
-    async def remember_batch(items: list[dict], idempotency_key: Optional[str] = None) -> str:
-        """Capture a batch atomically with the same semantics as remember."""
+    async def remember_batch(items: BatchCaptureItems, idempotency_key: Optional[str] = None) -> str:
+        """Capture separate assertions atomically; returns ordered per-item results.
+
+        Each item uses remember fields: content, episode_type, entities (list of
+        IDs), labels (object), asserted_by, source_ref. Use distinct items for a
+        concrete fact, a decision with rationale, and an observed outcome, even
+        when they came from one message. A fact item creates a first-class fact
+        and returns fact_id/cluster_id; other types return episode IDs only.
+        Example items: [{"content":"Retries are limited to 4","episode_type":"fact"},
+        {"content":"Use backoff to avoid overload","episode_type":"decision"},
+        {"content":"Backoff reduced errors","episode_type":"outcome"}].
+        Copy the actual source permalink into source_ref; asserted_by names the
+        speaker. Capture performs no semantic splitting or correction for you.
+        """
         memory = await get_memory()
         return json.dumps((await memory.remember_batch(items, idempotency_key=idempotency_key)).to_dict())
 
@@ -875,14 +912,21 @@ def create_mcp_server(config=None):
         Use when any of these happen:
         - A decision is made — capture the *why*, not just the choice (type: decision)
         - An approach succeeds or fails — outcomes are the highest-value memories (type: outcome)
-        - The user states a preference or corrects you (type: preference)
+        - A preference changes (type: preference)
+        - A factual assertion or correction is supplied (type: fact)
         - A concrete fact surfaces: config value, owner, name, date (type: fact)
         - An open question or uncertainty is raised (type: question)
 
         Write a clear standalone statement ("User prefers tabs", not "tabs") — it
         will be read without the conversation that produced it. Set episode_type
         explicitly when you know it. Skip trivial or already-captured info; for
-        raw conversation logs use ingest() instead.
+        multi-assertion source notes use remember_batch with separate items.
+
+        Keep a fact's content to the assertion itself. Put speaker/permalink in
+        asserted_by/source_ref and correction rationale in a supersede note.
+        A fact capture does not supersede an older claim automatically: inspect
+        old fact IDs/revisions and explicitly apply supersede. Describing a
+        claim as "superseded" in prose does not change its validity or links.
 
         Curation is explicit: use snapshot and apply; no internal LLM calls.
 
@@ -890,10 +934,10 @@ def create_mcp_server(config=None):
             content: The experience/observation to remember (clear, standalone statement)
             metadata: Optional JSON string with additional metadata
             episode_type: Optional explicit type (e.g., observation, decision, question, meta, preference, outcome, fact).
-                          Custom types are also accepted if configured. Auto-detected during consolidation if not provided,
-                          but prefer setting it explicitly.
+                          Defaults to observation; no automatic type inference.
+                          Custom configured types are also accepted.
             entities: Optional comma-separated entity IDs (e.g., "file:src/auth.ts,person:alice")
-                      (auto-detected during consolidation if not provided). Entity links power
+                      (not extracted automatically). Entity links power
                       targeted recall later — tag the concrete things the memory is about.
             labels: Optional freeform key=value labels, comma-separated (e.g.
                     "topic=architecture" or "topic=architecture,team=infra"). Used to
@@ -906,7 +950,8 @@ def create_mcp_server(config=None):
                         Slack message, PR, doc).
 
         Returns:
-            Confirmation with episode ID
+            JSON with episode_id; fact_id/cluster_id for fact captures; revisions,
+            collisions, nearby records, and warnings. Only fact captures create facts.
         """
         return await tool_remember(
             content, metadata, episode_type, entities, labels, source_type,
@@ -985,6 +1030,23 @@ def create_mcp_server(config=None):
         
         All operations execute in a single transaction (all-or-nothing).
         Returns per-operation results including new IDs and any collisions.
+
+        Read revisions with snapshot before any edits to existing records. Pass
+        expected_revisions={"<existing-id>":"<revision>"}; this includes source
+        episodes used by concept/processed, old facts used by supersede, and
+        existing concepts updated. New records created in this changeset need
+        no prior revision. A missing revision rejects the entire changeset.
+
+        For a factual correction, create a new fact and supersede the old fact
+        atomically, using IDs from inspected memory:
+            remember as=new t=fact "The retry limit is 8"
+            supersede old=<old-fact-id> new=$new note="Explicit source correction"
+        Then inspect the old/new facts via snapshot concept:<cluster-id>:
+        the old fact must have valid_to and superseded_by, and the replacement
+        must be active. Writing "superseded" in a summary has no structural effect.
+        If the earlier assertion exists only in a non-fact episode, first capture
+        that historical assertion as a fact with its original source provenance,
+        then supersede it. Never claim a history link exists without verifying it.
         
         Input format (compact line format, one op per line):
             remember as=f1 t=fact e=concept:caching "Cache TTL is 600 seconds"
@@ -1013,6 +1075,8 @@ def create_mcp_server(config=None):
         Args:
             changeset: Operations in compact line format or JSON array
             dry_run: If True, validate only without executing
+            expected_revisions: Existing record ID-to-revision map from snapshot
+            idempotency_key: Stable key for retrying the same changeset
         
         Returns:
             JSON with success status, executed ops count, results with IDs, and any errors
@@ -1025,6 +1089,11 @@ def create_mcp_server(config=None):
         
         Combines one or more scopes into a single JSON document.
         Use to inspect memory before curating with apply.
+        Returned records include revision values for expected_revisions. Facts
+        have IDs separate from source episodes. Inspect concept:<cluster-id> to
+        obtain fact IDs and verify active/closed validity and supersession links.
+        There is no episode:<id> scope; use entity:<id>, recent:<n>, or inspect
+        with show_episodes=True to locate episode records.
         
         Scopes (space or comma separated):
             pending      - Unprocessed episodes with their entities

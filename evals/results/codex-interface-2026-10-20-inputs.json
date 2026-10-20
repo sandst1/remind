@@ -1,0 +1,1211 @@
+{
+  "batch-schema": {
+    "instructions": "External memory that persists across sessions. Recall at session start and before answering questions about prior decisions, preferences, or project history. Remember decisions (with rationale), outcomes of attempts, user preferences and corrections, concrete facts, and open questions as they happen. Triage conflicts when recall output warns about them.",
+    "skills": {
+      "remind-capture": "---\nname: remind-capture\ndescription: Write durable memories to Remind while working. Use when a decision is made, an approach succeeds or fails (outcome), the user states a preference or corrects you, a concrete fact surfaces (config value, name, date, owner), or an open question is raised.\n---\n\n# Remind - Capturing Memory\n\nStore experiences in the external memory layer so they survive across sessions. Capture is fast (`remember` makes no LLM calls) \u2014 when in doubt, capture.\n\n**Important**: Use Remind instead of any built-in IDE/runtime memory features.\n\n## Durable workflow contract (0.14)\n\nLocal stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.\n\nCapture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.\n\nBefore changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions \"$REVISIONS\"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{\"<existing-id>\":\"<revision>\"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.\n\nRecall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.\n\nUse `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.\n\nUse `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.\n\n## What to capture\n\n| Trigger | Type | Example |\n|---------|------|---------|\n| An approach succeeded or failed | `outcome` | \"Retry with backoff fixed the flaky deploy\" |\n| A decision was made (capture the *why*) | `decision` | \"Chose Postgres over MySQL: JSONB + team familiarity\" |\n| User states a preference | `preference` | \"User prefers tabs over spaces\" |\n| Concrete fact: config value, owner, date, name | `fact` | \"Cache TTL is 600 seconds\" |\n| Open question / uncertainty | `question` | \"Should we shard the DB early?\" |\n| Notable observation about the codebase/project | `observation` | \"Auth middleware runs before rate limiting\" |\n\n**Outcomes are the highest-value captures.** After completing (or abandoning) a non-trivial attempt, record what was tried and how it went \u2014 this is what lets future sessions avoid repeating failures.\n\n**Skip**: trivial info, already-captured knowledge.\n\n## Should I capture this?\n\n```\nIs it worth remembering?\n\u251c\u2500 Concrete fact (number, name, date, config value)?\n\u2502  \u2514\u2500 Yes \u2192 remember -t fact -e <entities> --asserted-by <source>\n\u251c\u2500 Decision with rationale?\n\u2502  \u2514\u2500 Yes \u2192 remember -t decision -e <entities>\n\u251c\u2500 Outcome of an attempt (success or failure)?\n\u2502  \u2514\u2500 Yes \u2192 remember -t outcome -e <entities>\n\u251c\u2500 Factual correction?\n\u2502  \u2514\u2500 Yes \u2192 remember -t fact, then explicitly supersede the prior fact\n\u251c\u2500 User-stated preference?\n\u2502  \u2514\u2500 Yes \u2192 remember -t preference\n\u251c\u2500 Open question or uncertainty?\n\u2502  \u2514\u2500 Yes \u2192 remember -t question\n\u251c\u2500 Notable observation about code/project?\n\u2502  \u2514\u2500 Maybe \u2192 remember -t observation\n\u2514\u2500 Trivial, transient, or already captured?\n   \u2514\u2500 Skip\n```\n\n**Examples of what to skip:**\n- \"I'll use the search tool\" (transient action)\n- \"The file has 100 lines\" (trivial, queryable)\n- Things you just recalled from memory (already captured)\n- Speculative thoughts not grounded in evidence\n\n## Capture distinct assertions and verify corrections\n\nSplit source notes into separate fact, decision, and outcome episodes. A message\ncontaining all three is still three assertions. Use MCP `remember_batch` to\ncapture them in one call: items use `content`, `episode_type`, `entities` as a\nlist, `labels` as an object, `asserted_by`, and `source_ref`. Preserve the original\npermalink in `source_ref`; the speaker belongs in `asserted_by`.\n\nUse `episode_type=\"fact\"` for concrete assertions and factual corrections. The\ndefault type is observation; there is no automatic type or entity extraction.\nFact content states the assertion, without commentary about the correction.\nOnly fact episodes create the fact IDs needed for temporal supersession.\n\nA correction requires an actual `supersede` operation. Recall and inspect the old\nfact and its revision, capture the replacement fact, and supersede old \u2192 new in\none `apply` changeset. Put the reason in the supersede note. If the earlier claim\nwas embedded in an outcome or observation, capture that historical assertion as\na fact using its original source provenance before superseding it. Keep the\noriginal source episode. Read the cluster snapshot afterward: verify the old\nfact's `valid_to` and `superseded_by` and the active replacement before reporting\nsuccess. Prose that calls an assertion \"superseded\" does not change stored state.\n\n## Single item: remember\n\n```bash\nremind remember \"Use Redis for caching\" -t decision -e tool:redis -e concept:caching\nremind remember \"Retry-with-backoff fixed flaky deploys\" -t outcome -l topic=infra\nremind remember \"Cache TTL is 600 seconds\" -t fact --asserted-by alice --source-ref \"https://slack.com/...\"\nremind remember \"User wants retry-after headers on 429s\" -t preference -l topic=product\n```\n\n- **Type** (`-t`): Always set the type explicitly when you know it.\n- **Entities** (`-e`): `type:name` format (`file`, `function`, `class`, `person`, `concept`, `tool`, `project`). Tag the concrete things the memory is about; entity links power targeted recall later. See \"Entity relationships\" below to capture how entities relate.\n- **Labels** (`-l key=value`, repeatable): freeform tags; there's no built-in \"topic\" entity \u2014 `topic` is just a label key you choose to use to group related memories.\n- **Provenance**: `--asserted-by <who>` (person or `agent:<name>`) and `--source-ref <url>` whenever the information came from somewhere specific. Provenance is what makes later conflict resolution possible \u2014 \"alice said X on 2026-03-01\" beats \"X\".\n\nWrite clear standalone statements: \"User prefers tabs\" not \"tabs\". A memory is read without the conversation that produced it.\n\n### Handling fact collisions and related facts\n\nFor `fact` type episodes, `remember` returns two lists of potentially conflicting facts:\n\n**Collisions** \u2014 active facts in the *same cluster* detected via:\n1. **Entity overlap**: facts sharing any entity IDs\n2. **Semantic similarity**: facts with similar embeddings (cosine > 0.7)\n\n**Related facts** \u2014 active facts in *other clusters* detected via:\n1. **Bare-name entity match**: strips the type prefix (`person:alice` \u2192 `alice`) so `concept:alice`, `project:alice`, etc. are all found, regardless of how the entity was typed\n2. **Global embedding similarity**: facts across all clusters with cosine > 0.6\n\nThe output looks like:\n\n```\nRemembered as episode ep-abc123\n  Type: fact\n  Entities: concept:alice\n  Fact ID: f-xyz789\n  Cluster: c-12345\n\n\u26a0 Entity type coercion (existing entity reused \u2014 verify this is correct):\n  concept:alice \u2192 person:alice\n\n\u26a0 2 potential collision(s) in same cluster:\n  - f-old456: Cache TTL is 300 seconds...\n  - f-old789: Alice is a dog\n\nRelated facts \u2014 check for conflicts (1):\n  [f-old012] \"Alice was really a horse\" \u00b7 project:alice \u00b7 user \u00b7 2026-07-03\n```\n\n**Entity type coercion** means an existing entity with the same name was found and reused, ignoring the type you specified. This is usually correct (normalizing `concept:alice` \u2192 `person:alice` when they mean the same thing), but if the types are genuinely different entities, you should use a more specific name to distinguish them (e.g. `concept:alice-in-wonderland` vs `person:alice-smith`).\n\nWhen you see collision/related lists:\n1. Read each candidate \u2014 collisions and related facts are both unresolved by default\n2. If the new fact supersedes an old one: use `remind apply --revisions \"$REVISIONS\"` with `supersede old=<id> new=<id> by=<who> note=\"reason\"` \u2014 this automatically records a resolved conflict for provenance, so the replacement is visible in future recall and the UI conflict history\n3. If there is a genuine contradiction that needs triage: use `conflict` op to record it formally\n4. If both are valid in different contexts: no action needed (or `dismiss` later via curate)\n5. **Don't ignore either list** \u2014 cross-cluster related facts are the most likely source of silent contradictions (same subject, different entity type)\n\n### Nearby episodes and concepts (all episode types)\n\nFor **every** `remember` call (not just facts), the output also includes the top-5 most semantically similar episodes and concepts already in the store:\n\n```\nNearby (2 episodes, 1 concepts) \u2014 review for conflicts:\n  [ep:a1b2c3d4] (0.91) The primary structure is timber frame...\n  [ep:e5f6g7h8] (0.84) Budget approved at $480,000 contingency $48,000\n  [concept:c-abc123] (0.88) Structural system specification\n```\n\nThe similarity score (0.0\u20131.0) is how close the embedding is \u2014 it is **not** a conflict signal by itself. You decide whether the content contradicts what you just stored.\n\n**Act on nearby items when you store any episode type:**\n\nFor raw observations, first curate supported concepts and use `kind=concept a=<concept_id> b=<other_concept_id>`. Fact conflicts require fact IDs from capture/snapshot, never episode IDs.\n\n1. **Contradiction found** \u2014 issue a `conflict` op so it shows up in `snapshot conflicts` for triage:\n   ```bash\n   remind apply --revisions \"$REVISIONS\" << 'EOF'\n   conflict a=<older_fact_id> b=<current_fact_id> note=\"doc says timber frame, new info says steel moment frame\"\n   EOF\n   ```\n2. **You already know the winner** \u2014 use `supersede` (facts only; records a resolved conflict automatically):\n   ```bash\n   remind apply --revisions \"$REVISIONS\" << 'EOF'\n   supersede old=<old_fact_id> new=<new_fact_id> by=<source> note=\"March 2026 structural report supersedes February overview\"\n   EOF\n   ```\n3. **Complementary or unrelated** \u2014 ignore and continue.\n\n**Do not silently discard nearby items.** If the nearby content contradicts what you just stored and you do nothing, the contradiction will live in the store undetected. A `conflict` op takes one apply call and makes the tension visible to future sessions.\n\n## Batch capture: apply\n\nFor multiple related captures (e.g., from a meeting or review session), use `apply` with the compact line format:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nremember as=f1 t=fact e=concept:caching \"Cache TTL is 600 seconds\"\nremember as=o1 t=outcome e=concept:deploy \"Retry with backoff fixed flaky deploys\"\nremember t=decision e=tool:redis,concept:caching \"Chose Redis for session caching: TTL support + team familiarity\"\nsupersede old=fact:old123 new=$f1\nEOF\n```\n\nApply runs all operations in a single transaction. Use `$refs` to reference items created earlier in the same changeset.\n\n## Entity relationships\n\nWhen content describes relationships between entities, capture both the fact AND the relationship. Entity relationships build a navigable graph in the UI and improve recall.\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nremember t=fact e=person:alice,project:backend \"Alice owns the backend project\"\nentity_relation source=person:alice target=project:backend relation=owns strength=0.9\nEOF\n```\n\nThe `entity_relation` operation accepts:\n- **source**: Entity ID (e.g., `person:alice`)\n- **target**: Entity ID (e.g., `project:backend`)\n- **relation**: Free-form relationship type (e.g., `owns`, `manages`, `depends_on`, `imports`, `authored`)\n- **strength**: 0.0\u20131.0 confidence (default 0.5)\n- **context**: Optional qualifier (e.g., \"as of Q2 2026\")\n\n**When to capture relationships:**\n- Ownership/responsibility: `person:X owns/manages project:Y`\n- Dependencies: `module:A imports/depends_on module:B`\n- Hierarchy: `concept:X part_of concept:Y`\n- Authorship: `person:X authored file:Y`\n- Domain relationships: `concept:parliament elects concept:president`\n\n## Entity type reference\n\n| Type | Use for | Example |\n|------|---------|---------|\n| `file` | Source files, configs, docs | `file:src/auth.ts` |\n| `function` | Functions, methods, endpoints | `function:handleLogin` |\n| `class` | Classes, interfaces, types | `class:UserService` |\n| `module` | Packages, directories, namespaces | `module:authentication` |\n| `person` | Human actors, team members | `person:alice` |\n| `concept` | Abstract ideas, domains | `concept:caching` |\n| `tool` | External tools, services, libraries | `tool:redis`, `tool:pytest` |\n| `project` | Projects, repositories, services | `project:backend-api` |\n\n**Guidelines:**\n- Use the most specific type. `person:alice` not `concept:alice` for a human.\n- Prefer lowercase names: `file:readme.md` not `file:README.md`\n- For ambiguous names, add context: `function:auth.handleLogin` not `function:handleLogin`\n- Entity names are normalized: `Alice Smith` becomes `alice-smith`\n\n## Evidence links\n\nEpisodes can provide evidence for/against concepts with typed relationships. Use this when an experience supports, contradicts, or qualifies an existing concept:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nevidence concept=c-123 episode=ep-456 type=supports strength=0.8 \"confirms the caching strategy works\"\nevidence concept=c-123 episode=ep-789 type=contradicts strength=0.6 \"edge case where caching fails\"\nevidence concept=c-123 episode=ep-abc type=qualifies strength=0.5 \"only applies when feature flag enabled\"\nunlink concept=c-123 episode=ep-old\nEOF\n```\n\n**Link types:**\n- `supports` \u2014 episode confirms/strengthens the concept (default)\n- `contradicts` \u2014 episode challenges/weakens the concept\n- `exemplifies` \u2014 episode is a specific instance\n- `qualifies` \u2014 episode adds conditions/exceptions\n- `supersedes` \u2014 episode invalidates old info\n\nConcepts with more supporting evidence rank higher in recall; contradicting evidence reduces activation.\n\n## Freeform concept types\n\nConcepts can have any type string, not just `pattern` or `fact`. Use domain-specific types:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nconcept type=hypothesis \"Sharding at 10M rows will solve latency issues\"\nconcept type=rule \"If latency > 100ms, enable circuit breaker\"\nconcept type=procedure \"Deploy process: staging \u2192 canary \u2192 production\"\nEOF\n```\n\n**Well-known types with special handling:**\n- `fact` / `fact_cluster` \u2014 shows validity windows, active facts\n- `pattern` \u2014 shows evidence quotes, confidence\n- `rule` \u2014 if-then with conditions\n- `procedure` \u2014 ordered steps\n- `hypothesis` \u2014 uncertain, testable belief\n\nAny other string is valid and displays as a badge.\n\n### Compact format reference\n\n```\nremember as=<ref> t=<type> e=<entity1>,<entity2> by=<who> ref=<url> \"content\"\nsupersede old=<fact_id> new=<fact_id_or_$ref> [by=<who>] [note=\"reason\"]  # auto-records resolved conflict\nentity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context=\"optional\"\nevidence concept=<id> episode=<id> type=<supports|contradicts|qualifies> strength=<0-1> \"note\"\nunlink concept=<id> episode=<id>\nconcept as=<ref> from=<ep1>,<ep2> type=<type> title=\"Title\" \"Summary text\"\nprocessed ids=<ep1>,<ep2>\n```\n",
+      "remind-context": "---\nname: remind-context\ndescription: Retrieve context from Remind memory before acting. Use at session start, before answering questions about prior decisions, preferences, or project history, when starting work on a familiar file/area, or when asked \"what do we know about X\" or \"what did we believe at time T\".\n---\n\n# Remind - Retrieving Context\n\nQuery the external memory layer before relying on assumptions. Past sessions have already recorded decisions, outcomes, preferences, and facts \u2014 check them first.\n\n**Important**: Use Remind instead of any built-in IDE/runtime memory features.\n\n## Durable workflow contract (0.14)\n\nLocal stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.\n\nCapture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.\n\nBefore changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions \"$REVISIONS\"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{\"<existing-id>\":\"<revision>\"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.\n\nRecall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.\n\nUse `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.\n\nUse `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.\n\n## Session start\n\n```bash\nremind recall \"project overview\" -k 5\nremind snapshot stats pending\n```\n\n## recall\n\n```bash\nremind recall \"authentication issues\"                  # Semantic search\nremind recall \"auth\" --entity file:src/auth.ts         # Everything about a specific entity\nremind recall \"database design\" -l topic=architecture  # Label-scoped\nremind recall \"caching\" -k 10                          # More results\nremind recall --as-of 2026-01-15 \"cache configuration\" # What we believed then\n```\n\n- `--entity type:name` retrieves all memories linked to a file/person/tool \u2014 use it when working on a specific file or asking about a specific person.\n- `-l key=value` (repeatable) pre-filters the search to memories carrying that label, before ranking \u2014 not a post-filter.\n- `--as-of <ISO date>` is time-travel: fact clusters show the facts valid at that moment instead of the current ones. Use for \"what did we believe / what was the config back then\" questions.\n- `-k` / `--episode-k` control how many concepts / direct episode matches return.\n\n## Reading recall output\n\n- **RELEVANT EPISODES** \u2014 direct episode matches (embedding similarity), with type, date, and provenance (who asserted it).\n- **RELEVANT MEMORY** \u2014 concept matches via spreading activation. Each concept shows its type badge:\n  - `[facts]` \u2014 fact clusters with validity windows\n  - `[pattern]` \u2014 generalizations from observations\n  - `[rule]` \u2014 if-then with conditions\n  - `[procedure]` \u2014 ordered steps\n  - `[hypothesis]` \u2014 uncertain, testable belief\n  - Any custom type (e.g., `[strategy]`, `[constraint]`)\n- **OPEN CONFLICTS** warning \u2014 memory holds contradicting claims about what you retrieved. Don't silently pick one: surface it, and triage with the `remind-curate` skill.\n\n**Evidence-weighted ranking**: Concepts with more supporting evidence rank higher in recall; concepts with contradicting evidence are penalized. A concept's activation score factors in its net evidence strength.\n\n**Semantic collision warnings**: When a new fact is remembered with high semantic similarity to existing facts (not just entity overlap), recall may surface both as potential conflicts.\n\nTrust currently-valid facts over your assumptions; they carry provenance and supersession history.\n\n## Understanding recall output\n\n### RELEVANT EPISODES (similarity score 0.0-1.0)\n- Higher score = closer embedding match to your query\n- Episodes are raw captures \u2014 may contain noise or duplicates\n- **Use for**: recent context, exact quotes, provenance checking\n- Inspect raw similarity and lexical signals with `--explain`; normalized ranking scores do not have universal relevance thresholds.\n\n### RELEVANT MEMORY (activation score 0.0-1.0)\n- Higher score = more relevant via spreading activation through the concept graph\n- Concepts are curated knowledge \u2014 higher signal than raw episodes\n- **Use for**: established patterns, decisions, generalizations\n\n### Concept type badges\n- `[facts]` \u2014 Fact cluster with temporal validity; check valid_from/valid_to\n- `[pattern]` \u2014 Generalized observation from multiple episodes\n- `[rule]` \u2014 If-then relationship with conditions\n- `[hypothesis]` \u2014 Uncertain belief, testable\n- Any other badge \u2014 Custom concept type\n\n### When you see OPEN CONFLICTS\nMemory contains contradicting claims about the retrieved subject. **Do not silently pick one.**\n1. Surface the conflict to the user, OR\n2. Run the curation workflow to resolve it:\n   - `remind snapshot conflicts` to see details\n   - `remind apply --revisions \"$REVISIONS\" 'resolve id=<conflict_id> winner=<fact_id> note=\"reason\"'`\n\n## snapshot (structured reads)\n\nFor machine-readable memory state, use `snapshot` with combinable scopes:\n\n```bash\n# Core scopes\nremind snapshot stats                         # Memory statistics\nremind snapshot pending conflicts             # Pending episodes + open conflicts\nremind snapshot health                        # Actionable issues summary\n\n# Browsing scopes (for exploring memory)\nremind snapshot concepts                      # All concepts\nremind snapshot episodes:20                   # Recent 20 episodes\nremind snapshot entities                      # All entities with mention counts\nremind snapshot entities:person               # Filter entities by type\nremind snapshot labels                        # All distinct labels with counts\nremind snapshot decisions:10                  # Recent 10 decision episodes\nremind snapshot questions                     # Open question episodes\n\n# Detail scopes\nremind snapshot entity:concept:caching        # All data for an entity\nremind snapshot label:topic=architecture      # All data for a label\nremind snapshot concept:abc123                # Concept detail with facts, history\nremind snapshot \"query:authentication issues\" # Semantic search as JSON\n```\n\n`snapshot` returns JSON \u2014 ideal for feeding into `apply` changesets or automated processing.\n\n## Browsing (no query yet)\n\n```bash\nremind snapshot stats                        # Memory size/health overview\nremind snapshot health                       # Actionable issues needing attention\nremind snapshot concepts                     # List all concepts\nremind snapshot entities                     # Entities available for --entity recall\n```\n\n**Explore workflow**: `snapshot stats health` \u2192 `recall \"<query>\"` \u2192 `snapshot concept:<id>` for details.\n",
+      "remind-curate": "---\nname: remind-curate\ndescription: Maintain Remind memory quality. Use when recall output shows an OPEN CONFLICTS warning, the user corrects previously stored information, stored memories are outdated or misfiled, labels need reorganizing, a work session is wrapping up, or after ingesting multiple documents from different sources or time periods. This is also the consolidation procedure \u2014 run at session end to process pending episodes.\n---\n\n# Remind - Curating Memory\n\nKeep the memory layer trustworthy: process pending episodes into concepts, triage contradictions, correct or retire stale items, and keep labels consistent.\n\n**Curation is where your reasoning turns raw episodes into lasting knowledge.** Remind stores facts deterministically but relies on you to form patterns, identify relationships, and resolve conflicts.\n\n## Durable workflow contract (0.14)\n\nLocal stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.\n\nCapture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.\n\nBefore changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions \"$REVISIONS\"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{\"<existing-id>\":\"<revision>\"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.\n\nWhen `label` or `unlabel` targets a fact ID, it edits the source episode. Read and pass the source episode's revision, keyed by its episode ID.\n\nRecall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.\n\nUse `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.\n\nUse `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.\n\n## Verify the resulting state\n\nKeep factual assertions, decisions, and outcomes in separately typed episodes;\nuse `remember_batch` for multi-assertion notes. Link the decision and outcome as\nevidence for the resulting pattern, and preserve their source provenance.\nA concept's `source_episodes` and Evidence rows express support; the number of\nrows alone does not measure independent sources or truth.\n\nAfter a correction, use `snapshot concept:<cluster-id>` to verify the old fact\nis closed and its `superseded_by` chain reaches the active replacement. A summary\nsaying \"superseded history\" is not a supersession link. Verify the final memory\nstate before claiming that a correction or curation task is complete.\n\n## When to curate\n\n- Session end \u2014 process what accumulated during the session\n- After bulk document ingestion \u2014 **always run curation after reading multiple documents from different sources or time periods**; this is when silent contradictions are most likely\n- When `recall` or `snapshot conflicts` shows open conflicts\n- When the user corrects something already stored\n\n## The curation loop\n\nAt session boundaries or when cleaning up memory:\n\n### 1. Read current state\n\n```bash\nremind snapshot pending conflicts health\n```\n\nThis returns JSON with:\n- **pending.episodes**: Unprocessed episodes with their entities\n- **conflicts.conflicts**: Open conflicts with full fact details\n- **health**: Summary of issues needing attention (pending count, open conflicts, orphan concepts)\n\n### 2. Find contradictions before forming concepts\n\n**This step is mandatory after bulk document ingestion.** For each major theme in the pending episodes, run a recall query to surface what is already in the store:\n\n```bash\nremind recall \"structural system framing\" -k 8\nremind recall \"heating mechanical system\" -k 8\nremind recall \"budget cost schedule\" -k 8\n```\n\nCompare the recall output against the pending episodes. Look for:\n- The same attribute stated with different values (e.g., two roof pitches, two budgets)\n- A pending episode that explicitly supersedes an earlier document's claim\n- Nearby episode IDs that were flagged during ingestion (shown in `remember` output as \"Nearby \u2014 review for conflicts\")\n\nUse fact IDs from snapshot/capture, never episode IDs. For raw observations, curate supported concepts first and use `kind=concept` with concept IDs.\n\n**When you find a contradiction, record it immediately** \u2014 do not defer to later:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nconflict a=<older_fact_id> b=<newer_fact_id> note=\"doc A says timber frame, doc B says steel moment frame \u2014 needs triage\"\nEOF\n```\n\nIf you already know which is correct, use `supersede` instead (facts only):\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nsupersede old=<old_fact_id> new=<new_fact_id> by=\"source doc\" note=\"March 2026 structural report supersedes February overview\"\nEOF\n```\n\n### 3. Analyze and form concepts\n\nLook at the pending episodes (with contradictions now flagged). Ask:\n- What patterns emerge across these episodes?\n- Are there recurring themes, entities, or decisions?\n- Do any episodes together support a generalized concept?\n- What relationships exist between entities mentioned? (e.g., \"X owns Y\", \"A depends on B\")\n\n### 3. Write a changeset\n\nEmit a single `apply` changeset that:\n- Creates concepts from episode groups\n- Links related concepts with relations\n- Resolves or dismisses conflicts\n- Marks episodes as processed\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nconcept as=c1 from=ep:11,ep:12,ep:13 title=\"Retry-with-backoff for transient failures\" \"Exponential backoff resolves flaky deploys, API timeouts, and DB connection issues.\"\nlink from=$c1 to=concept:resilience type=specializes\nresolve id=conflict:7 winner=fact:b3d01 \"confirmed by bob\"\nprocessed ids=ep:11,ep:12,ep:13\nEOF\n```\n\n## Creating concepts\n\nWhen multiple episodes form a coherent pattern:\n\n```\nconcept as=<ref> from=<ep1>,<ep2> title=\"<Pattern name>\" \"<Summary>\"\nlink from=$<ref> to=<target_concept_id> type=<relation>\nprocessed ids=<ep1>,<ep2>\n```\n\n**Concept formation guidance:**\n- Title: Name the pattern, not the instances (\"Retry-with-backoff for resilience\" not \"Fixed deploy on Tuesday\")\n- Summary: The generalized insight that applies beyond these specific episodes\n- Relations: `implies`, `contradicts`, `specializes`, `generalizes`, `causes`, `correlates`, `part_of`, `context_of`\n- Mark source episodes as processed so they don't appear in future pending lists\n\n**Don't over-generalize**: If episodes don't clearly form a pattern, leave them as unprocessed episodes rather than forcing a weak concept.\n\n## Inspecting conflicts\n\nUse either the CLI command or snapshot scope \u2014 they return the same data:\n\n```bash\n# CLI (human-readable table; add --json for machine output)\nremind conflicts list                    # open only (default)\nremind conflicts list --status resolved  # winner was picked or supersede was used\nremind conflicts list --status dismissed # both claims kept (different contexts)\nremind conflicts list --status all       # everything\n\n# Snapshot scope (JSON, combinable with other scopes)\nremind snapshot conflicts                # open only\nremind snapshot conflicts:resolved       # resolved only\nremind snapshot conflicts:dismissed      # dismissed only\nremind snapshot conflicts:all            # all statuses\nremind snapshot conflicts:resolved pending   # combine scopes\n```\n\n**After bulk ingestion, always check resolved conflicts too** \u2014 `supersede` ops create resolved conflict records automatically, so `remind conflicts list --status resolved` shows the full supersession history even if you never ran a formal `conflict \u2192 resolve` workflow.\n\n## Handling conflicts\n\nWhen `snapshot` shows conflicts, or `recall` warns about contested information:\n\n### Resolve: One claim is correct\n\n```\nresolve id=conflict:7 winner=fact:b3d01 \"confirmed in prod config\"\n```\n\nThe losing fact is superseded (kept as history, hidden from recall) and the resolution is recorded.\n\n### Dismiss: Both claims valid in context\n\n```\ndismiss id=conflict:7 \"both true: staging vs prod\"\n```\n\nBoth facts stay active \u2014 use when the conflict is apparent not real (different contexts, time periods, etc.).\n\n### Can't decide? Ask the user\n\nUse provenance (who asserted each fact, when, source links) to decide. If the information is genuinely contested and you can't determine the truth, ask rather than guess.\n\n## Managing evidence links\n\nEpisodes link to concepts with typed relationships. During curation:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\n# Add supporting evidence to a concept\nevidence concept=c-123 episode=ep-456 type=supports strength=0.8 \"confirms the pattern\"\n\n# Mark an episode as contradicting a concept\nevidence concept=c-123 episode=ep-789 type=contradicts strength=0.6 \"edge case failure\"\n\n# Add a qualifying condition\nevidence concept=c-123 episode=ep-abc type=qualifies strength=0.5 \"only when feature flag enabled\"\n\n# Remove an evidence link (episode no longer relevant to concept)\nunlink concept=c-123 episode=ep-old\nEOF\n```\n\n**Link types:**\n- `supports` \u2014 episode confirms/strengthens the concept\n- `contradicts` \u2014 episode challenges/weakens the concept\n- `exemplifies` \u2014 episode is a specific instance\n- `qualifies` \u2014 episode adds conditions/exceptions\n\nConcepts with more supporting evidence rank higher in recall; contradicting evidence reduces activation.\n\n## Evolving concepts\n\nConcepts are living documents. Use these operations when knowledge evolves:\n\n### Reshape: Change type\n\n```\nreshape id=c-123 type=hypothesis \"Changed from pattern after failed testing\"\n```\n\nUse when the nature of knowledge changes (e.g., a pattern becomes a hypothesis when it fails in new contexts).\n\n### Merge: Combine overlapping concepts\n\n```\nmerge from=c-123,c-456 into=c-new \"Combined overlapping caching concepts\"\n```\n\nUse when two concepts describe the same thing. Source concepts are soft-deleted with lineage preserved.\n\n### Split: Separate distinct concerns\n\n```\nsplit id=c-123 into=c-new1,c-new2 \"Separated read vs write caching\"\n```\n\nUse when a concept covers multiple distinct things. Creates new concepts linked to the parent.\n\n## Correcting mistakes\n\n```bash\nremind update-episode <id> -c \"Corrected information\"    # Fix content\nremind update-episode <id> -t decision                   # Fix misclassified type\nremind update-concept <id> -s \"Refined summary\"\nremind update-episode <id> -l topic=architecture         # Re-label\n```\n\nWhen the user corrects a stored fact, prefer capturing the new assertion (with provenance) and using `supersede` to handle it \u2014 this preserves history.\n\n## Deleting noise\n\n```bash\nremind delete-episode <id>       # Soft delete (recoverable)\nremind delete-concept <id>\nremind deleted                   # Review deleted items\nremind restore-episode <id>\n```\n\nDelete for noise and mistakes. For facts that changed over time, don't delete \u2014 supersession keeps history queryable via `--as-of`.\n\n## Labels\n\nLabels are freeform `key=value` tags, not a managed entity \u2014 there's nothing to create or delete, just apply or remove them on episodes/concepts:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nlabel id=c-123 key=topic value=architecture\nunlabel id=c-123 key=topic value=infra\nEOF\n```\n\nOr via CLI:\n```bash\nremind update-concept c-123 -l topic=architecture\nremind snapshot labels                    # See all distinct labels in use\nremind snapshot label:topic=architecture  # Everything under one label\n```\n\nIf the same `key=value` pairs recur across many episodes/concepts, that's a sign of a real grouping worth keeping consistent \u2014 reuse existing keys rather than inventing near-duplicates (`topic=infra` vs `area=infra`).\n\n## Compact format reference\n\n```\nremember as=<ref> t=<type> e=<entities> by=<who> ref=<url> \"content\"\nsupersede old=<fact_id> new=<fact_id_or_$ref>\nentity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context=\"optional\"\nevidence concept=<id> episode=<id> type=<supports|contradicts|qualifies> strength=<0-1> \"note\"\nunlink concept=<id> episode=<id>\nconcept as=<ref> from=<ep_ids> type=<type> title=\"Title\" \"Summary\"\nlink from=<concept_id_or_$ref> to=<concept_id> type=<relation_type>\nreshape id=<concept_id> type=<new_type> \"reason for type change\"\nmerge from=<id1>,<id2> into=<new_id> \"reason for merge\"\nsplit id=<id> into=<new_id1>,<new_id2> \"reason for split\"\nresolve id=<conflict_id> winner=<fact_id> by=<who> \"resolution note\"\ndismiss id=<conflict_id> \"dismissal note\"\nprocessed ids=<ep_id1>,<ep_id2>\nlabel id=<episode_or_concept_id> key=<key> value=<value>\nunlabel id=<episode_or_concept_id> key=<key> value=<value>\ndelete id=<id>\nrestore id=<id>\nupdate id=<id> content=\"new content\" (or title/summary for concepts)\n```\n"
+    },
+    "tools": {
+      "apply": {
+        "description": "Apply a batch changeset to memory.\n\nAll operations execute in a single transaction (all-or-nothing).\nReturns per-operation results including new IDs and any collisions.\n\nRead revisions with snapshot before any edits to existing records. Pass\nexpected_revisions={\"<existing-id>\":\"<revision>\"}; this includes source\nepisodes used by concept/processed, old facts used by supersede, and\nexisting concepts updated. New records created in this changeset need\nno prior revision. A missing revision rejects the entire changeset.\n\nFor a factual correction, create a new fact and supersede the old fact\natomically, using IDs from inspected memory:\n    remember as=new t=fact \"The retry limit is 8\"\n    supersede old=<old-fact-id> new=$new note=\"Explicit source correction\"\nThen inspect the old/new facts via snapshot concept:<cluster-id>:\nthe old fact must have valid_to and superseded_by, and the replacement\nmust be active. Writing \"superseded\" in a summary has no structural effect.\nIf the earlier assertion exists only in a non-fact episode, first capture\nthat historical assertion as a fact with its original source provenance,\nthen supersede it. Never claim a history link exists without verifying it.\n\nInput format (compact line format, one op per line):\n    remember as=f1 t=fact e=concept:caching \"Cache TTL is 600 seconds\"\n    supersede old=fact:a91c2 new=$f1\n    concept as=c1 from=ep:11,ep:12 title=\"Pattern title\" \"Summary text\"\n    resolve id=conflict:7 winner=fact:b3d01 \"confirmed by bob\"\n    processed ids=ep:11,ep:12\n\nOperations:\n    remember: Store episode (as=ref, t=type, e=entities, by=asserted_by, content)\n    supersede: Mark old fact as superseded by new (old=id, new=id/$ref)\n    conflict: Open a conflict (fact_a=id, fact_b=id, description)\n    resolve: Resolve conflict with winner (id=conflict_id, winner=fact_id, note)\n    dismiss: Dismiss conflict as not actionable (id=conflict_id, note)\n    concept: Create concept from episodes (as=ref, from=ep_ids, title, content=summary)\n    update: Update episode/concept fields (id, content/title/summary)\n    link: Add concept relation (from=concept_id, to=concept_id, type=relation_type)\n    label: Add a key=value label to episode/concept (id, key, value)\n    unlabel: Remove a key=value label from episode/concept (id, key, value)\n    delete: Soft-delete episode/concept (id)\n    restore: Restore soft-deleted item (id)\n    processed: Mark episodes as reviewed (ids=ep1,ep2,...)\n\nLocal refs: Use `as=name` to declare, `$name` to reference within same changeset.\n\nArgs:\n    changeset: Operations in compact line format or JSON array\n    dry_run: If True, validate only without executing\n    expected_revisions: Existing record ID-to-revision map from snapshot\n    idempotency_key: Stable key for retrying the same changeset\n\nReturns:\n    JSON with success status, executed ops count, results with IDs, and any errors",
+        "parameters": {
+          "properties": {
+            "changeset": {
+              "type": "string"
+            },
+            "dry_run": {
+              "default": false,
+              "type": "boolean"
+            },
+            "expected_revisions": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "idempotency_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "changeset"
+          ],
+          "type": "object"
+        }
+      },
+      "inspect": {
+        "description": "Inspect concepts or episodes in memory.\n\nUse this to examine what's stored in memory:\n- List all concepts (no concept_id)\n- View a specific concept (with concept_id)\n- View recent episodes (show_episodes=True)\n- Filter episodes by date range (show_episodes=True with start_date/end_date)\n\nArgs:\n    concept_id: Optional ID of a specific concept to inspect\n    show_episodes: If True, show episodes instead of concepts\n    limit: Maximum number of items to show\n    start_date: Optional ISO format date/datetime (e.g., \"2024-01-01\" or \"2024-01-01T10:00:00\") - inclusive start\n    end_date: Optional ISO format date/datetime (e.g., \"2024-12-31\" or \"2024-12-31T23:59:59\") - inclusive end\n\nReturns:\n    Formatted view of concepts or episodes\n\nExamples:\n    - inspect(show_episodes=True) - show recent episodes\n    - inspect(show_episodes=True, start_date=\"2024-01-01\") - episodes from Jan 1, 2024 onwards\n    - inspect(show_episodes=True, start_date=\"2024-01-01\", end_date=\"2024-01-31\") - January 2024 episodes\n    - inspect(show_episodes=True, end_date=\"2024-06-30\") - episodes up to June 30, 2024",
+        "parameters": {
+          "properties": {
+            "concept_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "end_date": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "limit": {
+              "default": 10,
+              "type": "integer"
+            },
+            "show_episodes": {
+              "default": false,
+              "type": "boolean"
+            },
+            "start_date": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "type": "object"
+        }
+      },
+      "recall": {
+        "description": "Retrieve relevant memories for a query.\n\nUse at session start, before answering questions about prior decisions,\npreferences, or project history, and when starting work on a familiar\nfile or area (entity mode). Past sessions have already recorded\noutcomes and decisions \u2014 check before relying on assumptions.\n\nTwo modes:\n1. Semantic search (default): Uses embeddings with spreading activation\n2. Entity-based: Retrieves all memories about a specific entity\n\nProvide query for semantic search, or entity for entity-based lookup.\nAt least one of query or entity must be provided.\n\nIf the output shows an OPEN CONFLICTS warning, memory holds contradicting\nclaims about what was retrieved \u2014 don't silently pick one; surface it or\ntriage with list_conflicts/resolve_conflict.\n\nArgs:\n    query: What to search for in memory (required for semantic search)\n    k: Number of concepts to retrieve (default: 3)\n    context: Optional additional context to improve retrieval\n    entity: Optional entity ID to retrieve by (e.g., \"file:src/auth.ts\")\n    episode_k: Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable.\n    labels: Optional key=value label filter, comma-separated (e.g. \"topic=architecture\").\n            Pre-filters candidates to concepts/episodes matching ALL given labels\n            through search, graph traversal, and rendered evidence. Use snapshot(\"labels\") to see what's in use.\n    as_of: ISO date/datetime (e.g. \"2026-01-15\"). Fact clusters show the\n           facts that were valid at that point in time instead of the\n           current ones. Useful for \"what did we believe then\" questions.\n    max_chars: Cap the formatted output length. When exceeded, the\n            lowest-ranked concepts/episodes are dropped whole (never\n            truncated mid-item) until the result fits.\n    min_score: Drop concepts/episodes below this activation score even\n            if the k/episode_k budget has room left.\n    timeout_ms: Soft deadline for the retrieval. If exceeded, returns\n            the best results gathered so far instead of raising.\n\nReturns:\n    Formatted memory context for injection into prompts",
+        "parameters": {
+          "properties": {
+            "as_of": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "context": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "entity": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "episode_k": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "explain": {
+              "default": false,
+              "type": "boolean"
+            },
+            "k": {
+              "default": 3,
+              "type": "integer"
+            },
+            "labels": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "max_chars": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "min_score": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "query": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout_ms": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "track_usage": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "remember": {
+        "description": "Store an experience or observation in memory (fast, no LLM calls).\n\nUse when any of these happen:\n- A decision is made \u2014 capture the *why*, not just the choice (type: decision)\n- An approach succeeds or fails \u2014 outcomes are the highest-value memories (type: outcome)\n- A preference changes (type: preference)\n- A factual assertion or correction is supplied (type: fact)\n- A concrete fact surfaces: config value, owner, name, date (type: fact)\n- An open question or uncertainty is raised (type: question)\n\nWrite a clear standalone statement (\"User prefers tabs\", not \"tabs\") \u2014 it\nwill be read without the conversation that produced it. Set episode_type\nexplicitly when you know it. Skip trivial or already-captured info; for\nmulti-assertion source notes use remember_batch with separate items.\n\nKeep a fact's content to the assertion itself. Put speaker/permalink in\nasserted_by/source_ref and correction rationale in a supersede note.\nA fact capture does not supersede an older claim automatically: inspect\nold fact IDs/revisions and explicitly apply supersede. Describing a\nclaim as \"superseded\" in prose does not change its validity or links.\n\nCuration is explicit: use snapshot and apply; no internal LLM calls.\n\nArgs:\n    content: The experience/observation to remember (clear, standalone statement)\n    metadata: Optional JSON string with additional metadata\n    episode_type: Optional explicit type (e.g., observation, decision, question, meta, preference, outcome, fact).\n                  Defaults to observation; no automatic type inference.\n                  Custom configured types are also accepted.\n    entities: Optional comma-separated entity IDs (e.g., \"file:src/auth.ts,person:alice\")\n              (not extracted automatically). Entity links power\n              targeted recall later \u2014 tag the concrete things the memory is about.\n    labels: Optional freeform key=value labels, comma-separated (e.g.\n            \"topic=architecture\" or \"topic=architecture,team=infra\"). Used to\n            scope retrieval later via recall(labels=...) or snapshot(label:<k>=<v>).\n    source_type: Origin of this memory (e.g., \"agent\", \"slack\", \"github\", \"manual\").\n    asserted_by: Who asserted this information (e.g., \"alice\", \"agent:cursor\").\n                 Set it whenever the information came from someone specific \u2014\n                 provenance is what makes later conflict resolution possible.\n    source_ref: Link back to the original artifact (URL/permalink, e.g.\n                Slack message, PR, doc).\n\nReturns:\n    JSON with episode_id; fact_id/cluster_id for fact captures; revisions,\n    collisions, nearby records, and warnings. Only fact captures create facts.",
+        "parameters": {
+          "properties": {
+            "asserted_by": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "content": {
+              "type": "string"
+            },
+            "entities": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "episode_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "idempotency_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "labels": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "remember_batch": {
+        "description": "Capture separate assertions atomically; returns ordered per-item results.\n\nEach item uses remember fields: content, episode_type, entities (list of\nIDs), labels (object), asserted_by, source_ref. Use distinct items for a\nconcrete fact, a decision with rationale, and an observed outcome, even\nwhen they came from one message. A fact item creates a first-class fact\nand returns fact_id/cluster_id; other types return episode IDs only.\nExample items: [{\"content\":\"Retries are limited to 4\",\"episode_type\":\"fact\"},\n{\"content\":\"Use backoff to avoid overload\",\"episode_type\":\"decision\"},\n{\"content\":\"Backoff reduced errors\",\"episode_type\":\"outcome\"}].\nCopy the actual source permalink into source_ref; asserted_by names the\nspeaker. Capture performs no semantic splitting or correction for you.",
+        "parameters": {
+          "properties": {
+            "idempotency_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "items": {
+              "items": {
+                "properties": {
+                  "asserted_by": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "The person or agent who asserted this information. A source reference is not a speaker; preserve it in source_ref."
+                  },
+                  "confidence": {
+                    "default": 1.0,
+                    "type": "number"
+                  },
+                  "content": {
+                    "description": "One standalone assertion. Separate facts, decisions, and outcomes into distinct items.",
+                    "type": "string"
+                  },
+                  "entities": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "Entity IDs as a JSON array, not a comma-separated string."
+                  },
+                  "episode_type": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "Use fact for concrete assertions and factual corrections, decision for choices, outcome for observed results. Defaults to observation."
+                  },
+                  "labels": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          ]
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "Labels as a JSON object, for example {\"area\":\"deployment\"}."
+                  },
+                  "metadata": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "source_ref": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "The supplied source reference, URI, or permalink (for example ticket:123). When a source is provided, copy it here on every item, including facts, decisions, and outcomes. Do not put it only in asserted_by or the content."
+                  },
+                  "source_type": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  }
+                },
+                "required": [
+                  "content"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "type": "object"
+        }
+      },
+      "snapshot": {
+        "description": "Read a snapshot of memory state as JSON.\n\nCombines one or more scopes into a single JSON document.\nUse to inspect memory before curating with apply.\nReturned records include revision values for expected_revisions. Facts\nhave IDs separate from source episodes. Inspect concept:<cluster-id> to\nobtain fact IDs and verify active/closed validity and supersession links.\nThere is no episode:<id> scope; use entity:<id>, recent:<n>, or inspect\nwith show_episodes=True to locate episode records.\n\nScopes (space or comma separated):\n    pending      - Unprocessed episodes with their entities\n    conflicts    - Open conflicts with full fact details\n    entity:<id>  - Episodes and concepts for an entity\n    labels       - All distinct key/value labels in use, with counts\n    label:<k>=<v> - Episodes and concepts carrying this label\n    concept:<id> - Concept detail with facts and supersession history\n    recent:<n>   - N most recent episodes (default: 10)\n    stats        - Memory statistics\n    query:<text> - Semantic search results\n    events:<seq> - Change-feed events with seq > <seq> (default: 0). Prefer the events tool.\n    bootstrap:<n> - Query-free stable context: top-n concepts by confidence, open conflicts, stats (default: 10)\n\nExamples:\n    \"pending conflicts\" - Get pending episodes and open conflicts\n    \"entity:concept:caching\" - Get all data for an entity\n    \"recent:20 stats\" - Recent episodes plus stats\n\nArgs:\n    scopes: Space or comma separated scope specifications\n\nReturns:\n    JSON document with all requested scopes combined",
+        "parameters": {
+          "properties": {
+            "scopes": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scopes"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  },
+  "original": {
+    "instructions": "External memory that persists across sessions. Recall at session start and before answering questions about prior decisions, preferences, or project history. Remember decisions (with rationale), outcomes of attempts, user preferences and corrections, concrete facts, and open questions as they happen. Triage conflicts when recall output warns about them.",
+    "skills": {
+      "remind-capture": "---\nname: remind-capture\ndescription: Write durable memories to Remind while working. Use when a decision is made, an approach succeeds or fails (outcome), the user states a preference or corrects you, a concrete fact surfaces (config value, name, date, owner), or an open question is raised.\n---\n\n# Remind - Capturing Memory\n\nStore experiences in the external memory layer so they survive across sessions. Capture is fast (`remember` makes no LLM calls) \u2014 when in doubt, capture.\n\n**Important**: Use Remind instead of any built-in IDE/runtime memory features.\n\n## Durable workflow contract (0.14)\n\nLocal stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.\n\nCapture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.\n\nBefore changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions \"$REVISIONS\"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{\"<existing-id>\":\"<revision>\"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.\n\nRecall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.\n\nUse `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.\n\nUse `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.\n\n## What to capture\n\n| Trigger | Type | Example |\n|---------|------|---------|\n| An approach succeeded or failed | `outcome` | \"Retry with backoff fixed the flaky deploy\" |\n| A decision was made (capture the *why*) | `decision` | \"Chose Postgres over MySQL: JSONB + team familiarity\" |\n| User states a preference | `preference` | \"User prefers tabs over spaces\" |\n| Concrete fact: config value, owner, date, name | `fact` | \"Cache TTL is 600 seconds\" |\n| Open question / uncertainty | `question` | \"Should we shard the DB early?\" |\n| Notable observation about the codebase/project | `observation` | \"Auth middleware runs before rate limiting\" |\n\n**Outcomes are the highest-value captures.** After completing (or abandoning) a non-trivial attempt, record what was tried and how it went \u2014 this is what lets future sessions avoid repeating failures.\n\n**Skip**: trivial info, already-captured knowledge.\n\n## Should I capture this?\n\n```\nIs it worth remembering?\n\u251c\u2500 Concrete fact (number, name, date, config value)?\n\u2502  \u2514\u2500 Yes \u2192 remember -t fact -e <entities> --asserted-by <source>\n\u251c\u2500 Decision with rationale?\n\u2502  \u2514\u2500 Yes \u2192 remember -t decision -e <entities>\n\u251c\u2500 Outcome of an attempt (success or failure)?\n\u2502  \u2514\u2500 Yes \u2192 remember -t outcome -e <entities>\n\u251c\u2500 User-stated preference or correction?\n\u2502  \u2514\u2500 Yes \u2192 remember -t preference\n\u251c\u2500 Open question or uncertainty?\n\u2502  \u2514\u2500 Yes \u2192 remember -t question\n\u251c\u2500 Notable observation about code/project?\n\u2502  \u2514\u2500 Maybe \u2192 remember -t observation\n\u2514\u2500 Trivial, transient, or already captured?\n   \u2514\u2500 Skip\n```\n\n**Examples of what to skip:**\n- \"I'll use the search tool\" (transient action)\n- \"The file has 100 lines\" (trivial, queryable)\n- Things you just recalled from memory (already captured)\n- Speculative thoughts not grounded in evidence\n\n## Single item: remember\n\n```bash\nremind remember \"Use Redis for caching\" -t decision -e tool:redis -e concept:caching\nremind remember \"Retry-with-backoff fixed flaky deploys\" -t outcome -l topic=infra\nremind remember \"Cache TTL is 600 seconds\" -t fact --asserted-by alice --source-ref \"https://slack.com/...\"\nremind remember \"User wants retry-after headers on 429s\" -t preference -l topic=product\n```\n\n- **Type** (`-t`): Always set the type explicitly when you know it.\n- **Entities** (`-e`): `type:name` format (`file`, `function`, `class`, `person`, `concept`, `tool`, `project`). Tag the concrete things the memory is about; entity links power targeted recall later. See \"Entity relationships\" below to capture how entities relate.\n- **Labels** (`-l key=value`, repeatable): freeform tags; there's no built-in \"topic\" entity \u2014 `topic` is just a label key you choose to use to group related memories.\n- **Provenance**: `--asserted-by <who>` (person or `agent:<name>`) and `--source-ref <url>` whenever the information came from somewhere specific. Provenance is what makes later conflict resolution possible \u2014 \"alice said X on 2026-03-01\" beats \"X\".\n\nWrite clear standalone statements: \"User prefers tabs\" not \"tabs\". A memory is read without the conversation that produced it.\n\n### Handling fact collisions and related facts\n\nFor `fact` type episodes, `remember` returns two lists of potentially conflicting facts:\n\n**Collisions** \u2014 active facts in the *same cluster* detected via:\n1. **Entity overlap**: facts sharing any entity IDs\n2. **Semantic similarity**: facts with similar embeddings (cosine > 0.7)\n\n**Related facts** \u2014 active facts in *other clusters* detected via:\n1. **Bare-name entity match**: strips the type prefix (`person:alice` \u2192 `alice`) so `concept:alice`, `project:alice`, etc. are all found, regardless of how the entity was typed\n2. **Global embedding similarity**: facts across all clusters with cosine > 0.6\n\nThe output looks like:\n\n```\nRemembered as episode ep-abc123\n  Type: fact\n  Entities: concept:alice\n  Fact ID: f-xyz789\n  Cluster: c-12345\n\n\u26a0 Entity type coercion (existing entity reused \u2014 verify this is correct):\n  concept:alice \u2192 person:alice\n\n\u26a0 2 potential collision(s) in same cluster:\n  - f-old456: Cache TTL is 300 seconds...\n  - f-old789: Alice is a dog\n\nRelated facts \u2014 check for conflicts (1):\n  [f-old012] \"Alice was really a horse\" \u00b7 project:alice \u00b7 user \u00b7 2026-07-03\n```\n\n**Entity type coercion** means an existing entity with the same name was found and reused, ignoring the type you specified. This is usually correct (normalizing `concept:alice` \u2192 `person:alice` when they mean the same thing), but if the types are genuinely different entities, you should use a more specific name to distinguish them (e.g. `concept:alice-in-wonderland` vs `person:alice-smith`).\n\nWhen you see collision/related lists:\n1. Read each candidate \u2014 collisions and related facts are both unresolved by default\n2. If the new fact supersedes an old one: use `remind apply --revisions \"$REVISIONS\"` with `supersede old=<id> new=<id> by=<who> note=\"reason\"` \u2014 this automatically records a resolved conflict for provenance, so the replacement is visible in future recall and the UI conflict history\n3. If there is a genuine contradiction that needs triage: use `conflict` op to record it formally\n4. If both are valid in different contexts: no action needed (or `dismiss` later via curate)\n5. **Don't ignore either list** \u2014 cross-cluster related facts are the most likely source of silent contradictions (same subject, different entity type)\n\n### Nearby episodes and concepts (all episode types)\n\nFor **every** `remember` call (not just facts), the output also includes the top-5 most semantically similar episodes and concepts already in the store:\n\n```\nNearby (2 episodes, 1 concepts) \u2014 review for conflicts:\n  [ep:a1b2c3d4] (0.91) The primary structure is timber frame...\n  [ep:e5f6g7h8] (0.84) Budget approved at $480,000 contingency $48,000\n  [concept:c-abc123] (0.88) Structural system specification\n```\n\nThe similarity score (0.0\u20131.0) is how close the embedding is \u2014 it is **not** a conflict signal by itself. You decide whether the content contradicts what you just stored.\n\n**Act on nearby items when you store any episode type:**\n\nFor raw observations, first curate supported concepts and use `kind=concept a=<concept_id> b=<other_concept_id>`. Fact conflicts require fact IDs from capture/snapshot, never episode IDs.\n\n1. **Contradiction found** \u2014 issue a `conflict` op so it shows up in `snapshot conflicts` for triage:\n   ```bash\n   remind apply --revisions \"$REVISIONS\" << 'EOF'\n   conflict a=<older_fact_id> b=<current_fact_id> note=\"doc says timber frame, new info says steel moment frame\"\n   EOF\n   ```\n2. **You already know the winner** \u2014 use `supersede` (facts only; records a resolved conflict automatically):\n   ```bash\n   remind apply --revisions \"$REVISIONS\" << 'EOF'\n   supersede old=<old_fact_id> new=<new_fact_id> by=<source> note=\"March 2026 structural report supersedes February overview\"\n   EOF\n   ```\n3. **Complementary or unrelated** \u2014 ignore and continue.\n\n**Do not silently discard nearby items.** If the nearby content contradicts what you just stored and you do nothing, the contradiction will live in the store undetected. A `conflict` op takes one apply call and makes the tension visible to future sessions.\n\n## Batch capture: apply\n\nFor multiple related captures (e.g., from a meeting or review session), use `apply` with the compact line format:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nremember as=f1 t=fact e=concept:caching \"Cache TTL is 600 seconds\"\nremember as=o1 t=outcome e=concept:deploy \"Retry with backoff fixed flaky deploys\"\nremember t=decision e=tool:redis,concept:caching \"Chose Redis for session caching: TTL support + team familiarity\"\nsupersede old=fact:old123 new=$f1\nEOF\n```\n\nApply runs all operations in a single transaction. Use `$refs` to reference items created earlier in the same changeset.\n\n## Entity relationships\n\nWhen content describes relationships between entities, capture both the fact AND the relationship. Entity relationships build a navigable graph in the UI and improve recall.\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nremember t=fact e=person:alice,project:backend \"Alice owns the backend project\"\nentity_relation source=person:alice target=project:backend relation=owns strength=0.9\nEOF\n```\n\nThe `entity_relation` operation accepts:\n- **source**: Entity ID (e.g., `person:alice`)\n- **target**: Entity ID (e.g., `project:backend`)\n- **relation**: Free-form relationship type (e.g., `owns`, `manages`, `depends_on`, `imports`, `authored`)\n- **strength**: 0.0\u20131.0 confidence (default 0.5)\n- **context**: Optional qualifier (e.g., \"as of Q2 2026\")\n\n**When to capture relationships:**\n- Ownership/responsibility: `person:X owns/manages project:Y`\n- Dependencies: `module:A imports/depends_on module:B`\n- Hierarchy: `concept:X part_of concept:Y`\n- Authorship: `person:X authored file:Y`\n- Domain relationships: `concept:parliament elects concept:president`\n\n## Entity type reference\n\n| Type | Use for | Example |\n|------|---------|---------|\n| `file` | Source files, configs, docs | `file:src/auth.ts` |\n| `function` | Functions, methods, endpoints | `function:handleLogin` |\n| `class` | Classes, interfaces, types | `class:UserService` |\n| `module` | Packages, directories, namespaces | `module:authentication` |\n| `person` | Human actors, team members | `person:alice` |\n| `concept` | Abstract ideas, domains | `concept:caching` |\n| `tool` | External tools, services, libraries | `tool:redis`, `tool:pytest` |\n| `project` | Projects, repositories, services | `project:backend-api` |\n\n**Guidelines:**\n- Use the most specific type. `person:alice` not `concept:alice` for a human.\n- Prefer lowercase names: `file:readme.md` not `file:README.md`\n- For ambiguous names, add context: `function:auth.handleLogin` not `function:handleLogin`\n- Entity names are normalized: `Alice Smith` becomes `alice-smith`\n\n## Evidence links\n\nEpisodes can provide evidence for/against concepts with typed relationships. Use this when an experience supports, contradicts, or qualifies an existing concept:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nevidence concept=c-123 episode=ep-456 type=supports strength=0.8 \"confirms the caching strategy works\"\nevidence concept=c-123 episode=ep-789 type=contradicts strength=0.6 \"edge case where caching fails\"\nevidence concept=c-123 episode=ep-abc type=qualifies strength=0.5 \"only applies when feature flag enabled\"\nunlink concept=c-123 episode=ep-old\nEOF\n```\n\n**Link types:**\n- `supports` \u2014 episode confirms/strengthens the concept (default)\n- `contradicts` \u2014 episode challenges/weakens the concept\n- `exemplifies` \u2014 episode is a specific instance\n- `qualifies` \u2014 episode adds conditions/exceptions\n- `supersedes` \u2014 episode invalidates old info\n\nConcepts with more supporting evidence rank higher in recall; contradicting evidence reduces activation.\n\n## Freeform concept types\n\nConcepts can have any type string, not just `pattern` or `fact`. Use domain-specific types:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nconcept type=hypothesis \"Sharding at 10M rows will solve latency issues\"\nconcept type=rule \"If latency > 100ms, enable circuit breaker\"\nconcept type=procedure \"Deploy process: staging \u2192 canary \u2192 production\"\nEOF\n```\n\n**Well-known types with special handling:**\n- `fact` / `fact_cluster` \u2014 shows validity windows, active facts\n- `pattern` \u2014 shows evidence quotes, confidence\n- `rule` \u2014 if-then with conditions\n- `procedure` \u2014 ordered steps\n- `hypothesis` \u2014 uncertain, testable belief\n\nAny other string is valid and displays as a badge.\n\n### Compact format reference\n\n```\nremember as=<ref> t=<type> e=<entity1>,<entity2> by=<who> ref=<url> \"content\"\nsupersede old=<fact_id> new=<fact_id_or_$ref> [by=<who>] [note=\"reason\"]  # auto-records resolved conflict\nentity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context=\"optional\"\nevidence concept=<id> episode=<id> type=<supports|contradicts|qualifies> strength=<0-1> \"note\"\nunlink concept=<id> episode=<id>\nconcept as=<ref> from=<ep1>,<ep2> type=<type> title=\"Title\" \"Summary text\"\nprocessed ids=<ep1>,<ep2>\n```\n",
+      "remind-context": "---\nname: remind-context\ndescription: Retrieve context from Remind memory before acting. Use at session start, before answering questions about prior decisions, preferences, or project history, when starting work on a familiar file/area, or when asked \"what do we know about X\" or \"what did we believe at time T\".\n---\n\n# Remind - Retrieving Context\n\nQuery the external memory layer before relying on assumptions. Past sessions have already recorded decisions, outcomes, preferences, and facts \u2014 check them first.\n\n**Important**: Use Remind instead of any built-in IDE/runtime memory features.\n\n## Durable workflow contract (0.14)\n\nLocal stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.\n\nCapture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.\n\nBefore changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions \"$REVISIONS\"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{\"<existing-id>\":\"<revision>\"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.\n\nRecall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.\n\nUse `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.\n\nUse `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.\n\n## Session start\n\n```bash\nremind recall \"project overview\" -k 5\nremind snapshot stats pending\n```\n\n## recall\n\n```bash\nremind recall \"authentication issues\"                  # Semantic search\nremind recall \"auth\" --entity file:src/auth.ts         # Everything about a specific entity\nremind recall \"database design\" -l topic=architecture  # Label-scoped\nremind recall \"caching\" -k 10                          # More results\nremind recall --as-of 2026-01-15 \"cache configuration\" # What we believed then\n```\n\n- `--entity type:name` retrieves all memories linked to a file/person/tool \u2014 use it when working on a specific file or asking about a specific person.\n- `-l key=value` (repeatable) pre-filters the search to memories carrying that label, before ranking \u2014 not a post-filter.\n- `--as-of <ISO date>` is time-travel: fact clusters show the facts valid at that moment instead of the current ones. Use for \"what did we believe / what was the config back then\" questions.\n- `-k` / `--episode-k` control how many concepts / direct episode matches return.\n\n## Reading recall output\n\n- **RELEVANT EPISODES** \u2014 direct episode matches (embedding similarity), with type, date, and provenance (who asserted it).\n- **RELEVANT MEMORY** \u2014 concept matches via spreading activation. Each concept shows its type badge:\n  - `[facts]` \u2014 fact clusters with validity windows\n  - `[pattern]` \u2014 generalizations from observations\n  - `[rule]` \u2014 if-then with conditions\n  - `[procedure]` \u2014 ordered steps\n  - `[hypothesis]` \u2014 uncertain, testable belief\n  - Any custom type (e.g., `[strategy]`, `[constraint]`)\n- **OPEN CONFLICTS** warning \u2014 memory holds contradicting claims about what you retrieved. Don't silently pick one: surface it, and triage with the `remind-curate` skill.\n\n**Evidence-weighted ranking**: Concepts with more supporting evidence rank higher in recall; concepts with contradicting evidence are penalized. A concept's activation score factors in its net evidence strength.\n\n**Semantic collision warnings**: When a new fact is remembered with high semantic similarity to existing facts (not just entity overlap), recall may surface both as potential conflicts.\n\nTrust currently-valid facts over your assumptions; they carry provenance and supersession history.\n\n## Understanding recall output\n\n### RELEVANT EPISODES (similarity score 0.0-1.0)\n- Higher score = closer embedding match to your query\n- Episodes are raw captures \u2014 may contain noise or duplicates\n- **Use for**: recent context, exact quotes, provenance checking\n- Inspect raw similarity and lexical signals with `--explain`; normalized ranking scores do not have universal relevance thresholds.\n\n### RELEVANT MEMORY (activation score 0.0-1.0)\n- Higher score = more relevant via spreading activation through the concept graph\n- Concepts are curated knowledge \u2014 higher signal than raw episodes\n- **Use for**: established patterns, decisions, generalizations\n\n### Concept type badges\n- `[facts]` \u2014 Fact cluster with temporal validity; check valid_from/valid_to\n- `[pattern]` \u2014 Generalized observation from multiple episodes\n- `[rule]` \u2014 If-then relationship with conditions\n- `[hypothesis]` \u2014 Uncertain belief, testable\n- Any other badge \u2014 Custom concept type\n\n### When you see OPEN CONFLICTS\nMemory contains contradicting claims about the retrieved subject. **Do not silently pick one.**\n1. Surface the conflict to the user, OR\n2. Run the curation workflow to resolve it:\n   - `remind snapshot conflicts` to see details\n   - `remind apply --revisions \"$REVISIONS\" 'resolve id=<conflict_id> winner=<fact_id> note=\"reason\"'`\n\n## snapshot (structured reads)\n\nFor machine-readable memory state, use `snapshot` with combinable scopes:\n\n```bash\n# Core scopes\nremind snapshot stats                         # Memory statistics\nremind snapshot pending conflicts             # Pending episodes + open conflicts\nremind snapshot health                        # Actionable issues summary\n\n# Browsing scopes (for exploring memory)\nremind snapshot concepts                      # All concepts\nremind snapshot episodes:20                   # Recent 20 episodes\nremind snapshot entities                      # All entities with mention counts\nremind snapshot entities:person               # Filter entities by type\nremind snapshot labels                        # All distinct labels with counts\nremind snapshot decisions:10                  # Recent 10 decision episodes\nremind snapshot questions                     # Open question episodes\n\n# Detail scopes\nremind snapshot entity:concept:caching        # All data for an entity\nremind snapshot label:topic=architecture      # All data for a label\nremind snapshot concept:abc123                # Concept detail with facts, history\nremind snapshot \"query:authentication issues\" # Semantic search as JSON\n```\n\n`snapshot` returns JSON \u2014 ideal for feeding into `apply` changesets or automated processing.\n\n## Browsing (no query yet)\n\n```bash\nremind snapshot stats                        # Memory size/health overview\nremind snapshot health                       # Actionable issues needing attention\nremind snapshot concepts                     # List all concepts\nremind snapshot entities                     # Entities available for --entity recall\n```\n\n**Explore workflow**: `snapshot stats health` \u2192 `recall \"<query>\"` \u2192 `snapshot concept:<id>` for details.\n",
+      "remind-curate": "---\nname: remind-curate\ndescription: Maintain Remind memory quality. Use when recall output shows an OPEN CONFLICTS warning, the user corrects previously stored information, stored memories are outdated or misfiled, labels need reorganizing, a work session is wrapping up, or after ingesting multiple documents from different sources or time periods. This is also the consolidation procedure \u2014 run at session end to process pending episodes.\n---\n\n# Remind - Curating Memory\n\nKeep the memory layer trustworthy: process pending episodes into concepts, triage contradictions, correct or retire stale items, and keep labels consistent.\n\n**Curation is where your reasoning turns raw episodes into lasting knowledge.** Remind stores facts deterministically but relies on you to form patterns, identify relationships, and resolve conflicts.\n\n## Durable workflow contract (0.14)\n\nLocal stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.\n\nCapture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.\n\nBefore changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions \"$REVISIONS\"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{\"<existing-id>\":\"<revision>\"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.\n\nWhen `label` or `unlabel` targets a fact ID, it edits the source episode. Read and pass the source episode's revision, keyed by its episode ID.\n\nRecall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.\n\nUse `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.\n\nUse `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.\n\n## When to curate\n\n- Session end \u2014 process what accumulated during the session\n- After bulk document ingestion \u2014 **always run curation after reading multiple documents from different sources or time periods**; this is when silent contradictions are most likely\n- When `recall` or `snapshot conflicts` shows open conflicts\n- When the user corrects something already stored\n\n## The curation loop\n\nAt session boundaries or when cleaning up memory:\n\n### 1. Read current state\n\n```bash\nremind snapshot pending conflicts health\n```\n\nThis returns JSON with:\n- **pending.episodes**: Unprocessed episodes with their entities\n- **conflicts.conflicts**: Open conflicts with full fact details\n- **health**: Summary of issues needing attention (pending count, open conflicts, orphan concepts)\n\n### 2. Find contradictions before forming concepts\n\n**This step is mandatory after bulk document ingestion.** For each major theme in the pending episodes, run a recall query to surface what is already in the store:\n\n```bash\nremind recall \"structural system framing\" -k 8\nremind recall \"heating mechanical system\" -k 8\nremind recall \"budget cost schedule\" -k 8\n```\n\nCompare the recall output against the pending episodes. Look for:\n- The same attribute stated with different values (e.g., two roof pitches, two budgets)\n- A pending episode that explicitly supersedes an earlier document's claim\n- Nearby episode IDs that were flagged during ingestion (shown in `remember` output as \"Nearby \u2014 review for conflicts\")\n\nUse fact IDs from snapshot/capture, never episode IDs. For raw observations, curate supported concepts first and use `kind=concept` with concept IDs.\n\n**When you find a contradiction, record it immediately** \u2014 do not defer to later:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nconflict a=<older_fact_id> b=<newer_fact_id> note=\"doc A says timber frame, doc B says steel moment frame \u2014 needs triage\"\nEOF\n```\n\nIf you already know which is correct, use `supersede` instead (facts only):\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nsupersede old=<old_fact_id> new=<new_fact_id> by=\"source doc\" note=\"March 2026 structural report supersedes February overview\"\nEOF\n```\n\n### 3. Analyze and form concepts\n\nLook at the pending episodes (with contradictions now flagged). Ask:\n- What patterns emerge across these episodes?\n- Are there recurring themes, entities, or decisions?\n- Do any episodes together support a generalized concept?\n- What relationships exist between entities mentioned? (e.g., \"X owns Y\", \"A depends on B\")\n\n### 3. Write a changeset\n\nEmit a single `apply` changeset that:\n- Creates concepts from episode groups\n- Links related concepts with relations\n- Resolves or dismisses conflicts\n- Marks episodes as processed\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nconcept as=c1 from=ep:11,ep:12,ep:13 title=\"Retry-with-backoff for transient failures\" \"Exponential backoff resolves flaky deploys, API timeouts, and DB connection issues.\"\nlink from=$c1 to=concept:resilience type=specializes\nresolve id=conflict:7 winner=fact:b3d01 \"confirmed by bob\"\nprocessed ids=ep:11,ep:12,ep:13\nEOF\n```\n\n## Creating concepts\n\nWhen multiple episodes form a coherent pattern:\n\n```\nconcept as=<ref> from=<ep1>,<ep2> title=\"<Pattern name>\" \"<Summary>\"\nlink from=$<ref> to=<target_concept_id> type=<relation>\nprocessed ids=<ep1>,<ep2>\n```\n\n**Concept formation guidance:**\n- Title: Name the pattern, not the instances (\"Retry-with-backoff for resilience\" not \"Fixed deploy on Tuesday\")\n- Summary: The generalized insight that applies beyond these specific episodes\n- Relations: `implies`, `contradicts`, `specializes`, `generalizes`, `causes`, `correlates`, `part_of`, `context_of`\n- Mark source episodes as processed so they don't appear in future pending lists\n\n**Don't over-generalize**: If episodes don't clearly form a pattern, leave them as unprocessed episodes rather than forcing a weak concept.\n\n## Inspecting conflicts\n\nUse either the CLI command or snapshot scope \u2014 they return the same data:\n\n```bash\n# CLI (human-readable table; add --json for machine output)\nremind conflicts list                    # open only (default)\nremind conflicts list --status resolved  # winner was picked or supersede was used\nremind conflicts list --status dismissed # both claims kept (different contexts)\nremind conflicts list --status all       # everything\n\n# Snapshot scope (JSON, combinable with other scopes)\nremind snapshot conflicts                # open only\nremind snapshot conflicts:resolved       # resolved only\nremind snapshot conflicts:dismissed      # dismissed only\nremind snapshot conflicts:all            # all statuses\nremind snapshot conflicts:resolved pending   # combine scopes\n```\n\n**After bulk ingestion, always check resolved conflicts too** \u2014 `supersede` ops create resolved conflict records automatically, so `remind conflicts list --status resolved` shows the full supersession history even if you never ran a formal `conflict \u2192 resolve` workflow.\n\n## Handling conflicts\n\nWhen `snapshot` shows conflicts, or `recall` warns about contested information:\n\n### Resolve: One claim is correct\n\n```\nresolve id=conflict:7 winner=fact:b3d01 \"confirmed in prod config\"\n```\n\nThe losing fact is superseded (kept as history, hidden from recall) and the resolution is recorded.\n\n### Dismiss: Both claims valid in context\n\n```\ndismiss id=conflict:7 \"both true: staging vs prod\"\n```\n\nBoth facts stay active \u2014 use when the conflict is apparent not real (different contexts, time periods, etc.).\n\n### Can't decide? Ask the user\n\nUse provenance (who asserted each fact, when, source links) to decide. If the information is genuinely contested and you can't determine the truth, ask rather than guess.\n\n## Managing evidence links\n\nEpisodes link to concepts with typed relationships. During curation:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\n# Add supporting evidence to a concept\nevidence concept=c-123 episode=ep-456 type=supports strength=0.8 \"confirms the pattern\"\n\n# Mark an episode as contradicting a concept\nevidence concept=c-123 episode=ep-789 type=contradicts strength=0.6 \"edge case failure\"\n\n# Add a qualifying condition\nevidence concept=c-123 episode=ep-abc type=qualifies strength=0.5 \"only when feature flag enabled\"\n\n# Remove an evidence link (episode no longer relevant to concept)\nunlink concept=c-123 episode=ep-old\nEOF\n```\n\n**Link types:**\n- `supports` \u2014 episode confirms/strengthens the concept\n- `contradicts` \u2014 episode challenges/weakens the concept\n- `exemplifies` \u2014 episode is a specific instance\n- `qualifies` \u2014 episode adds conditions/exceptions\n\nConcepts with more supporting evidence rank higher in recall; contradicting evidence reduces activation.\n\n## Evolving concepts\n\nConcepts are living documents. Use these operations when knowledge evolves:\n\n### Reshape: Change type\n\n```\nreshape id=c-123 type=hypothesis \"Changed from pattern after failed testing\"\n```\n\nUse when the nature of knowledge changes (e.g., a pattern becomes a hypothesis when it fails in new contexts).\n\n### Merge: Combine overlapping concepts\n\n```\nmerge from=c-123,c-456 into=c-new \"Combined overlapping caching concepts\"\n```\n\nUse when two concepts describe the same thing. Source concepts are soft-deleted with lineage preserved.\n\n### Split: Separate distinct concerns\n\n```\nsplit id=c-123 into=c-new1,c-new2 \"Separated read vs write caching\"\n```\n\nUse when a concept covers multiple distinct things. Creates new concepts linked to the parent.\n\n## Correcting mistakes\n\n```bash\nremind update-episode <id> -c \"Corrected information\"    # Fix content\nremind update-episode <id> -t decision                   # Fix misclassified type\nremind update-concept <id> -s \"Refined summary\"\nremind update-episode <id> -l topic=architecture         # Re-label\n```\n\nWhen the user corrects a stored fact, prefer capturing the new assertion (with provenance) and using `supersede` to handle it \u2014 this preserves history.\n\n## Deleting noise\n\n```bash\nremind delete-episode <id>       # Soft delete (recoverable)\nremind delete-concept <id>\nremind deleted                   # Review deleted items\nremind restore-episode <id>\n```\n\nDelete for noise and mistakes. For facts that changed over time, don't delete \u2014 supersession keeps history queryable via `--as-of`.\n\n## Labels\n\nLabels are freeform `key=value` tags, not a managed entity \u2014 there's nothing to create or delete, just apply or remove them on episodes/concepts:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nlabel id=c-123 key=topic value=architecture\nunlabel id=c-123 key=topic value=infra\nEOF\n```\n\nOr via CLI:\n```bash\nremind update-concept c-123 -l topic=architecture\nremind snapshot labels                    # See all distinct labels in use\nremind snapshot label:topic=architecture  # Everything under one label\n```\n\nIf the same `key=value` pairs recur across many episodes/concepts, that's a sign of a real grouping worth keeping consistent \u2014 reuse existing keys rather than inventing near-duplicates (`topic=infra` vs `area=infra`).\n\n## Compact format reference\n\n```\nremember as=<ref> t=<type> e=<entities> by=<who> ref=<url> \"content\"\nsupersede old=<fact_id> new=<fact_id_or_$ref>\nentity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context=\"optional\"\nevidence concept=<id> episode=<id> type=<supports|contradicts|qualifies> strength=<0-1> \"note\"\nunlink concept=<id> episode=<id>\nconcept as=<ref> from=<ep_ids> type=<type> title=\"Title\" \"Summary\"\nlink from=<concept_id_or_$ref> to=<concept_id> type=<relation_type>\nreshape id=<concept_id> type=<new_type> \"reason for type change\"\nmerge from=<id1>,<id2> into=<new_id> \"reason for merge\"\nsplit id=<id> into=<new_id1>,<new_id2> \"reason for split\"\nresolve id=<conflict_id> winner=<fact_id> by=<who> \"resolution note\"\ndismiss id=<conflict_id> \"dismissal note\"\nprocessed ids=<ep_id1>,<ep_id2>\nlabel id=<episode_or_concept_id> key=<key> value=<value>\nunlabel id=<episode_or_concept_id> key=<key> value=<value>\ndelete id=<id>\nrestore id=<id>\nupdate id=<id> content=\"new content\" (or title/summary for concepts)\n```\n"
+    },
+    "tools": {
+      "apply": {
+        "description": "Apply a batch changeset to memory.\n\nAll operations execute in a single transaction (all-or-nothing).\nReturns per-operation results including new IDs and any collisions.\n\nInput format (compact line format, one op per line):\n    remember as=f1 t=fact e=concept:caching \"Cache TTL is 600 seconds\"\n    supersede old=fact:a91c2 new=$f1\n    concept as=c1 from=ep:11,ep:12 title=\"Pattern title\" \"Summary text\"\n    resolve id=conflict:7 winner=fact:b3d01 \"confirmed by bob\"\n    processed ids=ep:11,ep:12\n\nOperations:\n    remember: Store episode (as=ref, t=type, e=entities, by=asserted_by, content)\n    supersede: Mark old fact as superseded by new (old=id, new=id/$ref)\n    conflict: Open a conflict (fact_a=id, fact_b=id, description)\n    resolve: Resolve conflict with winner (id=conflict_id, winner=fact_id, note)\n    dismiss: Dismiss conflict as not actionable (id=conflict_id, note)\n    concept: Create concept from episodes (as=ref, from=ep_ids, title, content=summary)\n    update: Update episode/concept fields (id, content/title/summary)\n    link: Add concept relation (from=concept_id, to=concept_id, type=relation_type)\n    label: Add a key=value label to episode/concept (id, key, value)\n    unlabel: Remove a key=value label from episode/concept (id, key, value)\n    delete: Soft-delete episode/concept (id)\n    restore: Restore soft-deleted item (id)\n    processed: Mark episodes as reviewed (ids=ep1,ep2,...)\n\nLocal refs: Use `as=name` to declare, `$name` to reference within same changeset.\n\nArgs:\n    changeset: Operations in compact line format or JSON array\n    dry_run: If True, validate only without executing\n\nReturns:\n    JSON with success status, executed ops count, results with IDs, and any errors",
+        "parameters": {
+          "properties": {
+            "changeset": {
+              "type": "string"
+            },
+            "dry_run": {
+              "default": false,
+              "type": "boolean"
+            },
+            "expected_revisions": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "idempotency_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "changeset"
+          ],
+          "type": "object"
+        }
+      },
+      "inspect": {
+        "description": "Inspect concepts or episodes in memory.\n\nUse this to examine what's stored in memory:\n- List all concepts (no concept_id)\n- View a specific concept (with concept_id)\n- View recent episodes (show_episodes=True)\n- Filter episodes by date range (show_episodes=True with start_date/end_date)\n\nArgs:\n    concept_id: Optional ID of a specific concept to inspect\n    show_episodes: If True, show episodes instead of concepts\n    limit: Maximum number of items to show\n    start_date: Optional ISO format date/datetime (e.g., \"2024-01-01\" or \"2024-01-01T10:00:00\") - inclusive start\n    end_date: Optional ISO format date/datetime (e.g., \"2024-12-31\" or \"2024-12-31T23:59:59\") - inclusive end\n\nReturns:\n    Formatted view of concepts or episodes\n\nExamples:\n    - inspect(show_episodes=True) - show recent episodes\n    - inspect(show_episodes=True, start_date=\"2024-01-01\") - episodes from Jan 1, 2024 onwards\n    - inspect(show_episodes=True, start_date=\"2024-01-01\", end_date=\"2024-01-31\") - January 2024 episodes\n    - inspect(show_episodes=True, end_date=\"2024-06-30\") - episodes up to June 30, 2024",
+        "parameters": {
+          "properties": {
+            "concept_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "end_date": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "limit": {
+              "default": 10,
+              "type": "integer"
+            },
+            "show_episodes": {
+              "default": false,
+              "type": "boolean"
+            },
+            "start_date": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "type": "object"
+        }
+      },
+      "recall": {
+        "description": "Retrieve relevant memories for a query.\n\nUse at session start, before answering questions about prior decisions,\npreferences, or project history, and when starting work on a familiar\nfile or area (entity mode). Past sessions have already recorded\noutcomes and decisions \u2014 check before relying on assumptions.\n\nTwo modes:\n1. Semantic search (default): Uses embeddings with spreading activation\n2. Entity-based: Retrieves all memories about a specific entity\n\nProvide query for semantic search, or entity for entity-based lookup.\nAt least one of query or entity must be provided.\n\nIf the output shows an OPEN CONFLICTS warning, memory holds contradicting\nclaims about what was retrieved \u2014 don't silently pick one; surface it or\ntriage with list_conflicts/resolve_conflict.\n\nArgs:\n    query: What to search for in memory (required for semantic search)\n    k: Number of concepts to retrieve (default: 3)\n    context: Optional additional context to improve retrieval\n    entity: Optional entity ID to retrieve by (e.g., \"file:src/auth.ts\")\n    episode_k: Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable.\n    labels: Optional key=value label filter, comma-separated (e.g. \"topic=architecture\").\n            Pre-filters candidates to concepts/episodes matching ALL given labels\n            through search, graph traversal, and rendered evidence. Use snapshot(\"labels\") to see what's in use.\n    as_of: ISO date/datetime (e.g. \"2026-01-15\"). Fact clusters show the\n           facts that were valid at that point in time instead of the\n           current ones. Useful for \"what did we believe then\" questions.\n    max_chars: Cap the formatted output length. When exceeded, the\n            lowest-ranked concepts/episodes are dropped whole (never\n            truncated mid-item) until the result fits.\n    min_score: Drop concepts/episodes below this activation score even\n            if the k/episode_k budget has room left.\n    timeout_ms: Soft deadline for the retrieval. If exceeded, returns\n            the best results gathered so far instead of raising.\n\nReturns:\n    Formatted memory context for injection into prompts",
+        "parameters": {
+          "properties": {
+            "as_of": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "context": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "entity": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "episode_k": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "explain": {
+              "default": false,
+              "type": "boolean"
+            },
+            "k": {
+              "default": 3,
+              "type": "integer"
+            },
+            "labels": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "max_chars": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "min_score": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "query": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout_ms": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "track_usage": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "remember": {
+        "description": "Store an experience or observation in memory (fast, no LLM calls).\n\nUse when any of these happen:\n- A decision is made \u2014 capture the *why*, not just the choice (type: decision)\n- An approach succeeds or fails \u2014 outcomes are the highest-value memories (type: outcome)\n- The user states a preference or corrects you (type: preference)\n- A concrete fact surfaces: config value, owner, name, date (type: fact)\n- An open question or uncertainty is raised (type: question)\n\nWrite a clear standalone statement (\"User prefers tabs\", not \"tabs\") \u2014 it\nwill be read without the conversation that produced it. Set episode_type\nexplicitly when you know it. Skip trivial or already-captured info; for\nraw conversation logs use ingest() instead.\n\nCuration is explicit: use snapshot and apply; no internal LLM calls.\n\nArgs:\n    content: The experience/observation to remember (clear, standalone statement)\n    metadata: Optional JSON string with additional metadata\n    episode_type: Optional explicit type (e.g., observation, decision, question, meta, preference, outcome, fact).\n                  Custom types are also accepted if configured. Auto-detected during consolidation if not provided,\n                  but prefer setting it explicitly.\n    entities: Optional comma-separated entity IDs (e.g., \"file:src/auth.ts,person:alice\")\n              (auto-detected during consolidation if not provided). Entity links power\n              targeted recall later \u2014 tag the concrete things the memory is about.\n    labels: Optional freeform key=value labels, comma-separated (e.g.\n            \"topic=architecture\" or \"topic=architecture,team=infra\"). Used to\n            scope retrieval later via recall(labels=...) or snapshot(label:<k>=<v>).\n    source_type: Origin of this memory (e.g., \"agent\", \"slack\", \"github\", \"manual\").\n    asserted_by: Who asserted this information (e.g., \"alice\", \"agent:cursor\").\n                 Set it whenever the information came from someone specific \u2014\n                 provenance is what makes later conflict resolution possible.\n    source_ref: Link back to the original artifact (URL/permalink, e.g.\n                Slack message, PR, doc).\n\nReturns:\n    Confirmation with episode ID",
+        "parameters": {
+          "properties": {
+            "asserted_by": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "content": {
+              "type": "string"
+            },
+            "entities": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "episode_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "idempotency_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "labels": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "remember_batch": {
+        "description": "Capture a batch atomically with the same semantics as remember.",
+        "parameters": {
+          "properties": {
+            "idempotency_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "items": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "type": "object"
+        }
+      },
+      "snapshot": {
+        "description": "Read a snapshot of memory state as JSON.\n\nCombines one or more scopes into a single JSON document.\nUse to inspect memory before curating with apply.\n\nScopes (space or comma separated):\n    pending      - Unprocessed episodes with their entities\n    conflicts    - Open conflicts with full fact details\n    entity:<id>  - Episodes and concepts for an entity\n    labels       - All distinct key/value labels in use, with counts\n    label:<k>=<v> - Episodes and concepts carrying this label\n    concept:<id> - Concept detail with facts and supersession history\n    recent:<n>   - N most recent episodes (default: 10)\n    stats        - Memory statistics\n    query:<text> - Semantic search results\n    events:<seq> - Change-feed events with seq > <seq> (default: 0). Prefer the events tool.\n    bootstrap:<n> - Query-free stable context: top-n concepts by confidence, open conflicts, stats (default: 10)\n\nExamples:\n    \"pending conflicts\" - Get pending episodes and open conflicts\n    \"entity:concept:caching\" - Get all data for an entity\n    \"recent:20 stats\" - Recent episodes plus stats\n\nArgs:\n    scopes: Space or comma separated scope specifications\n\nReturns:\n    JSON document with all requested scopes combined",
+        "parameters": {
+          "properties": {
+            "scopes": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scopes"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  },
+  "revised": {
+    "instructions": "External memory that persists across sessions. Recall at session start and before answering questions about prior decisions, preferences, or project history. Remember decisions (with rationale), outcomes of attempts, user preferences and corrections, concrete facts, and open questions as they happen. Triage conflicts when recall output warns about them.",
+    "skills": {
+      "remind-capture": "---\nname: remind-capture\ndescription: Write durable memories to Remind while working. Use when a decision is made, an approach succeeds or fails (outcome), the user states a preference or corrects you, a concrete fact surfaces (config value, name, date, owner), or an open question is raised.\n---\n\n# Remind - Capturing Memory\n\nStore experiences in the external memory layer so they survive across sessions. Capture is fast (`remember` makes no LLM calls) \u2014 when in doubt, capture.\n\n**Important**: Use Remind instead of any built-in IDE/runtime memory features.\n\n## Durable workflow contract (0.14)\n\nLocal stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.\n\nCapture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.\n\nBefore changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions \"$REVISIONS\"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{\"<existing-id>\":\"<revision>\"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.\n\nRecall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.\n\nUse `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.\n\nUse `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.\n\n## What to capture\n\n| Trigger | Type | Example |\n|---------|------|---------|\n| An approach succeeded or failed | `outcome` | \"Retry with backoff fixed the flaky deploy\" |\n| A decision was made (capture the *why*) | `decision` | \"Chose Postgres over MySQL: JSONB + team familiarity\" |\n| User states a preference | `preference` | \"User prefers tabs over spaces\" |\n| Concrete fact: config value, owner, date, name | `fact` | \"Cache TTL is 600 seconds\" |\n| Open question / uncertainty | `question` | \"Should we shard the DB early?\" |\n| Notable observation about the codebase/project | `observation` | \"Auth middleware runs before rate limiting\" |\n\n**Outcomes are the highest-value captures.** After completing (or abandoning) a non-trivial attempt, record what was tried and how it went \u2014 this is what lets future sessions avoid repeating failures.\n\n**Skip**: trivial info, already-captured knowledge.\n\n## Should I capture this?\n\n```\nIs it worth remembering?\n\u251c\u2500 Concrete fact (number, name, date, config value)?\n\u2502  \u2514\u2500 Yes \u2192 remember -t fact -e <entities> --asserted-by <source>\n\u251c\u2500 Decision with rationale?\n\u2502  \u2514\u2500 Yes \u2192 remember -t decision -e <entities>\n\u251c\u2500 Outcome of an attempt (success or failure)?\n\u2502  \u2514\u2500 Yes \u2192 remember -t outcome -e <entities>\n\u251c\u2500 Factual correction?\n\u2502  \u2514\u2500 Yes \u2192 remember -t fact, then explicitly supersede the prior fact\n\u251c\u2500 User-stated preference?\n\u2502  \u2514\u2500 Yes \u2192 remember -t preference\n\u251c\u2500 Open question or uncertainty?\n\u2502  \u2514\u2500 Yes \u2192 remember -t question\n\u251c\u2500 Notable observation about code/project?\n\u2502  \u2514\u2500 Maybe \u2192 remember -t observation\n\u2514\u2500 Trivial, transient, or already captured?\n   \u2514\u2500 Skip\n```\n\n**Examples of what to skip:**\n- \"I'll use the search tool\" (transient action)\n- \"The file has 100 lines\" (trivial, queryable)\n- Things you just recalled from memory (already captured)\n- Speculative thoughts not grounded in evidence\n\n## Capture distinct assertions and verify corrections\n\nSplit source notes into separate fact, decision, and outcome episodes. A message\ncontaining all three is still three assertions. Use MCP `remember_batch` to\ncapture them in one call: items use `content`, `episode_type`, `entities` as a\nlist, `labels` as an object, `asserted_by`, and `source_ref`. Preserve the original\npermalink in `source_ref`; the speaker belongs in `asserted_by`.\n\nUse `episode_type=\"fact\"` for concrete assertions and factual corrections. The\ndefault type is observation; there is no automatic type or entity extraction.\nFact content states the assertion, without commentary about the correction.\nOnly fact episodes create the fact IDs needed for temporal supersession.\n\nA correction requires an actual `supersede` operation. Recall and inspect the old\nfact and its revision, capture the replacement fact, and supersede old \u2192 new in\none `apply` changeset. Put the reason in the supersede note. If the earlier claim\nwas embedded in an outcome or observation, capture that historical assertion as\na fact using its original source provenance before superseding it. Keep the\noriginal source episode. Read the cluster snapshot afterward: verify the old\nfact's `valid_to` and `superseded_by` and the active replacement before reporting\nsuccess. Prose that calls an assertion \"superseded\" does not change stored state.\n\n## Single item: remember\n\n```bash\nremind remember \"Use Redis for caching\" -t decision -e tool:redis -e concept:caching\nremind remember \"Retry-with-backoff fixed flaky deploys\" -t outcome -l topic=infra\nremind remember \"Cache TTL is 600 seconds\" -t fact --asserted-by alice --source-ref \"https://slack.com/...\"\nremind remember \"User wants retry-after headers on 429s\" -t preference -l topic=product\n```\n\n- **Type** (`-t`): Always set the type explicitly when you know it.\n- **Entities** (`-e`): `type:name` format (`file`, `function`, `class`, `person`, `concept`, `tool`, `project`). Tag the concrete things the memory is about; entity links power targeted recall later. See \"Entity relationships\" below to capture how entities relate.\n- **Labels** (`-l key=value`, repeatable): freeform tags; there's no built-in \"topic\" entity \u2014 `topic` is just a label key you choose to use to group related memories.\n- **Provenance**: `--asserted-by <who>` (person or `agent:<name>`) and `--source-ref <url>` whenever the information came from somewhere specific. Provenance is what makes later conflict resolution possible \u2014 \"alice said X on 2026-03-01\" beats \"X\".\n\nWrite clear standalone statements: \"User prefers tabs\" not \"tabs\". A memory is read without the conversation that produced it.\n\n### Handling fact collisions and related facts\n\nFor `fact` type episodes, `remember` returns two lists of potentially conflicting facts:\n\n**Collisions** \u2014 active facts in the *same cluster* detected via:\n1. **Entity overlap**: facts sharing any entity IDs\n2. **Semantic similarity**: facts with similar embeddings (cosine > 0.7)\n\n**Related facts** \u2014 active facts in *other clusters* detected via:\n1. **Bare-name entity match**: strips the type prefix (`person:alice` \u2192 `alice`) so `concept:alice`, `project:alice`, etc. are all found, regardless of how the entity was typed\n2. **Global embedding similarity**: facts across all clusters with cosine > 0.6\n\nThe output looks like:\n\n```\nRemembered as episode ep-abc123\n  Type: fact\n  Entities: concept:alice\n  Fact ID: f-xyz789\n  Cluster: c-12345\n\n\u26a0 Entity type coercion (existing entity reused \u2014 verify this is correct):\n  concept:alice \u2192 person:alice\n\n\u26a0 2 potential collision(s) in same cluster:\n  - f-old456: Cache TTL is 300 seconds...\n  - f-old789: Alice is a dog\n\nRelated facts \u2014 check for conflicts (1):\n  [f-old012] \"Alice was really a horse\" \u00b7 project:alice \u00b7 user \u00b7 2026-07-03\n```\n\n**Entity type coercion** means an existing entity with the same name was found and reused, ignoring the type you specified. This is usually correct (normalizing `concept:alice` \u2192 `person:alice` when they mean the same thing), but if the types are genuinely different entities, you should use a more specific name to distinguish them (e.g. `concept:alice-in-wonderland` vs `person:alice-smith`).\n\nWhen you see collision/related lists:\n1. Read each candidate \u2014 collisions and related facts are both unresolved by default\n2. If the new fact supersedes an old one: use `remind apply --revisions \"$REVISIONS\"` with `supersede old=<id> new=<id> by=<who> note=\"reason\"` \u2014 this automatically records a resolved conflict for provenance, so the replacement is visible in future recall and the UI conflict history\n3. If there is a genuine contradiction that needs triage: use `conflict` op to record it formally\n4. If both are valid in different contexts: no action needed (or `dismiss` later via curate)\n5. **Don't ignore either list** \u2014 cross-cluster related facts are the most likely source of silent contradictions (same subject, different entity type)\n\n### Nearby episodes and concepts (all episode types)\n\nFor **every** `remember` call (not just facts), the output also includes the top-5 most semantically similar episodes and concepts already in the store:\n\n```\nNearby (2 episodes, 1 concepts) \u2014 review for conflicts:\n  [ep:a1b2c3d4] (0.91) The primary structure is timber frame...\n  [ep:e5f6g7h8] (0.84) Budget approved at $480,000 contingency $48,000\n  [concept:c-abc123] (0.88) Structural system specification\n```\n\nThe similarity score (0.0\u20131.0) is how close the embedding is \u2014 it is **not** a conflict signal by itself. You decide whether the content contradicts what you just stored.\n\n**Act on nearby items when you store any episode type:**\n\nFor raw observations, first curate supported concepts and use `kind=concept a=<concept_id> b=<other_concept_id>`. Fact conflicts require fact IDs from capture/snapshot, never episode IDs.\n\n1. **Contradiction found** \u2014 issue a `conflict` op so it shows up in `snapshot conflicts` for triage:\n   ```bash\n   remind apply --revisions \"$REVISIONS\" << 'EOF'\n   conflict a=<older_fact_id> b=<current_fact_id> note=\"doc says timber frame, new info says steel moment frame\"\n   EOF\n   ```\n2. **You already know the winner** \u2014 use `supersede` (facts only; records a resolved conflict automatically):\n   ```bash\n   remind apply --revisions \"$REVISIONS\" << 'EOF'\n   supersede old=<old_fact_id> new=<new_fact_id> by=<source> note=\"March 2026 structural report supersedes February overview\"\n   EOF\n   ```\n3. **Complementary or unrelated** \u2014 ignore and continue.\n\n**Do not silently discard nearby items.** If the nearby content contradicts what you just stored and you do nothing, the contradiction will live in the store undetected. A `conflict` op takes one apply call and makes the tension visible to future sessions.\n\n## Batch capture: apply\n\nFor multiple related captures (e.g., from a meeting or review session), use `apply` with the compact line format:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nremember as=f1 t=fact e=concept:caching \"Cache TTL is 600 seconds\"\nremember as=o1 t=outcome e=concept:deploy \"Retry with backoff fixed flaky deploys\"\nremember t=decision e=tool:redis,concept:caching \"Chose Redis for session caching: TTL support + team familiarity\"\nsupersede old=fact:old123 new=$f1\nEOF\n```\n\nApply runs all operations in a single transaction. Use `$refs` to reference items created earlier in the same changeset.\n\n## Entity relationships\n\nWhen content describes relationships between entities, capture both the fact AND the relationship. Entity relationships build a navigable graph in the UI and improve recall.\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nremember t=fact e=person:alice,project:backend \"Alice owns the backend project\"\nentity_relation source=person:alice target=project:backend relation=owns strength=0.9\nEOF\n```\n\nThe `entity_relation` operation accepts:\n- **source**: Entity ID (e.g., `person:alice`)\n- **target**: Entity ID (e.g., `project:backend`)\n- **relation**: Free-form relationship type (e.g., `owns`, `manages`, `depends_on`, `imports`, `authored`)\n- **strength**: 0.0\u20131.0 confidence (default 0.5)\n- **context**: Optional qualifier (e.g., \"as of Q2 2026\")\n\n**When to capture relationships:**\n- Ownership/responsibility: `person:X owns/manages project:Y`\n- Dependencies: `module:A imports/depends_on module:B`\n- Hierarchy: `concept:X part_of concept:Y`\n- Authorship: `person:X authored file:Y`\n- Domain relationships: `concept:parliament elects concept:president`\n\n## Entity type reference\n\n| Type | Use for | Example |\n|------|---------|---------|\n| `file` | Source files, configs, docs | `file:src/auth.ts` |\n| `function` | Functions, methods, endpoints | `function:handleLogin` |\n| `class` | Classes, interfaces, types | `class:UserService` |\n| `module` | Packages, directories, namespaces | `module:authentication` |\n| `person` | Human actors, team members | `person:alice` |\n| `concept` | Abstract ideas, domains | `concept:caching` |\n| `tool` | External tools, services, libraries | `tool:redis`, `tool:pytest` |\n| `project` | Projects, repositories, services | `project:backend-api` |\n\n**Guidelines:**\n- Use the most specific type. `person:alice` not `concept:alice` for a human.\n- Prefer lowercase names: `file:readme.md` not `file:README.md`\n- For ambiguous names, add context: `function:auth.handleLogin` not `function:handleLogin`\n- Entity names are normalized: `Alice Smith` becomes `alice-smith`\n\n## Evidence links\n\nEpisodes can provide evidence for/against concepts with typed relationships. Use this when an experience supports, contradicts, or qualifies an existing concept:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nevidence concept=c-123 episode=ep-456 type=supports strength=0.8 \"confirms the caching strategy works\"\nevidence concept=c-123 episode=ep-789 type=contradicts strength=0.6 \"edge case where caching fails\"\nevidence concept=c-123 episode=ep-abc type=qualifies strength=0.5 \"only applies when feature flag enabled\"\nunlink concept=c-123 episode=ep-old\nEOF\n```\n\n**Link types:**\n- `supports` \u2014 episode confirms/strengthens the concept (default)\n- `contradicts` \u2014 episode challenges/weakens the concept\n- `exemplifies` \u2014 episode is a specific instance\n- `qualifies` \u2014 episode adds conditions/exceptions\n- `supersedes` \u2014 episode invalidates old info\n\nConcepts with more supporting evidence rank higher in recall; contradicting evidence reduces activation.\n\n## Freeform concept types\n\nConcepts can have any type string, not just `pattern` or `fact`. Use domain-specific types:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nconcept type=hypothesis \"Sharding at 10M rows will solve latency issues\"\nconcept type=rule \"If latency > 100ms, enable circuit breaker\"\nconcept type=procedure \"Deploy process: staging \u2192 canary \u2192 production\"\nEOF\n```\n\n**Well-known types with special handling:**\n- `fact` / `fact_cluster` \u2014 shows validity windows, active facts\n- `pattern` \u2014 shows evidence quotes, confidence\n- `rule` \u2014 if-then with conditions\n- `procedure` \u2014 ordered steps\n- `hypothesis` \u2014 uncertain, testable belief\n\nAny other string is valid and displays as a badge.\n\n### Compact format reference\n\n```\nremember as=<ref> t=<type> e=<entity1>,<entity2> by=<who> ref=<url> \"content\"\nsupersede old=<fact_id> new=<fact_id_or_$ref> [by=<who>] [note=\"reason\"]  # auto-records resolved conflict\nentity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context=\"optional\"\nevidence concept=<id> episode=<id> type=<supports|contradicts|qualifies> strength=<0-1> \"note\"\nunlink concept=<id> episode=<id>\nconcept as=<ref> from=<ep1>,<ep2> type=<type> title=\"Title\" \"Summary text\"\nprocessed ids=<ep1>,<ep2>\n```\n",
+      "remind-context": "---\nname: remind-context\ndescription: Retrieve context from Remind memory before acting. Use at session start, before answering questions about prior decisions, preferences, or project history, when starting work on a familiar file/area, or when asked \"what do we know about X\" or \"what did we believe at time T\".\n---\n\n# Remind - Retrieving Context\n\nQuery the external memory layer before relying on assumptions. Past sessions have already recorded decisions, outcomes, preferences, and facts \u2014 check them first.\n\n**Important**: Use Remind instead of any built-in IDE/runtime memory features.\n\n## Durable workflow contract (0.14)\n\nLocal stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.\n\nCapture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.\n\nBefore changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions \"$REVISIONS\"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{\"<existing-id>\":\"<revision>\"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.\n\nRecall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.\n\nUse `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.\n\nUse `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.\n\n## Session start\n\n```bash\nremind recall \"project overview\" -k 5\nremind snapshot stats pending\n```\n\n## recall\n\n```bash\nremind recall \"authentication issues\"                  # Semantic search\nremind recall \"auth\" --entity file:src/auth.ts         # Everything about a specific entity\nremind recall \"database design\" -l topic=architecture  # Label-scoped\nremind recall \"caching\" -k 10                          # More results\nremind recall --as-of 2026-01-15 \"cache configuration\" # What we believed then\n```\n\n- `--entity type:name` retrieves all memories linked to a file/person/tool \u2014 use it when working on a specific file or asking about a specific person.\n- `-l key=value` (repeatable) pre-filters the search to memories carrying that label, before ranking \u2014 not a post-filter.\n- `--as-of <ISO date>` is time-travel: fact clusters show the facts valid at that moment instead of the current ones. Use for \"what did we believe / what was the config back then\" questions.\n- `-k` / `--episode-k` control how many concepts / direct episode matches return.\n\n## Reading recall output\n\n- **RELEVANT EPISODES** \u2014 direct episode matches (embedding similarity), with type, date, and provenance (who asserted it).\n- **RELEVANT MEMORY** \u2014 concept matches via spreading activation. Each concept shows its type badge:\n  - `[facts]` \u2014 fact clusters with validity windows\n  - `[pattern]` \u2014 generalizations from observations\n  - `[rule]` \u2014 if-then with conditions\n  - `[procedure]` \u2014 ordered steps\n  - `[hypothesis]` \u2014 uncertain, testable belief\n  - Any custom type (e.g., `[strategy]`, `[constraint]`)\n- **OPEN CONFLICTS** warning \u2014 memory holds contradicting claims about what you retrieved. Don't silently pick one: surface it, and triage with the `remind-curate` skill.\n\n**Evidence-weighted ranking**: Concepts with more supporting evidence rank higher in recall; concepts with contradicting evidence are penalized. A concept's activation score factors in its net evidence strength.\n\n**Semantic collision warnings**: When a new fact is remembered with high semantic similarity to existing facts (not just entity overlap), recall may surface both as potential conflicts.\n\nTrust currently-valid facts over your assumptions; they carry provenance and supersession history.\n\n## Understanding recall output\n\n### RELEVANT EPISODES (similarity score 0.0-1.0)\n- Higher score = closer embedding match to your query\n- Episodes are raw captures \u2014 may contain noise or duplicates\n- **Use for**: recent context, exact quotes, provenance checking\n- Inspect raw similarity and lexical signals with `--explain`; normalized ranking scores do not have universal relevance thresholds.\n\n### RELEVANT MEMORY (activation score 0.0-1.0)\n- Higher score = more relevant via spreading activation through the concept graph\n- Concepts are curated knowledge \u2014 higher signal than raw episodes\n- **Use for**: established patterns, decisions, generalizations\n\n### Concept type badges\n- `[facts]` \u2014 Fact cluster with temporal validity; check valid_from/valid_to\n- `[pattern]` \u2014 Generalized observation from multiple episodes\n- `[rule]` \u2014 If-then relationship with conditions\n- `[hypothesis]` \u2014 Uncertain belief, testable\n- Any other badge \u2014 Custom concept type\n\n### When you see OPEN CONFLICTS\nMemory contains contradicting claims about the retrieved subject. **Do not silently pick one.**\n1. Surface the conflict to the user, OR\n2. Run the curation workflow to resolve it:\n   - `remind snapshot conflicts` to see details\n   - `remind apply --revisions \"$REVISIONS\" 'resolve id=<conflict_id> winner=<fact_id> note=\"reason\"'`\n\n## snapshot (structured reads)\n\nFor machine-readable memory state, use `snapshot` with combinable scopes:\n\n```bash\n# Core scopes\nremind snapshot stats                         # Memory statistics\nremind snapshot pending conflicts             # Pending episodes + open conflicts\nremind snapshot health                        # Actionable issues summary\n\n# Browsing scopes (for exploring memory)\nremind snapshot concepts                      # All concepts\nremind snapshot episodes:20                   # Recent 20 episodes\nremind snapshot entities                      # All entities with mention counts\nremind snapshot entities:person               # Filter entities by type\nremind snapshot labels                        # All distinct labels with counts\nremind snapshot decisions:10                  # Recent 10 decision episodes\nremind snapshot questions                     # Open question episodes\n\n# Detail scopes\nremind snapshot entity:concept:caching        # All data for an entity\nremind snapshot label:topic=architecture      # All data for a label\nremind snapshot concept:abc123                # Concept detail with facts, history\nremind snapshot \"query:authentication issues\" # Semantic search as JSON\n```\n\n`snapshot` returns JSON \u2014 ideal for feeding into `apply` changesets or automated processing.\n\n## Browsing (no query yet)\n\n```bash\nremind snapshot stats                        # Memory size/health overview\nremind snapshot health                       # Actionable issues needing attention\nremind snapshot concepts                     # List all concepts\nremind snapshot entities                     # Entities available for --entity recall\n```\n\n**Explore workflow**: `snapshot stats health` \u2192 `recall \"<query>\"` \u2192 `snapshot concept:<id>` for details.\n",
+      "remind-curate": "---\nname: remind-curate\ndescription: Maintain Remind memory quality. Use when recall output shows an OPEN CONFLICTS warning, the user corrects previously stored information, stored memories are outdated or misfiled, labels need reorganizing, a work session is wrapping up, or after ingesting multiple documents from different sources or time periods. This is also the consolidation procedure \u2014 run at session end to process pending episodes.\n---\n\n# Remind - Curating Memory\n\nKeep the memory layer trustworthy: process pending episodes into concepts, triage contradictions, correct or retire stale items, and keep labels consistent.\n\n**Curation is where your reasoning turns raw episodes into lasting knowledge.** Remind stores facts deterministically but relies on you to form patterns, identify relationships, and resolve conflicts.\n\n## Durable workflow contract (0.14)\n\nLocal stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.\n\nCapture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.\n\nBefore changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions \"$REVISIONS\"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{\"<existing-id>\":\"<revision>\"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.\n\nWhen `label` or `unlabel` targets a fact ID, it edits the source episode. Read and pass the source episode's revision, keyed by its episode ID.\n\nRecall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.\n\nUse `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.\n\nUse `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.\n\n## Verify the resulting state\n\nKeep factual assertions, decisions, and outcomes in separately typed episodes;\nuse `remember_batch` for multi-assertion notes. Link the decision and outcome as\nevidence for the resulting pattern, and preserve their source provenance.\nA concept's `source_episodes` and Evidence rows express support; the number of\nrows alone does not measure independent sources or truth.\n\nAfter a correction, use `snapshot concept:<cluster-id>` to verify the old fact\nis closed and its `superseded_by` chain reaches the active replacement. A summary\nsaying \"superseded history\" is not a supersession link. Verify the final memory\nstate before claiming that a correction or curation task is complete.\n\n## When to curate\n\n- Session end \u2014 process what accumulated during the session\n- After bulk document ingestion \u2014 **always run curation after reading multiple documents from different sources or time periods**; this is when silent contradictions are most likely\n- When `recall` or `snapshot conflicts` shows open conflicts\n- When the user corrects something already stored\n\n## The curation loop\n\nAt session boundaries or when cleaning up memory:\n\n### 1. Read current state\n\n```bash\nremind snapshot pending conflicts health\n```\n\nThis returns JSON with:\n- **pending.episodes**: Unprocessed episodes with their entities\n- **conflicts.conflicts**: Open conflicts with full fact details\n- **health**: Summary of issues needing attention (pending count, open conflicts, orphan concepts)\n\n### 2. Find contradictions before forming concepts\n\n**This step is mandatory after bulk document ingestion.** For each major theme in the pending episodes, run a recall query to surface what is already in the store:\n\n```bash\nremind recall \"structural system framing\" -k 8\nremind recall \"heating mechanical system\" -k 8\nremind recall \"budget cost schedule\" -k 8\n```\n\nCompare the recall output against the pending episodes. Look for:\n- The same attribute stated with different values (e.g., two roof pitches, two budgets)\n- A pending episode that explicitly supersedes an earlier document's claim\n- Nearby episode IDs that were flagged during ingestion (shown in `remember` output as \"Nearby \u2014 review for conflicts\")\n\nUse fact IDs from snapshot/capture, never episode IDs. For raw observations, curate supported concepts first and use `kind=concept` with concept IDs.\n\n**When you find a contradiction, record it immediately** \u2014 do not defer to later:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nconflict a=<older_fact_id> b=<newer_fact_id> note=\"doc A says timber frame, doc B says steel moment frame \u2014 needs triage\"\nEOF\n```\n\nIf you already know which is correct, use `supersede` instead (facts only):\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nsupersede old=<old_fact_id> new=<new_fact_id> by=\"source doc\" note=\"March 2026 structural report supersedes February overview\"\nEOF\n```\n\n### 3. Analyze and form concepts\n\nLook at the pending episodes (with contradictions now flagged). Ask:\n- What patterns emerge across these episodes?\n- Are there recurring themes, entities, or decisions?\n- Do any episodes together support a generalized concept?\n- What relationships exist between entities mentioned? (e.g., \"X owns Y\", \"A depends on B\")\n\n### 3. Write a changeset\n\nEmit a single `apply` changeset that:\n- Creates concepts from episode groups\n- Links related concepts with relations\n- Resolves or dismisses conflicts\n- Marks episodes as processed\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nconcept as=c1 from=ep:11,ep:12,ep:13 title=\"Retry-with-backoff for transient failures\" \"Exponential backoff resolves flaky deploys, API timeouts, and DB connection issues.\"\nlink from=$c1 to=concept:resilience type=specializes\nresolve id=conflict:7 winner=fact:b3d01 \"confirmed by bob\"\nprocessed ids=ep:11,ep:12,ep:13\nEOF\n```\n\n## Creating concepts\n\nWhen multiple episodes form a coherent pattern:\n\n```\nconcept as=<ref> from=<ep1>,<ep2> title=\"<Pattern name>\" \"<Summary>\"\nlink from=$<ref> to=<target_concept_id> type=<relation>\nprocessed ids=<ep1>,<ep2>\n```\n\n**Concept formation guidance:**\n- Title: Name the pattern, not the instances (\"Retry-with-backoff for resilience\" not \"Fixed deploy on Tuesday\")\n- Summary: The generalized insight that applies beyond these specific episodes\n- Relations: `implies`, `contradicts`, `specializes`, `generalizes`, `causes`, `correlates`, `part_of`, `context_of`\n- Mark source episodes as processed so they don't appear in future pending lists\n\n**Don't over-generalize**: If episodes don't clearly form a pattern, leave them as unprocessed episodes rather than forcing a weak concept.\n\n## Inspecting conflicts\n\nUse either the CLI command or snapshot scope \u2014 they return the same data:\n\n```bash\n# CLI (human-readable table; add --json for machine output)\nremind conflicts list                    # open only (default)\nremind conflicts list --status resolved  # winner was picked or supersede was used\nremind conflicts list --status dismissed # both claims kept (different contexts)\nremind conflicts list --status all       # everything\n\n# Snapshot scope (JSON, combinable with other scopes)\nremind snapshot conflicts                # open only\nremind snapshot conflicts:resolved       # resolved only\nremind snapshot conflicts:dismissed      # dismissed only\nremind snapshot conflicts:all            # all statuses\nremind snapshot conflicts:resolved pending   # combine scopes\n```\n\n**After bulk ingestion, always check resolved conflicts too** \u2014 `supersede` ops create resolved conflict records automatically, so `remind conflicts list --status resolved` shows the full supersession history even if you never ran a formal `conflict \u2192 resolve` workflow.\n\n## Handling conflicts\n\nWhen `snapshot` shows conflicts, or `recall` warns about contested information:\n\n### Resolve: One claim is correct\n\n```\nresolve id=conflict:7 winner=fact:b3d01 \"confirmed in prod config\"\n```\n\nThe losing fact is superseded (kept as history, hidden from recall) and the resolution is recorded.\n\n### Dismiss: Both claims valid in context\n\n```\ndismiss id=conflict:7 \"both true: staging vs prod\"\n```\n\nBoth facts stay active \u2014 use when the conflict is apparent not real (different contexts, time periods, etc.).\n\n### Can't decide? Ask the user\n\nUse provenance (who asserted each fact, when, source links) to decide. If the information is genuinely contested and you can't determine the truth, ask rather than guess.\n\n## Managing evidence links\n\nEpisodes link to concepts with typed relationships. During curation:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\n# Add supporting evidence to a concept\nevidence concept=c-123 episode=ep-456 type=supports strength=0.8 \"confirms the pattern\"\n\n# Mark an episode as contradicting a concept\nevidence concept=c-123 episode=ep-789 type=contradicts strength=0.6 \"edge case failure\"\n\n# Add a qualifying condition\nevidence concept=c-123 episode=ep-abc type=qualifies strength=0.5 \"only when feature flag enabled\"\n\n# Remove an evidence link (episode no longer relevant to concept)\nunlink concept=c-123 episode=ep-old\nEOF\n```\n\n**Link types:**\n- `supports` \u2014 episode confirms/strengthens the concept\n- `contradicts` \u2014 episode challenges/weakens the concept\n- `exemplifies` \u2014 episode is a specific instance\n- `qualifies` \u2014 episode adds conditions/exceptions\n\nConcepts with more supporting evidence rank higher in recall; contradicting evidence reduces activation.\n\n## Evolving concepts\n\nConcepts are living documents. Use these operations when knowledge evolves:\n\n### Reshape: Change type\n\n```\nreshape id=c-123 type=hypothesis \"Changed from pattern after failed testing\"\n```\n\nUse when the nature of knowledge changes (e.g., a pattern becomes a hypothesis when it fails in new contexts).\n\n### Merge: Combine overlapping concepts\n\n```\nmerge from=c-123,c-456 into=c-new \"Combined overlapping caching concepts\"\n```\n\nUse when two concepts describe the same thing. Source concepts are soft-deleted with lineage preserved.\n\n### Split: Separate distinct concerns\n\n```\nsplit id=c-123 into=c-new1,c-new2 \"Separated read vs write caching\"\n```\n\nUse when a concept covers multiple distinct things. Creates new concepts linked to the parent.\n\n## Correcting mistakes\n\n```bash\nremind update-episode <id> -c \"Corrected information\"    # Fix content\nremind update-episode <id> -t decision                   # Fix misclassified type\nremind update-concept <id> -s \"Refined summary\"\nremind update-episode <id> -l topic=architecture         # Re-label\n```\n\nWhen the user corrects a stored fact, prefer capturing the new assertion (with provenance) and using `supersede` to handle it \u2014 this preserves history.\n\n## Deleting noise\n\n```bash\nremind delete-episode <id>       # Soft delete (recoverable)\nremind delete-concept <id>\nremind deleted                   # Review deleted items\nremind restore-episode <id>\n```\n\nDelete for noise and mistakes. For facts that changed over time, don't delete \u2014 supersession keeps history queryable via `--as-of`.\n\n## Labels\n\nLabels are freeform `key=value` tags, not a managed entity \u2014 there's nothing to create or delete, just apply or remove them on episodes/concepts:\n\n```bash\nremind apply --revisions \"$REVISIONS\" << 'EOF'\nlabel id=c-123 key=topic value=architecture\nunlabel id=c-123 key=topic value=infra\nEOF\n```\n\nOr via CLI:\n```bash\nremind update-concept c-123 -l topic=architecture\nremind snapshot labels                    # See all distinct labels in use\nremind snapshot label:topic=architecture  # Everything under one label\n```\n\nIf the same `key=value` pairs recur across many episodes/concepts, that's a sign of a real grouping worth keeping consistent \u2014 reuse existing keys rather than inventing near-duplicates (`topic=infra` vs `area=infra`).\n\n## Compact format reference\n\n```\nremember as=<ref> t=<type> e=<entities> by=<who> ref=<url> \"content\"\nsupersede old=<fact_id> new=<fact_id_or_$ref>\nentity_relation source=<entity_id> target=<entity_id> relation=<type> strength=<0-1> context=\"optional\"\nevidence concept=<id> episode=<id> type=<supports|contradicts|qualifies> strength=<0-1> \"note\"\nunlink concept=<id> episode=<id>\nconcept as=<ref> from=<ep_ids> type=<type> title=\"Title\" \"Summary\"\nlink from=<concept_id_or_$ref> to=<concept_id> type=<relation_type>\nreshape id=<concept_id> type=<new_type> \"reason for type change\"\nmerge from=<id1>,<id2> into=<new_id> \"reason for merge\"\nsplit id=<id> into=<new_id1>,<new_id2> \"reason for split\"\nresolve id=<conflict_id> winner=<fact_id> by=<who> \"resolution note\"\ndismiss id=<conflict_id> \"dismissal note\"\nprocessed ids=<ep_id1>,<ep_id2>\nlabel id=<episode_or_concept_id> key=<key> value=<value>\nunlabel id=<episode_or_concept_id> key=<key> value=<value>\ndelete id=<id>\nrestore id=<id>\nupdate id=<id> content=\"new content\" (or title/summary for concepts)\n```\n"
+    },
+    "tools": {
+      "apply": {
+        "description": "Apply a batch changeset to memory.\n\nAll operations execute in a single transaction (all-or-nothing).\nReturns per-operation results including new IDs and any collisions.\n\nRead revisions with snapshot before any edits to existing records. Pass\nexpected_revisions={\"<existing-id>\":\"<revision>\"}; this includes source\nepisodes used by concept/processed, old facts used by supersede, and\nexisting concepts updated. New records created in this changeset need\nno prior revision. A missing revision rejects the entire changeset.\n\nFor a factual correction, create a new fact and supersede the old fact\natomically, using IDs from inspected memory:\n    remember as=new t=fact \"The retry limit is 8\"\n    supersede old=<old-fact-id> new=$new note=\"Explicit source correction\"\nThen inspect the old/new facts via snapshot concept:<cluster-id>:\nthe old fact must have valid_to and superseded_by, and the replacement\nmust be active. Writing \"superseded\" in a summary has no structural effect.\nIf the earlier assertion exists only in a non-fact episode, first capture\nthat historical assertion as a fact with its original source provenance,\nthen supersede it. Never claim a history link exists without verifying it.\n\nInput format (compact line format, one op per line):\n    remember as=f1 t=fact e=concept:caching \"Cache TTL is 600 seconds\"\n    supersede old=fact:a91c2 new=$f1\n    concept as=c1 from=ep:11,ep:12 title=\"Pattern title\" \"Summary text\"\n    resolve id=conflict:7 winner=fact:b3d01 \"confirmed by bob\"\n    processed ids=ep:11,ep:12\n\nOperations:\n    remember: Store episode (as=ref, t=type, e=entities, by=asserted_by, content)\n    supersede: Mark old fact as superseded by new (old=id, new=id/$ref)\n    conflict: Open a conflict (fact_a=id, fact_b=id, description)\n    resolve: Resolve conflict with winner (id=conflict_id, winner=fact_id, note)\n    dismiss: Dismiss conflict as not actionable (id=conflict_id, note)\n    concept: Create concept from episodes (as=ref, from=ep_ids, title, content=summary)\n    update: Update episode/concept fields (id, content/title/summary)\n    link: Add concept relation (from=concept_id, to=concept_id, type=relation_type)\n    label: Add a key=value label to episode/concept (id, key, value)\n    unlabel: Remove a key=value label from episode/concept (id, key, value)\n    delete: Soft-delete episode/concept (id)\n    restore: Restore soft-deleted item (id)\n    processed: Mark episodes as reviewed (ids=ep1,ep2,...)\n\nLocal refs: Use `as=name` to declare, `$name` to reference within same changeset.\n\nArgs:\n    changeset: Operations in compact line format or JSON array\n    dry_run: If True, validate only without executing\n    expected_revisions: Existing record ID-to-revision map from snapshot\n    idempotency_key: Stable key for retrying the same changeset\n\nReturns:\n    JSON with success status, executed ops count, results with IDs, and any errors",
+        "parameters": {
+          "properties": {
+            "changeset": {
+              "type": "string"
+            },
+            "dry_run": {
+              "default": false,
+              "type": "boolean"
+            },
+            "expected_revisions": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "idempotency_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "changeset"
+          ],
+          "type": "object"
+        }
+      },
+      "inspect": {
+        "description": "Inspect concepts or episodes in memory.\n\nUse this to examine what's stored in memory:\n- List all concepts (no concept_id)\n- View a specific concept (with concept_id)\n- View recent episodes (show_episodes=True)\n- Filter episodes by date range (show_episodes=True with start_date/end_date)\n\nArgs:\n    concept_id: Optional ID of a specific concept to inspect\n    show_episodes: If True, show episodes instead of concepts\n    limit: Maximum number of items to show\n    start_date: Optional ISO format date/datetime (e.g., \"2024-01-01\" or \"2024-01-01T10:00:00\") - inclusive start\n    end_date: Optional ISO format date/datetime (e.g., \"2024-12-31\" or \"2024-12-31T23:59:59\") - inclusive end\n\nReturns:\n    Formatted view of concepts or episodes\n\nExamples:\n    - inspect(show_episodes=True) - show recent episodes\n    - inspect(show_episodes=True, start_date=\"2024-01-01\") - episodes from Jan 1, 2024 onwards\n    - inspect(show_episodes=True, start_date=\"2024-01-01\", end_date=\"2024-01-31\") - January 2024 episodes\n    - inspect(show_episodes=True, end_date=\"2024-06-30\") - episodes up to June 30, 2024",
+        "parameters": {
+          "properties": {
+            "concept_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "end_date": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "limit": {
+              "default": 10,
+              "type": "integer"
+            },
+            "show_episodes": {
+              "default": false,
+              "type": "boolean"
+            },
+            "start_date": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "type": "object"
+        }
+      },
+      "recall": {
+        "description": "Retrieve relevant memories for a query.\n\nUse at session start, before answering questions about prior decisions,\npreferences, or project history, and when starting work on a familiar\nfile or area (entity mode). Past sessions have already recorded\noutcomes and decisions \u2014 check before relying on assumptions.\n\nTwo modes:\n1. Semantic search (default): Uses embeddings with spreading activation\n2. Entity-based: Retrieves all memories about a specific entity\n\nProvide query for semantic search, or entity for entity-based lookup.\nAt least one of query or entity must be provided.\n\nIf the output shows an OPEN CONFLICTS warning, memory holds contradicting\nclaims about what was retrieved \u2014 don't silently pick one; surface it or\ntriage with list_conflicts/resolve_conflict.\n\nArgs:\n    query: What to search for in memory (required for semantic search)\n    k: Number of concepts to retrieve (default: 3)\n    context: Optional additional context to improve retrieval\n    entity: Optional entity ID to retrieve by (e.g., \"file:src/auth.ts\")\n    episode_k: Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable.\n    labels: Optional key=value label filter, comma-separated (e.g. \"topic=architecture\").\n            Pre-filters candidates to concepts/episodes matching ALL given labels\n            through search, graph traversal, and rendered evidence. Use snapshot(\"labels\") to see what's in use.\n    as_of: ISO date/datetime (e.g. \"2026-01-15\"). Fact clusters show the\n           facts that were valid at that point in time instead of the\n           current ones. Useful for \"what did we believe then\" questions.\n    max_chars: Cap the formatted output length. When exceeded, the\n            lowest-ranked concepts/episodes are dropped whole (never\n            truncated mid-item) until the result fits.\n    min_score: Drop concepts/episodes below this activation score even\n            if the k/episode_k budget has room left.\n    timeout_ms: Soft deadline for the retrieval. If exceeded, returns\n            the best results gathered so far instead of raising.\n\nReturns:\n    Formatted memory context for injection into prompts",
+        "parameters": {
+          "properties": {
+            "as_of": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "context": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "entity": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "episode_k": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "explain": {
+              "default": false,
+              "type": "boolean"
+            },
+            "k": {
+              "default": 3,
+              "type": "integer"
+            },
+            "labels": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "max_chars": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "min_score": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "query": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout_ms": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "track_usage": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "remember": {
+        "description": "Store an experience or observation in memory (fast, no LLM calls).\n\nUse when any of these happen:\n- A decision is made \u2014 capture the *why*, not just the choice (type: decision)\n- An approach succeeds or fails \u2014 outcomes are the highest-value memories (type: outcome)\n- A preference changes (type: preference)\n- A factual assertion or correction is supplied (type: fact)\n- A concrete fact surfaces: config value, owner, name, date (type: fact)\n- An open question or uncertainty is raised (type: question)\n\nWrite a clear standalone statement (\"User prefers tabs\", not \"tabs\") \u2014 it\nwill be read without the conversation that produced it. Set episode_type\nexplicitly when you know it. Skip trivial or already-captured info; for\nmulti-assertion source notes use remember_batch with separate items.\n\nKeep a fact's content to the assertion itself. Put speaker/permalink in\nasserted_by/source_ref and correction rationale in a supersede note.\nA fact capture does not supersede an older claim automatically: inspect\nold fact IDs/revisions and explicitly apply supersede. Describing a\nclaim as \"superseded\" in prose does not change its validity or links.\n\nCuration is explicit: use snapshot and apply; no internal LLM calls.\n\nArgs:\n    content: The experience/observation to remember (clear, standalone statement)\n    metadata: Optional JSON string with additional metadata\n    episode_type: Optional explicit type (e.g., observation, decision, question, meta, preference, outcome, fact).\n                  Defaults to observation; no automatic type inference.\n                  Custom configured types are also accepted.\n    entities: Optional comma-separated entity IDs (e.g., \"file:src/auth.ts,person:alice\")\n              (not extracted automatically). Entity links power\n              targeted recall later \u2014 tag the concrete things the memory is about.\n    labels: Optional freeform key=value labels, comma-separated (e.g.\n            \"topic=architecture\" or \"topic=architecture,team=infra\"). Used to\n            scope retrieval later via recall(labels=...) or snapshot(label:<k>=<v>).\n    source_type: Origin of this memory (e.g., \"agent\", \"slack\", \"github\", \"manual\").\n    asserted_by: Who asserted this information (e.g., \"alice\", \"agent:cursor\").\n                 Set it whenever the information came from someone specific \u2014\n                 provenance is what makes later conflict resolution possible.\n    source_ref: Link back to the original artifact (URL/permalink, e.g.\n                Slack message, PR, doc).\n\nReturns:\n    JSON with episode_id; fact_id/cluster_id for fact captures; revisions,\n    collisions, nearby records, and warnings. Only fact captures create facts.",
+        "parameters": {
+          "properties": {
+            "asserted_by": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "content": {
+              "type": "string"
+            },
+            "entities": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "episode_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "idempotency_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "labels": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "remember_batch": {
+        "description": "Capture separate assertions atomically; returns ordered per-item results.\n\nEach item uses remember fields: content, episode_type, entities (list of\nIDs), labels (object), asserted_by, source_ref. Use distinct items for a\nconcrete fact, a decision with rationale, and an observed outcome, even\nwhen they came from one message. A fact item creates a first-class fact\nand returns fact_id/cluster_id; other types return episode IDs only.\nExample items: [{\"content\":\"Retries are limited to 4\",\"episode_type\":\"fact\"},\n{\"content\":\"Use backoff to avoid overload\",\"episode_type\":\"decision\"},\n{\"content\":\"Backoff reduced errors\",\"episode_type\":\"outcome\"}].\nCopy the actual source permalink into source_ref; asserted_by names the\nspeaker. Capture performs no semantic splitting or correction for you.",
+        "parameters": {
+          "properties": {
+            "idempotency_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "items": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "type": "object"
+        }
+      },
+      "snapshot": {
+        "description": "Read a snapshot of memory state as JSON.\n\nCombines one or more scopes into a single JSON document.\nUse to inspect memory before curating with apply.\nReturned records include revision values for expected_revisions. Facts\nhave IDs separate from source episodes. Inspect concept:<cluster-id> to\nobtain fact IDs and verify active/closed validity and supersession links.\nThere is no episode:<id> scope; use entity:<id>, recent:<n>, or inspect\nwith show_episodes=True to locate episode records.\n\nScopes (space or comma separated):\n    pending      - Unprocessed episodes with their entities\n    conflicts    - Open conflicts with full fact details\n    entity:<id>  - Episodes and concepts for an entity\n    labels       - All distinct key/value labels in use, with counts\n    label:<k>=<v> - Episodes and concepts carrying this label\n    concept:<id> - Concept detail with facts and supersession history\n    recent:<n>   - N most recent episodes (default: 10)\n    stats        - Memory statistics\n    query:<text> - Semantic search results\n    events:<seq> - Change-feed events with seq > <seq> (default: 0). Prefer the events tool.\n    bootstrap:<n> - Query-free stable context: top-n concepts by confidence, open conflicts, stats (default: 10)\n\nExamples:\n    \"pending conflicts\" - Get pending episodes and open conflicts\n    \"entity:concept:caching\" - Get all data for an entity\n    \"recent:20 stats\" - Recent episodes plus stats\n\nArgs:\n    scopes: Space or comma separated scope specifications\n\nReturns:\n    JSON document with all requested scopes combined",
+        "parameters": {
+          "properties": {
+            "scopes": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scopes"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  }
+}

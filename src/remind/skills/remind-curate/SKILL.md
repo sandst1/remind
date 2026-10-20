@@ -17,11 +17,26 @@ Capture and apply are atomic. Use a stable `idempotency_key` when retrying the s
 
 Before changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions "$REVISIONS"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{"<existing-id>":"<revision>"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.
 
+When `label` or `unlabel` targets a fact ID, it edits the source episode. Read and pass the source episode's revision, keyed by its episode ID.
+
 Recall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.
 
 Use `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.
 
 Use `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.
+
+## Verify the resulting state
+
+Keep factual assertions, decisions, and outcomes in separately typed episodes;
+use `remember_batch` for multi-assertion notes. Link the decision and outcome as
+evidence for the resulting pattern, and preserve their source provenance.
+A concept's `source_episodes` and Evidence rows express support; the number of
+rows alone does not measure independent sources or truth.
+
+After a correction, use `snapshot concept:<cluster-id>` to verify the old fact
+is closed and its `superseded_by` chain reaches the active replacement. A summary
+saying "superseded history" is not a supersession link. Verify the final memory
+state before claiming that a correction or curation task is complete.
 
 ## When to curate
 

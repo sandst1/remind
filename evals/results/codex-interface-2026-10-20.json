@@ -1,0 +1,2248 @@
+{
+  "analysis": {
+    "arms": [
+      {
+        "calls": 149,
+        "calls_per_case": 12.416666666666666,
+        "cases": 12,
+        "checks": {
+          "answer_rubric": 12,
+          "current_fact": 8,
+          "pending_clear": 12,
+          "read_only": 12,
+          "read_performed": 12,
+          "source_provenance": 0,
+          "supported_pattern": 11
+        },
+        "core_passed": 5,
+        "correction_history": {
+          "cases": 6,
+          "passed": 3
+        },
+        "hard_violations": 0,
+        "infrastructure_errors": 0,
+        "interface": "original",
+        "mean_elapsed_seconds": 49.18016488542586,
+        "model": "gpt-6-luna",
+        "passed": 0,
+        "provenance_only_failures": 5,
+        "stages": {
+          "capture_fact": 5,
+          "capture_granularity": 8,
+          "capture_provenance": 0
+        },
+        "success_rate": 0.0,
+        "tool_failures": {
+          "operation_failed": 3,
+          "revision_conflict": 10,
+          "transport_or_schema": 7,
+          "unknown_snapshot_scope": 8
+        },
+        "tools": {
+          "apply": 30,
+          "recall": 36,
+          "remember": 27,
+          "remember_batch": 7,
+          "snapshot": 49
+        },
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "cached_input_tokens": 4370176,
+          "input_tokens": 5238332,
+          "output_tokens": 25958,
+          "reasoning_output_tokens": 3870
+        },
+        "wilson_95": [
+          0.0,
+          0.2425007574992425
+        ]
+      },
+      {
+        "calls": 159,
+        "calls_per_case": 13.25,
+        "cases": 12,
+        "checks": {
+          "answer_rubric": 12,
+          "current_fact": 12,
+          "pending_clear": 12,
+          "read_only": 12,
+          "read_performed": 12,
+          "source_provenance": 12,
+          "supported_pattern": 12
+        },
+        "core_passed": 12,
+        "correction_history": {
+          "cases": 6,
+          "passed": 6
+        },
+        "hard_violations": 0,
+        "infrastructure_errors": 0,
+        "interface": "original",
+        "mean_elapsed_seconds": 64.33678159716267,
+        "model": "gpt-6.1-sol",
+        "passed": 12,
+        "provenance_only_failures": 0,
+        "stages": {
+          "capture_fact": 12,
+          "capture_granularity": 12,
+          "capture_provenance": 12
+        },
+        "success_rate": 1.0,
+        "tool_failures": {
+          "transport_or_schema": 12
+        },
+        "tools": {
+          "apply": 18,
+          "recall": 32,
+          "remember": 21,
+          "remember_batch": 19,
+          "snapshot": 69
+        },
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "cached_input_tokens": 4671360,
+          "input_tokens": 5546975,
+          "output_tokens": 20464,
+          "reasoning_output_tokens": 337
+        },
+        "wilson_95": [
+          0.7574992425007574,
+          1.0
+        ]
+      },
+      {
+        "calls": 135,
+        "calls_per_case": 11.25,
+        "cases": 12,
+        "checks": {
+          "answer_rubric": 12,
+          "current_fact": 12,
+          "pending_clear": 12,
+          "read_only": 12,
+          "read_performed": 12,
+          "source_provenance": 8,
+          "supported_pattern": 12
+        },
+        "core_passed": 12,
+        "correction_history": {
+          "cases": 6,
+          "passed": 6
+        },
+        "hard_violations": 0,
+        "infrastructure_errors": 0,
+        "interface": "revised",
+        "mean_elapsed_seconds": 52.55621635432666,
+        "model": "gpt-6-luna",
+        "passed": 8,
+        "provenance_only_failures": 4,
+        "stages": {
+          "capture_fact": 12,
+          "capture_granularity": 11,
+          "capture_provenance": 8
+        },
+        "success_rate": 0.6666666666666666,
+        "tool_failures": {
+          "revision_conflict": 3,
+          "unknown_snapshot_scope": 6
+        },
+        "tools": {
+          "apply": 23,
+          "inspect": 1,
+          "recall": 34,
+          "remember": 3,
+          "remember_batch": 12,
+          "snapshot": 62
+        },
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "cached_input_tokens": 4313344,
+          "input_tokens": 5328875,
+          "output_tokens": 23856,
+          "reasoning_output_tokens": 1283
+        },
+        "wilson_95": [
+          0.3906175873976139,
+          0.8618821601026385
+        ]
+      },
+      {
+        "calls": 127,
+        "calls_per_case": 10.583333333333334,
+        "cases": 12,
+        "checks": {
+          "answer_rubric": 12,
+          "current_fact": 12,
+          "pending_clear": 12,
+          "read_only": 12,
+          "read_performed": 12,
+          "source_provenance": 12,
+          "supported_pattern": 12
+        },
+        "core_passed": 12,
+        "correction_history": {
+          "cases": 6,
+          "passed": 6
+        },
+        "hard_violations": 0,
+        "infrastructure_errors": 0,
+        "interface": "revised",
+        "mean_elapsed_seconds": 59.30533106592096,
+        "model": "gpt-6.1-sol",
+        "passed": 12,
+        "provenance_only_failures": 0,
+        "stages": {
+          "capture_fact": 12,
+          "capture_granularity": 12,
+          "capture_provenance": 12
+        },
+        "success_rate": 1.0,
+        "tool_failures": {},
+        "tools": {
+          "apply": 18,
+          "recall": 31,
+          "remember_batch": 12,
+          "snapshot": 66
+        },
+        "usage": {
+          "cache_write_input_tokens": 0,
+          "cached_input_tokens": 4104960,
+          "input_tokens": 4983013,
+          "output_tokens": 18629,
+          "reasoning_output_tokens": 534
+        },
+        "wilson_95": [
+          0.7574992425007574,
+          1.0
+        ]
+      }
+    ],
+    "descriptive_effects": {
+      "luna_interface_gain_pp": 66.66666666666666,
+      "model_gain_original_pp": 100.0,
+      "model_gain_revised_pp": 33.333333333333336,
+      "stronger_interface_gain_pp": 0.0
+    },
+    "limitations": [
+      "Small fixture pilot, not a production success-rate estimate.",
+      "Model sampling seeds are unsupported; repeated runs are not deterministic.",
+      "API-dollar costs cannot be inferred from Codex subscription token counts.",
+      "Descriptions and skills change together; the study does not isolate each sentence.",
+      "Six tools and MCP initialization instructions are held constant across conditions.",
+      "Repetitions share fixtures; binomial intervals do not account for that clustering.",
+      "Lexical rubrics require manual review of paraphrase, quotation, and negation."
+    ],
+    "rescoring": {
+      "changed_cases": [
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": false,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": true
+            },
+            "passed": false
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": false,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": false
+            },
+            "passed": false
+          },
+          "condition": "gpt-6-luna-original",
+          "id": "architecture.capture_curate",
+          "repetition": 0
+        },
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": false,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": true
+            },
+            "passed": false
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": false,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": false
+            },
+            "passed": false
+          },
+          "condition": "gpt-6-luna-original",
+          "id": "architecture.capture_curate",
+          "repetition": 1
+        },
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": false,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": true
+            },
+            "passed": false
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": false,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": false
+            },
+            "passed": false
+          },
+          "condition": "gpt-6-luna-original",
+          "id": "architecture.correction_recall",
+          "repetition": 0
+        },
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": false,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": true
+            },
+            "passed": false
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": false,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": false
+            },
+            "passed": false
+          },
+          "condition": "gpt-6-luna-original",
+          "id": "architecture.correction_recall",
+          "repetition": 1
+        },
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": false,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": true
+            },
+            "passed": false
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": false,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": false
+            },
+            "passed": false
+          },
+          "condition": "gpt-6-luna-original",
+          "id": "architecture.correction_recall",
+          "repetition": 2
+        },
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": false,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": true
+            },
+            "passed": false
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": false,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": false
+            },
+            "passed": false
+          },
+          "condition": "gpt-6-luna-original",
+          "id": "configuration.capture_curate",
+          "repetition": 1
+        },
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": true
+            },
+            "passed": false
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": false
+            },
+            "passed": false
+          },
+          "condition": "gpt-6-luna-original",
+          "id": "configuration.capture_curate",
+          "repetition": 2
+        },
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": true
+            },
+            "passed": false
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": false
+            },
+            "passed": false
+          },
+          "condition": "gpt-6-luna-revised",
+          "id": "configuration.correction_recall",
+          "repetition": 0
+        },
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": true,
+              "supported_pattern": true
+            },
+            "passed": true
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": true,
+              "supported_pattern": true
+            },
+            "passed": false
+          },
+          "condition": "gpt-6-luna-revised",
+          "id": "configuration.correction_recall",
+          "repetition": 1
+        }
+      ],
+      "grader_sha256": "975ee28c379ab3aca19c59c4edc3aa1c4e4f1d526221df572ea7762c76028e02",
+      "grading_version": 3,
+      "original_report_sha256": "3d406f496403ca38d5869aec6b88f3f84f2599f8589dce3589c8674d7f371a51",
+      "reason": "Normalize use/uses and keep/kept/remain consistently. All cases rescored from persisted states."
+    },
+    "source_report": "/Users/topi/proj/remind/.remind/runtime/evals/interface-comparison-20261020/results/comparison.regraded.json"
+  },
+  "cases": [
+    {
+      "cases": [
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": false,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 24.987701707985252,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": false,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": false,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 9
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": false,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": false,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              1
+            ]
+          },
+          "elapsed_seconds": 27.377456750022247,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": false,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": false,
+            "capture_granularity": false,
+            "capture_provenance": false
+          },
+          "tool_calls": 11
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": false,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": false
+          },
+          "diagnostics": {
+            "capture_granularity": false,
+            "obsolete_fact_ids": [],
+            "support_source_counts": []
+          },
+          "elapsed_seconds": 80.2370910840109,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": false,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": false,
+            "capture_granularity": false,
+            "capture_provenance": false
+          },
+          "tool_calls": 9
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": false,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 67.92214670800604,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": false,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": false,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 13
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": false,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 73.03817199997138,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": false,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": false,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 19
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": false,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": false,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              1
+            ]
+          },
+          "elapsed_seconds": 51.91818654106464,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": false,
+          "repetition": 2,
+          "review_flags": [
+            "Active text mentions the old assertion; inspect quotation/negation context"
+          ],
+          "stage_checks": {
+            "capture_fact": false,
+            "capture_granularity": false,
+            "capture_provenance": false
+          },
+          "tool_calls": 13
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              3
+            ]
+          },
+          "elapsed_seconds": 33.17874516709708,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": false,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 10
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": false,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": false,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              1
+            ]
+          },
+          "elapsed_seconds": 41.63886124989949,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": false,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": false,
+            "capture_granularity": false,
+            "capture_provenance": false
+          },
+          "tool_calls": 9
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              3
+            ]
+          },
+          "elapsed_seconds": 37.757947625010274,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": false,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 11
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 58.87509887502529,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": false,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 17
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 43.75737350003328,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": false,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 15
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              3
+            ]
+          },
+          "elapsed_seconds": 49.473197416984476,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": false,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 13
+        }
+      ],
+      "condition": "gpt-6-luna-original"
+    },
+    {
+      "cases": [
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 55.44514283398166,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 9
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 52.39093637501355,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 12
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 45.200714292004704,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 11
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 77.42227324994747,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 18
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 81.54052725003567,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 15
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 78.15112195897382,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 17
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 48.75849262496922,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 9
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 44.92655845801346,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 9
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 49.45895483309869,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 10
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 76.77611341595184,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 15
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 81.7911919580074,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 15
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 80.17935191595461,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 19
+        }
+      ],
+      "condition": "gpt-6.1-sol-original"
+    },
+    {
+      "cases": [
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 39.00449741689954,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 12
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 58.430131374974735,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 8
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 34.96982316696085,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 7
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              3
+            ]
+          },
+          "elapsed_seconds": 45.113279541023076,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 10
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 58.39674208406359,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 15
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              3
+            ]
+          },
+          "elapsed_seconds": 66.91884950001258,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 16
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 34.50074041704647,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": false,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 8
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 45.818249791976996,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": false,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 7
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 41.238284292048775,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": false,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": false
+          },
+          "tool_calls": 7
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": false,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": false,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              3
+            ]
+          },
+          "elapsed_seconds": 61.81000841700006,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": false,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": false,
+            "capture_provenance": false
+          },
+          "tool_calls": 16
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 75.29958508396521,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 13
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 69.17440516594797,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 16
+        }
+      ],
+      "condition": "gpt-6-luna-revised"
+    },
+    {
+      "cases": [
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 45.47504612500779,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 8
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 39.197266165982,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 8
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 41.922141332994215,
+          "hard_violations": [],
+          "id": "architecture.capture_curate",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 7
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 75.67997125000693,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 14
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 68.1382382500451,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 13
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 77.01516225002706,
+          "hard_violations": [],
+          "id": "architecture.correction_recall",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 13
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 59.28244124993216,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 8
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 44.57374966703355,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 8
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 48.82646179199219,
+          "hard_violations": [],
+          "id": "configuration.capture_curate",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 8
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 67.74824474996421,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": true,
+          "repetition": 0,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 13
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 74.05623108299915,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": true,
+          "repetition": 1,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 13
+        },
+        {
+          "checks": {
+            "answer_rubric": true,
+            "current_fact": true,
+            "history": true,
+            "pending_clear": true,
+            "read_only": true,
+            "read_performed": true,
+            "source_provenance": true,
+            "supported_pattern": true
+          },
+          "diagnostics": {
+            "capture_granularity": true,
+            "obsolete_fact_ids": [],
+            "support_source_counts": [
+              2
+            ]
+          },
+          "elapsed_seconds": 69.74901887506712,
+          "hard_violations": [],
+          "id": "configuration.correction_recall",
+          "passed": true,
+          "repetition": 2,
+          "review_flags": [],
+          "stage_checks": {
+            "capture_fact": true,
+            "capture_granularity": true,
+            "capture_provenance": true
+          },
+          "tool_calls": 14
+        }
+      ],
+      "condition": "gpt-6.1-sol-revised"
+    }
+  ],
+  "date": "2026-10-20",
+  "design": {
+    "case_ids": [
+      "architecture.capture_curate",
+      "architecture.correction_recall",
+      "configuration.capture_curate",
+      "configuration.correction_recall"
+    ],
+    "concurrency": 4,
+    "families": [
+      "architecture",
+      "configuration"
+    ],
+    "grader_sha256": "1f0d95f9792f8d2b837c7991db22cf150665f35b9b2dc618b4e65a386cb4a534",
+    "grading_version": 2,
+    "models": [
+      "gpt-6-luna",
+      "gpt-6.1-sol"
+    ],
+    "reasoning_effort": "medium",
+    "repetitions": 3,
+    "runner_sha256": "b16f86c2ce6b999b224ddb0e6e727a7bbf39815de1b16cc1179fc447f552cb8f",
+    "sampling_seed_supported": false,
+    "sources": {
+      "original": {
+        "digest": "0cec855a7c07830d1899486e218d7bb3c1a4873f196020fce091cab118337084",
+        "path": "/Users/topi/proj/remind/.remind/runtime/evals/interface-comparison-20261020/original/src"
+      },
+      "revised": {
+        "digest": "2d876bcaadf9f32a28496326d7ff8aa0ccda9a5928da3a593ac66a675ba39a50",
+        "path": "/Users/topi/proj/remind/.remind/runtime/evals/interface-comparison-20261020/revised/src"
+      }
+    },
+    "tool_profile": "extended",
+    "version": 1
+  },
+  "grading_version": 3,
+  "input_catalog": "codex-interface-2026-10-20-inputs.json",
+  "raw_artifacts": "/Users/topi/proj/remind/.remind/runtime/evals/interface-comparison-20261020",
+  "schema_followup": {
+    "baseline_subset": "gpt-6-luna-revised / configuration.capture_curate",
+    "cases": [
+      {
+        "checks": {
+          "answer_rubric": true,
+          "current_fact": true,
+          "history": true,
+          "pending_clear": true,
+          "read_only": true,
+          "read_performed": true,
+          "source_provenance": true,
+          "supported_pattern": true
+        },
+        "diagnostics": {
+          "capture_granularity": true,
+          "obsolete_fact_ids": [],
+          "support_source_counts": [
+            2
+          ]
+        },
+        "elapsed_seconds": 29.26471350004431,
+        "grading": "Structural history and evidence coverage; lexical answer rubric; review prose",
+        "grading_version": 3,
+        "hard_violations": [],
+        "id": "configuration.capture_curate",
+        "passed": true,
+        "repetition": 0,
+        "review_flags": [],
+        "runner": {
+          "cli_version": "codex-cli 0.163.0",
+          "model": "gpt-6-luna",
+          "name": "codex-cli",
+          "reasoning_effort": "medium",
+          "seed_supported": false,
+          "tool_profile": "extended",
+          "version": "2"
+        },
+        "stage_checks": {
+          "capture_fact": true,
+          "capture_granularity": true,
+          "capture_provenance": true
+        },
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "transcripts": "/Users/topi/proj/remind/.remind/runtime/evals/interface-comparison-20261020/batch-schema-followup-valid/agent-runs/ba74aa30ae2747519720ac0305358564/transcripts/configuration.capture_curate.0"
+      },
+      {
+        "checks": {
+          "answer_rubric": true,
+          "current_fact": true,
+          "history": true,
+          "pending_clear": true,
+          "read_only": true,
+          "read_performed": true,
+          "source_provenance": true,
+          "supported_pattern": true
+        },
+        "diagnostics": {
+          "capture_granularity": true,
+          "obsolete_fact_ids": [],
+          "support_source_counts": [
+            2
+          ]
+        },
+        "elapsed_seconds": 38.064936125068925,
+        "grading": "Structural history and evidence coverage; lexical answer rubric; review prose",
+        "grading_version": 3,
+        "hard_violations": [],
+        "id": "configuration.capture_curate",
+        "passed": true,
+        "repetition": 1,
+        "review_flags": [],
+        "runner": {
+          "cli_version": "codex-cli 0.163.0",
+          "model": "gpt-6-luna",
+          "name": "codex-cli",
+          "reasoning_effort": "medium",
+          "seed_supported": false,
+          "tool_profile": "extended",
+          "version": "2"
+        },
+        "stage_checks": {
+          "capture_fact": true,
+          "capture_granularity": true,
+          "capture_provenance": true
+        },
+        "tool_calls": 8,
+        "tool_errors": 0,
+        "transcripts": "/Users/topi/proj/remind/.remind/runtime/evals/interface-comparison-20261020/batch-schema-followup-valid/agent-runs/ba74aa30ae2747519720ac0305358564/transcripts/configuration.capture_curate.1"
+      },
+      {
+        "checks": {
+          "answer_rubric": true,
+          "current_fact": true,
+          "history": true,
+          "pending_clear": true,
+          "read_only": true,
+          "read_performed": true,
+          "source_provenance": true,
+          "supported_pattern": true
+        },
+        "diagnostics": {
+          "capture_granularity": true,
+          "obsolete_fact_ids": [],
+          "support_source_counts": [
+            2
+          ]
+        },
+        "elapsed_seconds": 33.85117999999784,
+        "grading": "Structural history and evidence coverage; lexical answer rubric; review prose",
+        "grading_version": 3,
+        "hard_violations": [],
+        "id": "configuration.capture_curate",
+        "passed": true,
+        "repetition": 2,
+        "review_flags": [],
+        "runner": {
+          "cli_version": "codex-cli 0.163.0",
+          "model": "gpt-6-luna",
+          "name": "codex-cli",
+          "reasoning_effort": "medium",
+          "seed_supported": false,
+          "tool_profile": "extended",
+          "version": "2"
+        },
+        "stage_checks": {
+          "capture_fact": true,
+          "capture_granularity": true,
+          "capture_provenance": true
+        },
+        "tool_calls": 9,
+        "tool_errors": 0,
+        "transcripts": "/Users/topi/proj/remind/.remind/runtime/evals/interface-comparison-20261020/batch-schema-followup-valid/agent-runs/ba74aa30ae2747519720ac0305358564/transcripts/configuration.capture_curate.2"
+      }
+    ],
+    "rescoring": {
+      "changed_cases": [
+        {
+          "after": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": true,
+              "supported_pattern": true
+            },
+            "passed": true
+          },
+          "before": {
+            "checks": {
+              "answer_rubric": true,
+              "current_fact": true,
+              "history": true,
+              "pending_clear": true,
+              "read_only": true,
+              "read_performed": true,
+              "source_provenance": false,
+              "supported_pattern": false
+            },
+            "passed": false
+          },
+          "condition": "agent",
+          "id": "configuration.capture_curate",
+          "repetition": 0
+        }
+      ],
+      "grader_sha256": "975ee28c379ab3aca19c59c4edc3aa1c4e4f1d526221df572ea7762c76028e02",
+      "grading_version": 3,
+      "original_report_sha256": "708ea86dfeed1747554316e8a6ef44d668718de86563fd65a4f1e12bcce2ec20",
+      "reason": "Normalize use/uses and keep/kept/remain consistently. All cases rescored from persisted states."
+    }
+  }
+}

@@ -56,6 +56,7 @@ To roll back the software, use a preserved database backup with an explicit `sql
 
 - New opaque IDs are full UUIDs. Existing IDs remain valid; abbreviated IDs must be unambiguous.
 - Snapshots expose opaque revisions. Individual edits require `expected_revision`; apply requires an `expected_revisions` map for existing records it modifies. CLI equivalents are `--expected-revision` and `--revisions '{"id":"revision"}'`.
+- `label` and `unlabel` accept a fact ID as an alias for its source episode. Include that episode's revision in `expected_revisions`; a fact revision does not authorize changing episode labels. Records created within the same changeset need no prior revision.
 - Capture and apply accept stable idempotency keys. Retrying the same key/input returns the previous result; reusing a key for different input fails.
 - Python recall returns `RecallResult`; use `.text` for prompt context or `.to_dict()` for structured results. Batch capture returns `BatchRememberResult.results`.
 - Ordinary recall is read-only. `track_usage=True` / `--track-usage` updates operational usage state outside version-controlled records.

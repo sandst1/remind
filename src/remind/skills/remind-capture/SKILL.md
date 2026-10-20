@@ -48,7 +48,9 @@ Is it worth remembering?
 │  └─ Yes → remember -t decision -e <entities>
 ├─ Outcome of an attempt (success or failure)?
 │  └─ Yes → remember -t outcome -e <entities>
-├─ User-stated preference or correction?
+├─ Factual correction?
+│  └─ Yes → remember -t fact, then explicitly supersede the prior fact
+├─ User-stated preference?
 │  └─ Yes → remember -t preference
 ├─ Open question or uncertainty?
 │  └─ Yes → remember -t question
@@ -63,6 +65,28 @@ Is it worth remembering?
 - "The file has 100 lines" (trivial, queryable)
 - Things you just recalled from memory (already captured)
 - Speculative thoughts not grounded in evidence
+
+## Capture distinct assertions and verify corrections
+
+Split source notes into separate fact, decision, and outcome episodes. A message
+containing all three is still three assertions. Use MCP `remember_batch` to
+capture them in one call: items use `content`, `episode_type`, `entities` as a
+list, `labels` as an object, `asserted_by`, and `source_ref`. Preserve the original
+permalink in `source_ref`; the speaker belongs in `asserted_by`.
+
+Use `episode_type="fact"` for concrete assertions and factual corrections. The
+default type is observation; there is no automatic type or entity extraction.
+Fact content states the assertion, without commentary about the correction.
+Only fact episodes create the fact IDs needed for temporal supersession.
+
+A correction requires an actual `supersede` operation. Recall and inspect the old
+fact and its revision, capture the replacement fact, and supersede old → new in
+one `apply` changeset. Put the reason in the supersede note. If the earlier claim
+was embedded in an outcome or observation, capture that historical assertion as
+a fact using its original source provenance before superseding it. Keep the
+original source episode. Read the cluster snapshot afterward: verify the old
+fact's `valid_to` and `superseded_by` and the active replacement before reporting
+success. Prose that calls an assertion "superseded" does not change stored state.
 
 ## Single item: remember
 

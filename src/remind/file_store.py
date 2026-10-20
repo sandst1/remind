@@ -328,14 +328,19 @@ class FileMemoryStore(SQLAlchemyMemoryStore):
             self._recover()
             self._synchronize()
             self._local.dirty = False
+            persist_started = False
             try:
                 with super().transaction():
                     yield
                     if self._local.dirty:
+                        persist_started = True
                         self._persist()
             except BaseException:
                 # A durable decision may already exist. Reconcile before use.
-                self._digest = None
+                # A rejected edit before persistence only rolls back SQL; its
+                # unchanged files must not cause event resequencing/cursor reset.
+                if persist_started:
+                    self._digest = None
                 raise
 
     def _migrate(self, legacy: Path) -> None:

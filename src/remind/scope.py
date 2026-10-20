@@ -16,7 +16,7 @@ class FilteredStore:
         return getattr(self.base, name)
 
     def matches(self, episode: Any) -> bool:
-        if episode is None or not all(value in episode.labels.get(key, []) for key, value in self.labels.items()):
+        if episode is None or episode.deleted_at or not all(value in episode.labels.get(key, []) for key, value in self.labels.items()):
             return False
         fact = self.fact_sources.get(episode.id)
         if fact is not None:
@@ -46,12 +46,14 @@ class FilteredStore:
         if not self.concept_allowed(concept):
             return None
         concept = deepcopy(concept)
-        if not self.labels:
+        if not self.labels and self.as_of is None:
             return concept
         concept.source_episodes = [i for i in concept.source_episodes if self.matches(self.base.get_episode(i))]
         concept.entity_ids = sorted({i for ep in self.base.get_episodes_batch(concept.source_episodes) for i in ep.entity_ids})
         concept.evidence = []  # Unattributed quote caches cannot be scoped safely.
-        concept.specifics = [f.statement for f in self.get_facts(cluster_id=concept.id, active_only=True)]
+        if concept.concept_type in {"fact_cluster", "fact"}:
+            concept.specifics = [f.statement for f in self.get_facts(
+                cluster_id=concept.id, active_only=self.as_of is None, as_of=self.as_of)]
         concept.relations = [r for r in concept.relations if self.concept_allowed(self.base.get_concept(r.target_id))]
         return concept
 
@@ -66,8 +68,28 @@ class FilteredStore:
         return [e for e in self.base.get_episodes_batch(identifiers) if self.matches(e)]
 
     def get_episodes_mentioning(self, identifier, limit=50):
-        return [e for e in self.base.get_episodes_mentioning(identifier, limit=1000000)
-                if self.matches(e)][:limit]
+        return self._eligible_results(
+            lambda size: self.base.get_episodes_mentioning(identifier, limit=size),
+            self.matches, limit)
+
+    @staticmethod
+    def _eligible_results(fetch, eligible, limit):
+        """Keep fetching until the eligible result budget is filled or exhausted."""
+        if limit <= 0:
+            return []
+        size = limit
+        while True:
+            candidates = fetch(size)
+            results = [item for item in candidates if eligible(item)]
+            if len(results) >= limit or len(candidates) < size:
+                return results[:limit]
+            size *= 2
+
+    def find_episodes_by_entities(self, entity_ids, exclude_episode_ids=None, limit=20):
+        return self._eligible_results(
+            lambda size: self.base.find_episodes_by_entities(
+                entity_ids, exclude_episode_ids=exclude_episode_ids, limit=size),
+            self.matches, limit)
 
     def get_facts(self, **kwargs):
         return [f for f in self.base.get_facts(**kwargs) if self.fact_allowed(f)]
@@ -95,8 +117,9 @@ class FilteredStore:
 
     def find_by_embedding(self, embedding, k=5, labels=None):
         candidates = {c.id: (self.clean(c), score) for c, score in
-                      self.base.find_by_embedding(embedding, k=k, labels=self.labels)
-                      if self.concept_allowed(c)}
+                      self._eligible_results(
+                          lambda size: self.base.find_by_embedding(embedding, k=size, labels=self.labels),
+                          lambda pair: self.concept_allowed(pair[0]), k)}
         # Fact clusters inherit eligibility from matching source episodes.
         for fact in self.base.get_all_facts():
             valid = fact.is_active if self.as_of is None else (
@@ -111,11 +134,16 @@ class FilteredStore:
         return sorted(candidates.values(), key=lambda item: item[1], reverse=True)[:k]
 
     def search_concepts_lexical(self, query, k=5, labels=None):
-        return [(clean, score) for c, score in self.base.search_concepts_lexical(query, k=k, labels=self.labels)
-                if (clean := self.clean(c)) is not None]
+        return [(self.clean(c), score) for c, score in self._eligible_results(
+            lambda size: self.base.search_concepts_lexical(query, k=size, labels=self.labels),
+            lambda pair: self.concept_allowed(pair[0]), k)]
 
     def find_episodes_by_embedding(self, embedding, k=5, labels=None):
-        return self.base.find_episodes_by_embedding(embedding, k=k, labels=self.labels)
+        return self._eligible_results(
+            lambda size: self.base.find_episodes_by_embedding(embedding, k=size, labels=self.labels),
+            lambda pair: self.matches(pair[0]), k)
 
     def search_episodes_lexical(self, query, k=5, labels=None):
-        return self.base.search_episodes_lexical(query, k=k, labels=self.labels)
+        return self._eligible_results(
+            lambda size: self.base.search_episodes_lexical(query, k=size, labels=self.labels),
+            lambda pair: self.matches(pair[0]), k)

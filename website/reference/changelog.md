@@ -17,6 +17,16 @@ All notable changes to Remind.
 - `doctor`, explicit index repair, shared workflow endpoints, revision-aware UI edits.
 - Versioned eval fixtures, real Python/CLI/MCP/REST operational scenarios, semantic retrieval evals, and a configurable external-agent runner contract. All run locally; no CI added.
 
+### Fixed
+
+- Apply label edits through fact aliases check the source episode's revision. Rejected edits preserve event cursors and sequence numbers.
+- Historical recall filters episode and concept candidates before filling the result budget; entity expansion respects label and history constraints. Scoped pattern examples and historical fact specifics are preserved.
+- Snapshot imports reject duplicate identities and validate against the locked write state.
+- Clearing cached embeddings removes stale native vector entries. The first embedded SQLite write can initialize indexes inside its transaction and recover cleanly after rollback.
+- Background recall worker startup and file-store logging/configuration paths work with encoded spaces in file URLs.
+- Agent tool descriptions distinguish factual corrections, typed capture, source references, and verified supersession. Batch capture exposes item fields in its MCP schema while preserving raw request/retry semantics.
+- External-agent grading checks actual evidence coverage and supersession chains, separates incidental historical mentions from active obsolete facts, and normalizes limited grammatical variants. Local model/interface comparison scripts and an audited pilot report are included.
+
 ## [0.13.2] - 2026-08-10
 
 ### Fixed

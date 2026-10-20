@@ -13,6 +13,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import unquote
 
 from filelock import FileLock, Timeout
 
@@ -26,7 +27,9 @@ from remind.config import REMIND_DIR, load_config, setup_file_logging
 def _log_dir_for_db(db_path: str, remind_dir: Path | None = None) -> Path:
     """Return the log directory for a database path."""
     if remind_dir is not None:
-        return remind_dir / "logs"
+        return remind_dir / "runtime" / "logs"
+    if db_path.startswith("file://"):
+        return Path(unquote(db_path[7:])).parent / "runtime" / "logs"
     if db_path.startswith("sqlite:///"):
         db_file = Path(db_path[len("sqlite:///"):])
         return db_file.parent / "logs"
@@ -47,7 +50,7 @@ def setup_logging(db_path: str, remind_dir: Path | None = None) -> logging.Logge
     )
 
     from remind.config import infer_project_dir_from_db_url
-    project_dir = infer_project_dir_from_db_url(args.db)
+    project_dir = infer_project_dir_from_db_url(db_path)
     config = load_config(project_dir=project_dir)
     if config.logging_enabled:
         setup_file_logging(db_path, project_dir=project_dir)

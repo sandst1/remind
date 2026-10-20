@@ -12,6 +12,7 @@ Config priority (highest to lowest):
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
 import json
 import os
 import logging
@@ -529,24 +530,25 @@ def resolve_db_url(
     db_name: Optional[str] = None,
     project_aware: bool = False,
 ) -> str:
-    """Resolve a database name, path, or URL to a SQLAlchemy database URL.
+    """Resolve a name or path to canonical file storage, preserving explicit URLs.
 
-    If *db_name* is already a full database URL (e.g. ``postgresql://...``)
-    it is returned as-is.  Otherwise it goes through the same resolution
-    logic as ``resolve_db_path`` and wraps the result with ``sqlite:///``.
+    Names and bare database paths select a file store; a legacy ``.db``
+    path migrates to its sibling ``.memory`` directory on first open.
+    Explicit SQL URLs continue to select SQL storage.
 
     Args:
         db_name: Database name, absolute file path, or full database URL.
-        project_aware: If True and db_name is None, uses <cwd>/.remind/remind.db.
+        project_aware: If True and db_name is None, finds the project root
+            and uses its ``.remind/memory`` directory.
 
     Returns:
-        A SQLAlchemy-compatible database URL string.
+        A file-store or SQLAlchemy URL string.
 
     Examples:
-        resolve_db_url("myproject") → "sqlite:///~/.remind/myproject.db"
-        resolve_db_url("/tmp/memory.db") → "sqlite:////tmp/memory.db"
+        resolve_db_url("myproject") → "file:///…/.remind/myproject.memory"
+        resolve_db_url("/tmp/memory.db") → "file:///tmp/memory.memory"
         resolve_db_url("postgresql://u:p@host/db") → "postgresql://u:p@host/db"
-        resolve_db_url(None, project_aware=True) → "sqlite:///<cwd>/.remind/remind.db"
+        resolve_db_url(None, project_aware=True) → "file:///…/.remind/memory"
     """
     if db_name and _is_db_url(db_name):
         return db_name
@@ -577,8 +579,12 @@ def infer_project_dir_from_db_url(db_url: str) -> Optional[Path]:
     Remind wraps absolute paths as ``sqlite:///{path}``, which appears as four slashes
     before the root ``/`` on POSIX (e.g. ``sqlite:////tmp/a.db``).
     """
+    if not isinstance(db_url, str):
+        return None
     if db_url.startswith("file://"):
-        directory = Path(db_url[7:])
+        directory = Path(unquote(db_url[7:])).expanduser().resolve()
+        if directory.parent == REMIND_DIR.resolve():
+            return None
         return directory.parent.parent if directory.parent.name == ".remind" else directory.parent
 
     if not isinstance(db_url, str) or not db_url.startswith("sqlite:///"):
@@ -618,7 +624,7 @@ def setup_file_logging(db_path_or_url: str, project_dir: Optional[Path] = None) 
     directory are skipped.
     """
     if db_path_or_url.startswith("file://"):
-        log_dir = str(Path(db_path_or_url[7:]).parent / "runtime")
+        log_dir = str(Path(unquote(db_path_or_url[7:])).parent / "runtime")
     elif _is_db_url(db_path_or_url) and not db_path_or_url.startswith("sqlite"):
         log_dir = str((project_dir / ".remind" if project_dir else REMIND_DIR) / "runtime")
     else:

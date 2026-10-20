@@ -358,6 +358,10 @@ class ApplyEngine:
                             values = values.split(",")
                         for value in values:
                             identifier = self._resolve_ref(value, refs)
+                            if op["op"] in {"label", "unlabel"}:
+                                # A fact alias edits its source episode's labels.
+                                # Check the revision of the record actually edited.
+                                _, _, identifier = self._resolve_label_target(identifier)
                             if identifier not in created and record_revision(self.store, identifier) is not None:
                                 if identifier not in (expected_revisions or {}):
                                     raise RevisionConflict(identifier, record_revision(self.store, identifier))
@@ -365,6 +369,10 @@ class ApplyEngine:
                     results.append(result)
                     if result.id and result.op_type in {"remember", "concept", "conflict", "evidence"}:
                         created.add(result.id)
+                        if result.op_type == "remember":
+                            fact = self.store.get_fact(result.id)
+                            if fact and fact.source_episode_id:
+                                created.add(fact.source_episode_id)
                     
                     # Store ref if declared
                     if result.success and result.ref and result.id:
@@ -625,9 +633,7 @@ class ApplyEngine:
             self._emit_op_event(resolved_op, result)
         return result
 
-    # Maps op_type -> (event kind, default subject_type). Ops not listed
-    # here (link, entity_relation, evidence, unlink, reshape, merge, split)
-    # don't yet write to the change feed.
+    # Ops without a dedicated mapping emit a generic operation event.
     _EVENT_KIND_MAP = {
         "remember": ("remembered", "episode"),
         "supersede": ("superseded", "fact"),
@@ -645,8 +651,7 @@ class ApplyEngine:
     def _emit_op_event(self, op: dict, result: OpResult) -> None:
         """Append change-feed events for a successfully executed op.
 
-        Best-effort: failures here are logged, not raised, so an events
-        backend hiccup never breaks the underlying write it's describing.
+        Event failures propagate so the surrounding write rolls back atomically.
         """
         if result.op_type == "processed":
             ids_raw = op.get("ids", [])

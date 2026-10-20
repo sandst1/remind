@@ -105,16 +105,20 @@ class CLIAdapter:
 
 
 @asynccontextmanager
-async def mcp_server(selector: str, workspace: Path, embedding: str = "deterministic"):
+async def mcp_server(selector: str, workspace: Path, embedding: str = "deterministic",
+                     server_source: Path | None = None):
     """Launch the actual public server and wait for its listening socket."""
     from urllib.parse import quote
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     with (workspace / "server.log").open("w") as log:
+        environment = command_environment()
+        if server_source is not None:
+            environment["PYTHONPATH"] = str(server_source.resolve())
         process = subprocess.Popen([sys.executable, "-m", "remind.mcp_server", "--port", str(port),
                                     "--embedding", embedding], cwd=workspace,
-                                   stdout=log, stderr=log, env=command_environment())
+                                   stdout=log, stderr=log, env=environment)
         try:
             for _ in range(200):
                 if process.poll() is not None:
@@ -381,10 +385,94 @@ async def retrieval_suite(data, args, root):
 
 def covers(statement: str, expected: str) -> bool:
     import re
-    ignored = {"the", "a", "an", "is", "now", "for", "with", "uses"}
-    words = set(re.findall(r"\w+", statement.lower()))
-    required = set(re.findall(r"\w+", expected.lower())) - ignored
+    ignored = {"the", "a", "an", "is", "now", "for", "with", "use", "uses", "using"}
+    # Keep imperative/inflected policy wording equivalent without dropping
+    # the predicate entirely ("delete backups" must not cover "keep backups").
+    aliases = {"keep": "retain", "kept": "retain", "remain": "retain", "remains": "retain"}
+    words = {aliases.get(word, word) for word in re.findall(r"\w+", statement.lower())}
+    required = {aliases.get(word, word) for word in re.findall(r"\w+", expected.lower()) if word not in ignored}
     return required <= words
+
+
+def grade_agent_state(store: Any, family: dict, task: str, sessions: list[dict],
+                     before_final: dict, initial_facts: list[dict] | None = None) -> dict:
+    """Grade observable state; lexical mentions alone cannot prove obsolete facts."""
+    import re
+    facts = store.get_all_facts()
+    active = [fact for fact in facts if fact.is_active]
+    current = [fact for fact in active if covers(fact.statement, family["current"])]
+    current_ids = {fact.id for fact in current}
+    by_id = {fact.id: fact for fact in facts}
+    episodes = {episode.id: episode for episode in store.get_all_episodes()}
+    supported_sources = []
+    for concept in store.get_all_concepts():
+        if concept.concept_type != "pattern":
+            continue
+        evidence_ids = {row.episode_id for row in store.get_evidence_for_concept(concept.id)}
+        sources = [episodes[i] for i in concept.source_episodes if i in evidence_ids and i in episodes]
+        # Multiple assertions may share one source episode. Count content coverage,
+        # not an arbitrary minimum number of episode rows.
+        if all(any(covers(ep.content, family[key]) for ep in sources) for key in ("decision", "outcome")):
+            supported_sources.append(sources)
+
+    def reaches_current(fact):
+        seen = set()
+        while fact.superseded_by and fact.id not in seen:
+            seen.add(fact.id)
+            fact = by_id.get(fact.superseded_by)
+            if fact is None:
+                return False
+            if fact.id in current_ids:
+                return True
+        return False
+
+    old_facts = [fact for fact in facts if covers(fact.statement, family["old"])]
+    history = task != "correction_recall" or any(
+        not fact.is_active and reaches_current(fact) for fact in old_facts)
+    old_ids = {row["id"] for row in (initial_facts or []) if covers(row["statement"], family["old"])}
+    # A newly introduced exact old assertion is also a definite violation.
+    normalize = lambda text: " ".join(re.findall(r"\w+", text.lower()))
+    exact_old = lambda text: any(normalize(clause) == normalize(family["old"])
+                                 for clause in re.split(r"[.;!?\n]+", text))
+    obsolete = [fact.id for fact in active if exact_old(fact.statement) or
+                (fact.id in old_ids and covers(fact.statement, family["old"]) and
+                 not covers(fact.statement, family["current"]))]
+    review_flags = []
+    if any(covers(fact.statement, family["old"]) and fact.id not in obsolete for fact in active):
+        review_flags.append("Active text mentions the old assertion; inspect quotation/negation context")
+    snapshot = store.export_data()["records"]
+    read_only = snapshot == before_final
+    answer = sessions[-1]["answer"]
+    answer_matches = all(re.search(pattern, answer, re.IGNORECASE) for pattern in
+        family["answer_rubric"]["value_patterns"] + family["answer_rubric"]["approach_patterns"])
+    retrieved = any(event.get("type") == "tool_call" and event.get("name") in {"recall", "snapshot", "inspect"}
+                    for event in sessions[-1]["transcript"])
+    source = "fixture:" + family["id"]
+    provenance = any(fact.source_ref == source for fact in current) and any(
+        all(ep.source_ref == source for ep in sources) for sources in supported_sources)
+    violations = []
+    if not read_only:
+        violations.append("Final read-only session changed durable memory")
+    if obsolete:
+        violations.append("Obsolete fact remains active")
+    statements = [normalize(fact.statement) for fact in active]
+    if len(statements) != len(set(statements)):
+        violations.append("Duplicate active facts")
+    if any(not any(covers(fact.statement, family[key]) or covers(family[key], fact.statement)
+                   for key in ("old", "current", "decision", "outcome")) for fact in active):
+        violations.append("Unsupported active fact (fixture lexical check; review prose)")
+    checks = {"current_fact": bool(current), "history": bool(history),
+              "supported_pattern": bool(supported_sources), "source_provenance": bool(provenance),
+              "answer_rubric": bool(answer_matches), "read_performed": retrieved,
+              "read_only": read_only, "pending_clear": store.count_unconsolidated_episodes() == 0}
+    granularity = all(any(ep.episode_type == kind and covers(ep.content, family[key])
+                          for ep in episodes.values()) for kind, key in
+                      (("decision", "decision"), ("outcome", "outcome")))
+    return {"passed": all(checks.values()) and not violations, "checks": checks,
+            "hard_violations": violations, "review_flags": review_flags,
+            "diagnostics": {"capture_granularity": granularity,
+                            "support_source_counts": [len(sources) for sources in supported_sources],
+                            "obsolete_fact_ids": obsolete}, "grading_version": 3}
 
 
 async def agent_suite(data, args, root):
@@ -407,28 +495,44 @@ async def agent_suite(data, args, root):
             workspace.mkdir(parents=True)
             transcripts.mkdir(parents=True)
             selector = (workspace / "memory").as_uri()
-            sessions, before_final = [], None
+            sessions, before_final, initial_facts = [], None, []
             initial = family["current"] if case["task"] == "capture_curate" else family["old"]
             tasks = [f"Capture the useful information and curate the decision/outcome into a supported concept. Source notes: {initial}. {family['decision']}. {family['outcome']}. Use entity {family['entity']} and labels {family['labels']}. Preserve provenance as fixture:{family['id']}."]
             if case["task"] == "correction_recall":
                 tasks.append(f"The user explicitly corrects the earlier information: {family['current']}. Update and curate memory accordingly. Preserve the earlier fact as superseded history; use the same entity, labels, and source provenance.")
             tasks.append(f"Using only durable memory, what is the current information about {family['subject']} and what approach worked? Retrieve supporting evidence. This is a read-only session; do not modify memory.")
+            started = time.perf_counter()
             try:
-                async with mcp_server(selector, workspace, embedding="local") as endpoint:
+                async with mcp_server(selector, workspace, embedding="local",
+                    server_source=Path(args.agent_server_source) if getattr(args, "agent_server_source", None) else None) as endpoint:
                     for number, task in enumerate(tasks):
+                        if number == 1:
+                            store = open_store(selector)
+                            initial_state = store.export_data()["records"]
+                            initial_facts = initial_state["facts"]
+                            store.engine.dispose()
+                            (transcripts / "initial-facts.json").write_text(canonical_json(initial_facts))
+                            (transcripts / "initial-state.json").write_text(canonical_json(initial_state))
                         if number == len(tasks)-1:
                             store = open_store(selector)
                             before_final = store.export_data()["records"]
                             store.engine.dispose()
+                            (transcripts / "before-final.json").write_text(canonical_json(before_final))
                         manifest = {"version": 1, "case_id": case["id"], "session": number,
                                     "fresh_session": True, "seed": args.seed + repetition,
                                     "task": task, "workspace": str(workspace), "mcp_endpoint": endpoint,
+                                    "runner_artifacts": str(transcripts / f"session-{number}-runner"),
                                     "max_tool_calls": 60, "timeout_seconds": 300,
-                                    "skills": [str(importlib.resources.files("remind") / "skills" / skill / "SKILL.md")
+                                    "skills": [str((Path(args.agent_skills_root).resolve() if getattr(args, "agent_skills_root", None)
+                                                    else importlib.resources.files("remind") / "skills") / skill / "SKILL.md")
                                                for skill in ("remind-capture", "remind-curate", "remind-context")]}
                         result = await asyncio.to_thread(subprocess.run, shlex.split(args.agent_command),
                             input=json.dumps(manifest), capture_output=True, text=True, cwd=workspace,
                             timeout=300, env=command_environment())
+                        (transcripts / f"session-{number}.stdout").write_text(result.stdout)
+                        (transcripts / f"session-{number}.stderr").write_text(result.stderr)
+                        if result.returncode:
+                            raise ValueError(f"Runner exited {result.returncode}: {result.stderr[-6000:]}")
                         output = json.loads(result.stdout)
                         if result.returncode or not isinstance(output.get("transcript"), list) or not output.get("runner") or not isinstance(output.get("answer"), str):
                             raise ValueError("Runner must return runner identity, transcript, answer, and exit successfully")
@@ -439,42 +543,31 @@ async def agent_suite(data, args, root):
                         (transcripts / f"session-{number}.json").write_text(canonical_json(output))
                 store = open_store(selector)
                 try:
-                    facts = store.get_all_facts()
-                    active = [f.statement for f in facts if f.is_active]
-                    snapshot = store.export_data()["records"]
-                    patterns = [c for c in store.get_all_concepts() if c.concept_type == "pattern"]
-                    supported = any(len(c.source_episodes) >= 2 and store.get_evidence_for_concept(c.id) for c in patterns)
-                    completion = any(covers(f, family["current"]) for f in active) and supported
-                    history = case["task"] != "correction_recall" or any(covers(f.statement, family["old"]) and not f.is_active and f.superseded_by for f in facts)
-                    answer = sessions[-1]["answer"]
-                    import re
-                    answer_matches = all(re.search(pattern, answer, re.IGNORECASE) for pattern in
-                        family["answer_rubric"]["value_patterns"] + family["answer_rubric"]["approach_patterns"])
-                    completion = completion and answer_matches
-                    completion = completion and "fixture:" + family["id"] in json.dumps(snapshot)
-                    retrieved = any(event.get("type") == "tool_call" and event.get("name") in {"recall", "snapshot"} for event in sessions[-1]["transcript"])
-                    violations = []
-                    if snapshot != before_final:
-                        violations.append("Final read-only session changed durable memory")
-                    if any(covers(f, family["old"]) for f in active):
-                        violations.append("Obsolete fact remains active")
-                    if len(active) != len(set(active)):
-                        violations.append("Duplicate active facts")
-                    if any(not any(covers(statement, family[key]) or covers(family[key], statement)
-                                   for key in ("old", "current", "decision", "outcome")) for statement in active):
-                        violations.append("Unsupported active fact")
-                    pending_clear = store.count_unconsolidated_episodes() == 0
-                    completion = completion and pending_clear
-                    completion = completion and history and retrieved and not violations
-                    rows.append({"id": case["id"], "repetition": repetition, "passed": completion,
-                                 "hard_violations": violations, "checks": {"history": bool(history), "supported_pattern": bool(supported),
-                                     "answer_rubric": bool(answer_matches), "read_performed": retrieved, "pending_clear": pending_clear},
-                                 "runner": sessions[-1]["runner"],
-                                 "transcripts": str(transcripts), "grading": "Fixture token coverage plus observable state; prose review required"})
+                    graded = grade_agent_state(store, family, case["task"], sessions, before_final, initial_facts)
+                    (transcripts / "final-state.json").write_text(canonical_json(store.export_data()["records"]))
+                    elapsed = time.perf_counter() - started
+                    calls = [event for session in sessions for event in session["transcript"] if event.get("type") == "tool_call"]
+                    rows.append({"id": case["id"], "repetition": repetition, **graded,
+                                 "stage_checks": {
+                                     "capture_fact": any(covers(fact["statement"], initial) for fact in initial_facts),
+                                     "capture_granularity": all(any(row["data"].get("episode_type") == kind
+                                         and covers(row["data"]["content"], family[key]) for row in initial_state["episodes"])
+                                         for kind, key in (("decision", "decision"), ("outcome", "outcome"))),
+                                     "capture_provenance": any(fact.get("source_ref") == "fixture:" + family["id"]
+                                         for fact in initial_facts)},
+                                 "elapsed_seconds": elapsed, "tool_calls": len(calls),
+                                 "tool_errors": sum(bool(event.get("error") or event.get("result", {}).get("isError"))
+                                      for session in sessions for event in session["transcript"]
+                                      if event.get("type") == "tool_result"),
+                                 "runner": sessions[-1]["runner"], "transcripts": str(transcripts),
+                                 "grading": "Structural history and evidence coverage; lexical answer rubric; review prose"})
                 finally:
                     store.engine.dispose()
             except Exception as exc:
-                rows.append({"id": case["id"], "repetition": repetition, "passed": False, "error": str(exc)})
+                rows.append({"id": case["id"], "repetition": repetition, "passed": False,
+                             "error": str(exc), "transcripts": str(transcripts),
+                             "elapsed_seconds": time.perf_counter() - started})
+            print(f"agent: {name}: {'passed' if rows[-1]['passed'] else 'FAILED'}", file=sys.stderr, flush=True)
     passed = bool(rows) and sum(r["passed"] for r in rows)/len(rows) >= .9 and not any(r.get("hard_violations") for r in rows)
     return {"status": "passed" if passed else "failed", "cases": rows}
 
@@ -549,6 +642,8 @@ def main():
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--agent-command")
+    parser.add_argument("--agent-server-source", help="Frozen src directory for agent comparison servers")
+    parser.add_argument("--agent-skills-root", help="Frozen skills directory for agent comparison prompts")
     parser.add_argument("--baseline")
     parser.add_argument("--output", default=".remind/runtime/evals")
     args = parser.parse_args()

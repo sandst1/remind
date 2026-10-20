@@ -1,7 +1,7 @@
 """Memory storage backends."""
 
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 from typing import Optional
 import json
@@ -1266,9 +1266,13 @@ class SQLAlchemyMemoryStore(MemoryStore):
             if _is_sqlite(self.engine):
                 conn.exec_driver_sql("BEGIN IMMEDIATE")
             self._local.tx_conn = conn
+            previous_dimensions = self._vec_dimensions
             try:
                 yield
                 # engine.begin() auto-commits on successful context exit
+            except BaseException:
+                self._vec_dimensions = previous_dimensions
+                raise
             finally:
                 self._local.tx_conn = None
 
@@ -1611,13 +1615,13 @@ class SQLAlchemyMemoryStore(MemoryStore):
         elif self._vec_backend == "pgvector":
             self._init_pgvector()
 
-    def _init_sqlite_vec_tables(self) -> None:
+    def _init_sqlite_vec_tables(self, connection=None) -> None:
         """Create sqlite-vec vec0 virtual tables if they don't exist."""
         if not self._vec_dimensions:
             return
 
         dims = self._vec_dimensions
-        with self.engine.connect() as conn:
+        with (nullcontext(connection) if connection is not None else self.engine.begin()) as conn:
             existing = conn.execute(
                 text("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_concepts'")
             ).fetchone()
@@ -1628,7 +1632,6 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     f"embedding float[{dims}] distance_metric=cosine)"
                 ))
                 self._backfill_sqlite_vec(conn, "concepts")
-                conn.commit()
                 logger.info(f"Created vec_concepts table ({dims} dims)")
 
             existing = conn.execute(
@@ -1641,7 +1644,6 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     f"embedding float[{dims}] distance_metric=cosine)"
                 ))
                 self._backfill_sqlite_vec(conn, "episodes")
-                conn.commit()
                 logger.info(f"Created vec_episodes table ({dims} dims)")
 
             existing = conn.execute(
@@ -1654,7 +1656,6 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     f"embedding float[{dims}] distance_metric=cosine)"
                 ))
                 self._backfill_sqlite_vec(conn, "facts")
-                conn.commit()
                 logger.info(f"Created vec_facts table ({dims} dims)")
 
     def _backfill_sqlite_vec(self, conn, table: str) -> None:
@@ -2134,12 +2135,12 @@ class SQLAlchemyMemoryStore(MemoryStore):
         avoid opening a nested connection (which deadlocks on SQLite).
 
         When *conn* is the active transaction connection (inside
-        ``store.transaction()``), this method persists dims to metadata but
-        intentionally skips ``_init_vector_tables()`` and never calls
+        ``store.transaction()``), this method persists dimensions and creates
+        SQLite vector tables on that connection. It never calls
         ``conn.commit()``.  Calling ``commit()`` inside a SQLAlchemy
         ``engine.begin()`` context manager closes the transaction and causes
         all subsequent operations to raise "Can't operate on closed
-        transaction inside context manager".  The caller (``apply()``) must
+        transaction inside context manager". For other native backends, callers must
         pre-initialise vector tables *before* opening the transaction via
         ``_ensure_vec_dimensions(emb, conn=None)``.
         """
@@ -2184,7 +2185,11 @@ class SQLAlchemyMemoryStore(MemoryStore):
         else:
             self.set_metadata("embedding_dimensions", str(dims))
 
-        if not inside_transaction:
+        if inside_transaction and self._vec_backend == "sqlite-vec":
+            # SQLite virtual-table DDL participates in this transaction. Direct
+            # store writes must work even before the first indexed capture.
+            self._init_sqlite_vec_tables(connection=conn)
+        elif not inside_transaction:
             self._init_vector_tables()
 
     def _drop_vector_tables(self, conn=None) -> None:
@@ -2217,7 +2222,10 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def _upsert_vec_concept(self, conn, concept_id: str, embedding: Optional[list[float]]) -> None:
         """Sync a concept embedding to the vector index."""
-        if self._vec_backend is None or embedding is None:
+        if embedding is None:
+            self._delete_vec_concept(conn, concept_id)
+            return
+        if self._vec_backend is None:
             return
         self._ensure_vec_dimensions(embedding, conn=conn)
 
@@ -2237,7 +2245,10 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def _upsert_vec_episode(self, conn, episode_id: str, embedding: Optional[list[float]]) -> None:
         """Sync an episode embedding to the vector index."""
-        if self._vec_backend is None or embedding is None:
+        if embedding is None:
+            self._delete_vec_episode(conn, episode_id)
+            return
+        if self._vec_backend is None:
             return
         self._ensure_vec_dimensions(embedding, conn=conn)
 
@@ -2257,17 +2268,25 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def _delete_vec_concept(self, conn, concept_id: str) -> None:
         """Remove a concept from the vector index."""
+        if not self._vec_dimensions:
+            return
         if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
             conn.execute(text(
                 "DELETE FROM vec_concepts WHERE concept_id = :id"
             ), {"id": concept_id})
+        elif self._vec_backend == "pgvector":
+            conn.execute(text("UPDATE concepts SET embedding_vec = NULL WHERE id = :id"), {"id": concept_id})
 
     def _delete_vec_episode(self, conn, episode_id: str) -> None:
         """Remove an episode from the vector index."""
+        if not self._vec_dimensions:
+            return
         if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
             conn.execute(text(
                 "DELETE FROM vec_episodes WHERE episode_id = :id"
             ), {"id": episode_id})
+        elif self._vec_backend == "pgvector":
+            conn.execute(text("UPDATE episodes SET embedding_vec = NULL WHERE id = :id"), {"id": episode_id})
 
     # ------------------------------------------------------------------
     # Concept operations
@@ -2538,7 +2557,9 @@ class SQLAlchemyMemoryStore(MemoryStore):
     def find_by_embedding(
         self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
     ) -> list[tuple[Concept, float]]:
-        if labels and self._vec_backend == "sqlite-vec":
+        if self._vec_backend == "sqlite-vec" and (labels or k > 2048):
+            # Native KNN accepts at most 4096 candidates; the native path
+            # requests 2*k. Filtered request views may expand beyond that.
             return self._find_concepts_brute_force(embedding, k, labels)
         if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
             return self._find_concepts_sqlite_vec(embedding, k, labels)
@@ -2647,7 +2668,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
     def find_episodes_by_embedding(
         self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
     ) -> list[tuple[Episode, float]]:
-        if labels and self._vec_backend == "sqlite-vec":
+        if self._vec_backend == "sqlite-vec" and (labels or k > 2048):
             return self._find_episodes_brute_force(embedding, k, labels)
         if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
             return self._find_episodes_sqlite_vec(embedding, k, labels)
@@ -3005,7 +3026,10 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def _upsert_vec_fact(self, conn, fact_id: str, embedding: Optional[list[float]]) -> None:
         """Sync a fact embedding to the vector index."""
-        if self._vec_backend is None or embedding is None:
+        if embedding is None:
+            self._delete_vec_fact(conn, fact_id)
+            return
+        if self._vec_backend is None:
             return
         self._ensure_vec_dimensions(embedding, conn=conn)
 
@@ -3025,6 +3049,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
 
     def _delete_vec_fact(self, conn, fact_id: str) -> None:
         """Remove a fact from the vector index."""
+        if not self._vec_dimensions:
+            return
         if self._vec_backend == "sqlite-vec":
             conn.execute(text(
                 "DELETE FROM vec_facts WHERE fact_id = :id"
