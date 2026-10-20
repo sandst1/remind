@@ -16,7 +16,10 @@
 
   let initialized = false;
 
-  onMount(async () => {
+  onMount(() => {
+    let cleanup = () => {};
+    let active = true;
+    void (async () => {
     // Get db from URL
     const db = getDbParam();
     currentDb.set(db);
@@ -35,6 +38,7 @@
       console.error('Failed to fetch databases:', e);
     }
 
+    if (!active) return;
     initialized = true;
 
     // Listen for system theme changes
@@ -46,7 +50,9 @@
     };
     
     mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
+    cleanup = () => mediaQuery.removeEventListener('change', handleChange);
+    })();
+    return () => { active = false; cleanup(); };
   });
 
   // Theme handling

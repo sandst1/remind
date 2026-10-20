@@ -194,6 +194,11 @@ class SnapshotEngine:
         for scope in scopes:
             if scope.scope_type == "pending":
                 result["pending"] = self._scope_pending()
+            elif scope.scope_type == "deleted":
+                result["deleted"] = {
+                    "episodes": [e.to_dict() for e in self.store.get_deleted_episodes(limit=None)],
+                    "concepts": [c.to_dict() for c in self.store.get_deleted_concepts(limit=None)],
+                }
             elif scope.scope_type == "conflicts":
                 status = scope.value if scope.value else "open"
                 result["conflicts"] = self._scope_conflicts(status=status)
@@ -234,7 +239,7 @@ class SnapshotEngine:
             elif scope.scope_type == "health":
                 result["health"] = self._scope_health()
             elif scope.scope_type == "events":
-                since_seq = int(scope.value) if scope.value else 0
+                since_seq = scope.value if scope.value and "." in scope.value else int(scope.value) if scope.value else 0
                 result["events"] = self._scope_events(since_seq)
             elif scope.scope_type == "bootstrap":
                 n = int(scope.value) if scope.value else 10
@@ -242,6 +247,17 @@ class SnapshotEngine:
             else:
                 result[f"error:{scope.scope_type}"] = f"Unknown scope type: {scope.scope_type}"
         
+        from remind.operations import record_revision
+        def annotate(value):
+            if isinstance(value, dict):
+                if "id" in value and isinstance(value["id"], str):
+                    value["revision"] = record_revision(self.store, value["id"])
+                for item in list(value.values()):
+                    annotate(item)
+            elif isinstance(value, list):
+                for item in value:
+                    annotate(item)
+        annotate(result)
         return result
     
     def _scope_pending(self) -> dict[str, Any]:
@@ -304,6 +320,8 @@ class SnapshotEngine:
         Lets consolidation daemons and sync layers poll incrementally
         instead of re-scanning `pending` on every tick.
         """
+        if isinstance(since_seq, str):
+            return self.store.poll_events(cursor=since_seq, limit=200)
         events = self.store.get_events(since_seq=since_seq, limit=200)
         return {
             "since_seq": since_seq,

@@ -114,7 +114,7 @@ def create_fact_cluster(
         title = "Fact cluster"
     
     concept = Concept(
-        id=str(uuid4())[:8],
+        id=str(uuid4()),
         title=title,
         summary="",  # No LLM summary
         concept_type="fact_cluster",
@@ -297,7 +297,7 @@ def create_fact_from_episode(
     
     # Create the Fact row with embedding for semantic collision detection
     fact = Fact(
-        id=str(uuid4())[:8],
+        id=str(uuid4()),
         cluster_id=cluster.id,
         statement=episode.content,
         entity_ids=entity_ids,

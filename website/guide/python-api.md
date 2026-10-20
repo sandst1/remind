@@ -2,6 +2,12 @@
 
 Use Remind as a library in your own Python applications.
 
+## Version 0.14 result and edit contracts
+
+`await memory.recall(...)` returns `RecallResult`; pass `result.text` to an agent and inspect `result.to_dict()` for structured output. Ordinary recall is read-only. `remember_batch` returns `BatchRememberResult.results`, with one full capture result per item.
+
+Snapshots include record revisions. Pass `expected_revision` for individual edits, or `expected_revisions={id: revision}` to `ApplyEngine.apply`. Capture/apply accept stable idempotency keys for safe retries. Full UUIDs replace generated eight-character IDs; existing IDs are preserved. Use `create_memory(store_url="file:///absolute/path/to/memory")` for a generic local store, or an explicit SQL URL for database storage.
+
 ## Basic usage
 
 ```python

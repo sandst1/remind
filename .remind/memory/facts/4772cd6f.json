@@ -1,0 +1,18 @@
+{
+  "kind": "facts",
+  "record": {
+    "asserted_by": "topi",
+    "attribute": null,
+    "cluster_id": "83176bfe",
+    "created_at": "2026-08-09T01:02:48.467645",
+    "entity_ids": "[\"project:remind\", \"file:src/remind/store.py\", \"concept:retrieval\"]",
+    "id": "4772cd6f",
+    "source_episode_id": "d266ed5b",
+    "source_ref": null,
+    "statement": "Remind auto-detects its lexical search backend at store init with no configuration: SQLite FTS5 (probed by trying to create a virtual table in an in-memory database, since not every Python SQLite build compiles FTS5 in), PostgreSQL tsvector (a STORED generated column plus a GIN index), or MySQL FULLTEXT. If none is available the lexical arm is simply skipped and recall falls back to pure vector search.",
+    "superseded_by": null,
+    "valid_from": "2026-08-09T01:02:48.466641",
+    "valid_to": null
+  },
+  "version": 4
+}

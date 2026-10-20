@@ -68,11 +68,14 @@ async def get_memory_for_db(db_path: str) -> MemoryInterface:
 
     async with lock:
         if db_path not in _memory_instances:
-            config = load_config()
+            from remind.config import infer_project_dir_from_db_url
+            project_dir = infer_project_dir_from_db_url(db_path)
+            config = load_config(project_dir=project_dir)
             logger.info(f"Creating MemoryInterface for database: {db_path}")
             _memory_instances[db_path] = create_memory(
                 embedding_provider=config.embedding_provider,
                 db_url=db_path,
+                project_dir=project_dir,
             )
         return _memory_instances[db_path]
 
@@ -137,112 +140,18 @@ def _format_labels_dict(labels: dict) -> str:
 
 
 async def tool_remember(
-    content: str, 
-    metadata: Optional[str] = None,
-    episode_type: Optional[str] = None,
-    entities: Optional[str] = None,
-    labels: Optional[str] = None,
-    source_type: Optional[str] = None,
-    asserted_by: Optional[str] = None,
-    source_ref: Optional[str] = None,
+    content: str, metadata: Optional[str] = None, episode_type: Optional[str] = None,
+    entities: Optional[str] = None, labels: Optional[str] = None,
+    source_type: Optional[str] = None, asserted_by: Optional[str] = None,
+    source_ref: Optional[str] = None, idempotency_key: Optional[str] = None,
 ) -> str:
-    """Store an experience or observation in memory.
-    
-    This is a fast operation - no LLM calls. For fact-type episodes,
-    creates a Fact row with deterministic cluster assignment and
-    reports any potential collisions.
-    """
+    """Capture atomically; return structured IDs, collisions, and warnings."""
     memory = await get_memory()
-    
-    meta = json.loads(metadata) if metadata else None
-    
-    ep_type = episode_type or None
-    
-    # Parse entities if provided (comma-separated)
-    entity_list = None
-    if entities:
-        entity_list = [e.strip() for e in entities.split(",") if e.strip()]
-
-    label_dict = _parse_labels_str(labels)
-    
-    result = await memory.remember(
-        content, 
-        metadata=meta,
-        episode_type=ep_type,
-        entities=entity_list,
-        labels=label_dict,
-        source_type=source_type,
-        asserted_by=asserted_by,
-        source_ref=source_ref,
-    )
-    
-    lines = [f"Remembered as episode {result.episode_id}"]
-    
-    if ep_type:
-        lines.append(f"  Type: {ep_type}")
-    if entity_list:
-        lines.append(f"  Entities: {', '.join(entity_list)}")
-    if label_dict:
-        lines.append(f"  Labels: {_format_labels_dict(label_dict)}")
-    if source_type:
-        lines.append(f"  Source: {source_type}")
-    if asserted_by:
-        lines.append(f"  Asserted by: {asserted_by}")
-    if source_ref:
-        lines.append(f"  Source ref: {source_ref}")
-
-    if result.has_entity_resolutions():
-        lines.append("")
-        lines.append("⚠ Entity type coercion (existing entity reused — verify this is correct):")
-        for res in result.entity_resolutions:
-            lines.append(f"  {res}")
-
-    # For facts, show cluster and collision info
-    if result.fact_id:
-        lines.append(f"  Fact ID: {result.fact_id}")
-        lines.append(f"  Cluster: {result.cluster_id}" + (" (new)" if result.cluster_created else ""))
-        
-        if result.has_collisions():
-            lines.append("")
-            lines.append(f"⚠ {len(result.collisions)} potential collision(s) in same cluster:")
-            for collision in result.collisions:
-                stmt = collision.statement[:80] + ("..." if len(collision.statement) > 80 else "")
-                lines.append(f"  - {collision.id}: {stmt}")
-            lines.append("")
-            lines.append("→ If new fact supersedes an old one:")
-            for collision in result.collisions:
-                lines.append(f'  supersede old={collision.id} new={result.fact_id} note="reason"')
-            lines.append("→ If both valid in different contexts: no action needed")
-
-        if result.has_related():
-            lines.append("")
-            lines.append(f"Related facts — check for conflicts ({len(result.related_facts)}):")
-            for rf in result.related_facts:
-                entities_str = ", ".join(rf.entity_ids or [])
-                asserted = rf.asserted_by or "unknown"
-                date_str = rf.valid_from.strftime("%Y-%m-%d") if rf.valid_from else "?"
-                stmt = rf.statement[:80] + ("..." if len(rf.statement) > 80 else "")
-                lines.append(f"  [{rf.id}] \"{stmt}\" · {entities_str} · {asserted} · {date_str}")
-
-    if result.has_nearby():
-        if result.nearby_episodes or result.nearby_concepts:
-            lines.append("")
-            lines.append(f"Nearby ({len(result.nearby_episodes)} episodes, {len(result.nearby_concepts)} concepts) — review for conflicts:")
-        high_similarity_eps = []
-        for ep, score in result.nearby_episodes:
-            snippet = ep.content[:100] + ("..." if len(ep.content) > 100 else "")
-            lines.append(f"  [ep:{ep.id[:8]}] ({score:.2f}) {snippet}")
-            if score > 0.85:
-                high_similarity_eps.append((ep, score))
-        for concept, score in result.nearby_concepts:
-            lines.append(f"  [concept:{concept.id}] ({score:.2f}) {concept.title}")
-        if high_similarity_eps:
-            lines.append("")
-            lines.append("→ If a nearby episode contradicts what you just stored:")
-            for ep, score in high_similarity_eps:
-                lines.append(f'  conflict a={ep.id} b={result.episode_id} note="reason"')
-    
-    return "\n".join(lines)
+    result = await memory.remember(content, metadata=json.loads(metadata) if metadata else None,
+        episode_type=episode_type, entities=[e.strip() for e in entities.split(",")] if entities else None,
+        labels=_parse_labels_str(labels), source_type=source_type, asserted_by=asserted_by,
+        source_ref=source_ref, idempotency_key=idempotency_key)
+    return json.dumps(result.to_dict())
 
 
 async def tool_recall(
@@ -256,19 +165,25 @@ async def tool_recall(
     max_chars: Optional[int] = None,
     min_score: Optional[float] = None,
     timeout_ms: Optional[int] = None,
+    explain: bool = False,
+    track_usage: bool = False,
 ) -> str:
     """Retrieve relevant memories for a query."""
     memory = await get_memory()
-    return await memory.recall(
+    result = await memory.recall(
         query=query, k=k, context=context, entity=entity,
         episode_k=episode_k, labels=_parse_label_filter_str(labels), as_of=as_of,
         max_chars=max_chars, min_score=min_score, timeout_ms=timeout_ms,
     )
 
+    return json.dumps(result.to_dict())
+
 
 async def tool_apply(
     changeset: str,
     dry_run: bool = False,
+    expected_revisions: Optional[dict[str, str]] = None,
+    idempotency_key: Optional[str] = None,
 ) -> str:
     """Apply a batch changeset to memory."""
     from remind.apply import ApplyEngine
@@ -282,7 +197,7 @@ async def tool_apply(
         fact_cluster_jaccard_threshold=config.fact_cluster_jaccard_threshold,
     )
     
-    result = await engine.apply(changeset, dry_run=dry_run)
+    result = await engine.apply(changeset, dry_run=dry_run, expected_revisions=expected_revisions, idempotency_key=idempotency_key)
     return json.dumps(result.to_dict(), indent=2)
 
 
@@ -357,8 +272,7 @@ async def tool_resolve_conflict(
     conflict_id: str,
     winning_fact_id: Optional[str] = None,
     note: Optional[str] = None,
-    resolved_by: Optional[str] = None,
-) -> str:
+    resolved_by: Optional[str] = None, expected_revision: Optional[str] = None) -> str:
     """Resolve a conflict by picking a winning fact."""
     memory = await get_memory()
     try:
@@ -367,7 +281,7 @@ async def tool_resolve_conflict(
             winning_fact_id=winning_fact_id,
             note=note,
             resolved_by=resolved_by,
-        )
+         expected_revision=expected_revision)
     except ValueError as e:
         return f"Error: {e}"
     msg = f"Conflict {conflict.id} resolved."
@@ -379,12 +293,11 @@ async def tool_resolve_conflict(
 async def tool_dismiss_conflict(
     conflict_id: str,
     note: Optional[str] = None,
-    resolved_by: Optional[str] = None,
-) -> str:
+    resolved_by: Optional[str] = None, expected_revision: Optional[str] = None) -> str:
     """Dismiss a conflict as not a real contradiction."""
     memory = await get_memory()
     try:
-        conflict = await memory.dismiss_conflict(conflict_id, note=note, resolved_by=resolved_by)
+        conflict = memory.dismiss_conflict(conflict_id, note=note, dismissed_by=resolved_by, expected_revision=expected_revision)
     except ValueError as e:
         return f"Error: {e}"
     return f"Conflict {conflict.id} dismissed. Both facts remain active."
@@ -696,8 +609,7 @@ async def tool_update_episode(
     spec_ids: Optional[str] = None,
     depends_on: Optional[str] = None,
     priority: Optional[str] = None,
-    labels: Optional[str] = None,
-) -> str:
+    labels: Optional[str] = None, expected_revision: Optional[str] = None) -> str:
     """Update an existing episode."""
     from remind.models import EpisodeType
 
@@ -732,7 +644,7 @@ async def tool_update_episode(
         entities=entity_list,
         metadata=meta if meta else None,
         labels=label_dict,
-    )
+     expected_revision=expected_revision)
 
     if updated:
         lines = [f"Updated episode {episode_id}"]
@@ -763,21 +675,21 @@ async def tool_update_episode(
         return f"Episode {episode_id} not found."
 
 
-async def tool_delete_episode(episode_id: str) -> str:
+async def tool_delete_episode(episode_id: str, expected_revision: Optional[str] = None) -> str:
     """Soft delete an episode from memory."""
     memory = await get_memory()
 
-    if memory.delete_episode(episode_id):
+    if memory.delete_episode(episode_id, expected_revision=expected_revision):
         return f"Deleted episode {episode_id}. Use restore_episode to undelete, or purge_episode to permanently remove."
     else:
         return f"Episode {episode_id} not found."
 
 
-async def tool_restore_episode(episode_id: str) -> str:
+async def tool_restore_episode(episode_id: str, expected_revision: Optional[str] = None) -> str:
     """Restore a soft-deleted episode."""
     memory = await get_memory()
 
-    if memory.restore_episode(episode_id):
+    if memory.restore_episode(episode_id, expected_revision=expected_revision):
         return f"Restored episode {episode_id}."
     else:
         return f"Episode {episode_id} not found or not deleted."
@@ -790,8 +702,7 @@ async def tool_update_concept(
     confidence: Optional[float] = None,
     tags: Optional[str] = None,
     relations: Optional[str] = None,
-    labels: Optional[str] = None,
-) -> str:
+    labels: Optional[str] = None, expected_revision: Optional[str] = None) -> str:
     """Update an existing concept."""
     memory = await get_memory()
 
@@ -820,7 +731,7 @@ async def tool_update_concept(
         tags=tag_list,
         relations=relations_list,
         labels=label_dict,
-    )
+     expected_revision=expected_revision)
 
     if updated:
         lines = [f"Updated concept {concept_id}"]
@@ -847,21 +758,21 @@ async def tool_update_concept(
         return f"Concept {concept_id} not found."
 
 
-async def tool_delete_concept(concept_id: str) -> str:
+async def tool_delete_concept(concept_id: str, expected_revision: Optional[str] = None) -> str:
     """Soft delete a concept from memory."""
     memory = await get_memory()
 
-    if memory.delete_concept(concept_id):
+    if memory.delete_concept(concept_id, expected_revision=expected_revision):
         return f"Deleted concept {concept_id}. Use restore_concept to undelete, or purge_concept to permanently remove."
     else:
         return f"Concept {concept_id} not found."
 
 
-async def tool_restore_concept(concept_id: str) -> str:
+async def tool_restore_concept(concept_id: str, expected_revision: Optional[str] = None) -> str:
     """Restore a soft-deleted concept."""
     memory = await get_memory()
 
-    if memory.restore_concept(concept_id):
+    if memory.restore_concept(concept_id, expected_revision=expected_revision):
         return f"Restored concept {concept_id}."
     else:
         return f"Concept {concept_id} not found or not deleted."
@@ -927,6 +838,27 @@ def create_mcp_server(config=None):
     )
     
     @mcp.tool()
+    async def remember_batch(items: list[dict], idempotency_key: Optional[str] = None) -> str:
+        """Capture a batch atomically with the same semantics as remember."""
+        memory = await get_memory()
+        return json.dumps((await memory.remember_batch(items, idempotency_key=idempotency_key)).to_dict())
+
+    @mcp.tool()
+    async def poll_events(cursor: Optional[str] = None, limit: int = 200) -> str:
+        """Poll durable changes; reset_required means restart after checkout/rebuild."""
+        memory = await get_memory()
+        return json.dumps(memory.store.poll_events(cursor, limit))
+
+    @mcp.tool()
+    async def doctor(repair_indexes: bool = False) -> str:
+        """Diagnose memory integrity, model compatibility, and source freshness."""
+        from remind.doctor import diagnose
+        memory = await get_memory()
+        if repair_indexes:
+            memory.store.rebuild_indexes()
+        return json.dumps(diagnose(memory.store, memory.source_root, memory.embedding))
+
+    @mcp.tool()
     async def remember(
         content: str,
         metadata: Optional[str] = None,
@@ -936,6 +868,7 @@ def create_mcp_server(config=None):
         source_type: Optional[str] = None,
         asserted_by: Optional[str] = None,
         source_ref: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> str:
         """Store an experience or observation in memory (fast, no LLM calls).
 
@@ -951,8 +884,7 @@ def create_mcp_server(config=None):
         explicitly when you know it. Skip trivial or already-captured info; for
         raw conversation logs use ingest() instead.
 
-        Auto-consolidation: When the episode threshold (default: 5, configurable) is reached,
-        consolidation runs automatically after this call.
+        Curation is explicit: use snapshot and apply; no internal LLM calls.
 
         Args:
             content: The experience/observation to remember (clear, standalone statement)
@@ -978,7 +910,7 @@ def create_mcp_server(config=None):
         """
         return await tool_remember(
             content, metadata, episode_type, entities, labels, source_type,
-            asserted_by=asserted_by, source_ref=source_ref,
+            asserted_by=asserted_by, source_ref=source_ref, idempotency_key=idempotency_key,
         )
     
     @mcp.tool()
@@ -993,6 +925,8 @@ def create_mcp_server(config=None):
         max_chars: Optional[int] = None,
         min_score: Optional[float] = None,
         timeout_ms: Optional[int] = None,
+        explain: bool = False,
+        track_usage: bool = False,
     ) -> str:
         """Retrieve relevant memories for a query.
 
@@ -1020,8 +954,7 @@ def create_mcp_server(config=None):
             episode_k: Number of episodes to retrieve via direct vector search (default: 5). Set to 0 to disable.
             labels: Optional key=value label filter, comma-separated (e.g. "topic=architecture").
                     Pre-filters candidates to concepts/episodes matching ALL given labels
-                    before vector search runs; spreading activation still follows the
-                    graph beyond the filtered set. Use snapshot("labels") to see what's in use.
+                    through search, graph traversal, and rendered evidence. Use snapshot("labels") to see what's in use.
             as_of: ISO date/datetime (e.g. "2026-01-15"). Fact clusters show the
                    facts that were valid at that point in time instead of the
                    current ones. Useful for "what did we believe then" questions.
@@ -1038,13 +971,15 @@ def create_mcp_server(config=None):
         """
         return await tool_recall(
             query, k, context, entity, episode_k=episode_k, labels=labels, as_of=as_of,
-            max_chars=max_chars, min_score=min_score, timeout_ms=timeout_ms,
+            max_chars=max_chars, min_score=min_score, timeout_ms=timeout_ms, explain=explain, track_usage=track_usage,
         )
     
     @mcp.tool()
     async def apply(
         changeset: str,
         dry_run: bool = False,
+        expected_revisions: Optional[dict[str, str]] = None,
+        idempotency_key: Optional[str] = None,
     ) -> str:
         """Apply a batch changeset to memory.
         
@@ -1082,7 +1017,7 @@ def create_mcp_server(config=None):
         Returns:
             JSON with success status, executed ops count, results with IDs, and any errors
         """
-        return await tool_apply(changeset, dry_run)
+        return await tool_apply(changeset, dry_run, expected_revisions, idempotency_key)
     
     @mcp.tool()
     async def snapshot(scopes: str) -> str:
@@ -1160,8 +1095,7 @@ def create_mcp_server(config=None):
         conflict_id: str,
         winning_fact_id: Optional[str] = None,
         note: Optional[str] = None,
-        resolved_by: Optional[str] = None,
-    ) -> str:
+        resolved_by: Optional[str] = None, expected_revision: Optional[str] = None) -> str:
         """Resolve a conflict by declaring which fact is correct.
 
         The losing fact is structurally superseded (kept as history, hidden
@@ -1177,14 +1111,13 @@ def create_mcp_server(config=None):
         Returns:
             Confirmation or error
         """
-        return await tool_resolve_conflict(conflict_id, winning_fact_id, note, resolved_by)
+        return await tool_resolve_conflict(conflict_id, winning_fact_id, note, resolved_by, expected_revision=expected_revision)
 
     @mcp.tool()
     async def dismiss_conflict(
         conflict_id: str,
         note: Optional[str] = None,
-        resolved_by: Optional[str] = None,
-    ) -> str:
+        resolved_by: Optional[str] = None, expected_revision: Optional[str] = None) -> str:
         """Dismiss a conflict: both claims are valid (e.g. different contexts).
 
         Both facts stay active and the warning is cleared.
@@ -1197,7 +1130,7 @@ def create_mcp_server(config=None):
         Returns:
             Confirmation or error
         """
-        return await tool_dismiss_conflict(conflict_id, note, resolved_by)
+        return await tool_dismiss_conflict(conflict_id, note, resolved_by, expected_revision=expected_revision)
 
     @mcp.tool()
     async def inspect(
@@ -1317,8 +1250,7 @@ def create_mcp_server(config=None):
         spec_ids: Optional[str] = None,
         depends_on: Optional[str] = None,
         priority: Optional[str] = None,
-        labels: Optional[str] = None,
-    ) -> str:
+        labels: Optional[str] = None, expected_revision: Optional[str] = None) -> str:
         """Update an existing episode in memory.
 
         Use this to correct mistakes, add information, reclassify episodes, or link
@@ -1343,10 +1275,10 @@ def create_mcp_server(config=None):
             Confirmation or error message
         """
         return await tool_update_episode(episode_id, content, episode_type, entities,
-                                         plan_id, spec_ids, depends_on, priority, labels)
+                                         plan_id, spec_ids, depends_on, priority, labels, expected_revision=expected_revision)
 
     @mcp.tool()
-    async def delete_episode(episode_id: str) -> str:
+    async def delete_episode(episode_id: str, expected_revision: Optional[str] = None) -> str:
         """Soft delete an episode from memory.
 
         Use this to remove incorrect, outdated, or duplicate episodes.
@@ -1360,10 +1292,10 @@ def create_mcp_server(config=None):
         Returns:
             Confirmation or error message
         """
-        return await tool_delete_episode(episode_id)
+        return await tool_delete_episode(episode_id, expected_revision=expected_revision)
 
     @mcp.tool()
-    async def restore_episode(episode_id: str) -> str:
+    async def restore_episode(episode_id: str, expected_revision: Optional[str] = None) -> str:
         """Restore a previously deleted episode.
 
         Undeletes an episode that was soft-deleted with delete_episode.
@@ -1374,7 +1306,7 @@ def create_mcp_server(config=None):
         Returns:
             Confirmation or error message
         """
-        return await tool_restore_episode(episode_id)
+        return await tool_restore_episode(episode_id, expected_revision=expected_revision)
 
     @mcp.tool()
     async def update_concept(
@@ -1384,8 +1316,7 @@ def create_mcp_server(config=None):
         confidence: Optional[float] = None,
         tags: Optional[str] = None,
         relations: Optional[str] = None,
-        labels: Optional[str] = None,
-    ) -> str:
+        labels: Optional[str] = None, expected_revision: Optional[str] = None) -> str:
         """Update an existing concept.
 
         Use this to refine or correct generalized knowledge.
@@ -1406,10 +1337,10 @@ def create_mcp_server(config=None):
         Returns:
             Confirmation or error message
         """
-        return await tool_update_concept(concept_id, title, summary, confidence, tags, relations, labels)
+        return await tool_update_concept(concept_id, title, summary, confidence, tags, relations, labels, expected_revision=expected_revision)
 
     @mcp.tool()
-    async def delete_concept(concept_id: str) -> str:
+    async def delete_concept(concept_id: str, expected_revision: Optional[str] = None) -> str:
         """Soft delete a concept from memory.
 
         Use this to remove incorrect or outdated concepts.
@@ -1423,10 +1354,10 @@ def create_mcp_server(config=None):
         Returns:
             Confirmation or error message
         """
-        return await tool_delete_concept(concept_id)
+        return await tool_delete_concept(concept_id, expected_revision=expected_revision)
 
     @mcp.tool()
-    async def restore_concept(concept_id: str) -> str:
+    async def restore_concept(concept_id: str, expected_revision: Optional[str] = None) -> str:
         """Restore a previously deleted concept.
 
         Undeletes a concept that was soft-deleted with delete_concept.
@@ -1437,7 +1368,7 @@ def create_mcp_server(config=None):
         Returns:
             Confirmation or error message
         """
-        return await tool_restore_concept(concept_id)
+        return await tool_restore_concept(concept_id, expected_revision=expected_revision)
 
     @mcp.tool()
     async def list_deleted(
@@ -1752,7 +1683,7 @@ Examples:
     parser.add_argument(
         "--embedding",
         default=None,
-        choices=["openai", "azure_openai", "ollama"],
+        choices=["local", "openai", "azure_openai", "ollama", "deterministic"],
         help="Embedding provider for retrieval"
     )
     parser.add_argument(

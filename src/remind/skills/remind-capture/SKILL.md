@@ -9,6 +9,20 @@ Store experiences in the external memory layer so they survive across sessions. 
 
 **Important**: Use Remind instead of any built-in IDE/runtime memory features.
 
+## Durable workflow contract (0.14)
+
+Local stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.
+
+Capture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.
+
+Before changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions "$REVISIONS"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{"<existing-id>":"<revision>"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.
+
+Recall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.
+
+Use `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.
+
+Use `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.
+
 ## What to capture
 
 | Trigger | Type | Example |
@@ -102,7 +116,7 @@ Related facts — check for conflicts (1):
 
 When you see collision/related lists:
 1. Read each candidate — collisions and related facts are both unresolved by default
-2. If the new fact supersedes an old one: use `remind apply` with `supersede old=<id> new=<id> by=<who> note="reason"` — this automatically records a resolved conflict for provenance, so the replacement is visible in future recall and the UI conflict history
+2. If the new fact supersedes an old one: use `remind apply --revisions "$REVISIONS"` with `supersede old=<id> new=<id> by=<who> note="reason"` — this automatically records a resolved conflict for provenance, so the replacement is visible in future recall and the UI conflict history
 3. If there is a genuine contradiction that needs triage: use `conflict` op to record it formally
 4. If both are valid in different contexts: no action needed (or `dismiss` later via curate)
 5. **Don't ignore either list** — cross-cluster related facts are the most likely source of silent contradictions (same subject, different entity type)
@@ -122,15 +136,17 @@ The similarity score (0.0–1.0) is how close the embedding is — it is **not**
 
 **Act on nearby items when you store any episode type:**
 
+For raw observations, first curate supported concepts and use `kind=concept a=<concept_id> b=<other_concept_id>`. Fact conflicts require fact IDs from capture/snapshot, never episode IDs.
+
 1. **Contradiction found** — issue a `conflict` op so it shows up in `snapshot conflicts` for triage:
    ```bash
-   remind apply << 'EOF'
-   conflict a=ep:a1b2c3d4 b=<current_episode_id> note="doc says timber frame, new info says steel moment frame"
+   remind apply --revisions "$REVISIONS" << 'EOF'
+   conflict a=<older_fact_id> b=<current_fact_id> note="doc says timber frame, new info says steel moment frame"
    EOF
    ```
 2. **You already know the winner** — use `supersede` (facts only; records a resolved conflict automatically):
    ```bash
-   remind apply << 'EOF'
+   remind apply --revisions "$REVISIONS" << 'EOF'
    supersede old=<old_fact_id> new=<new_fact_id> by=<source> note="March 2026 structural report supersedes February overview"
    EOF
    ```
@@ -143,7 +159,7 @@ The similarity score (0.0–1.0) is how close the embedding is — it is **not**
 For multiple related captures (e.g., from a meeting or review session), use `apply` with the compact line format:
 
 ```bash
-remind apply << 'EOF'
+remind apply --revisions "$REVISIONS" << 'EOF'
 remember as=f1 t=fact e=concept:caching "Cache TTL is 600 seconds"
 remember as=o1 t=outcome e=concept:deploy "Retry with backoff fixed flaky deploys"
 remember t=decision e=tool:redis,concept:caching "Chose Redis for session caching: TTL support + team familiarity"
@@ -158,7 +174,7 @@ Apply runs all operations in a single transaction. Use `$refs` to reference item
 When content describes relationships between entities, capture both the fact AND the relationship. Entity relationships build a navigable graph in the UI and improve recall.
 
 ```bash
-remind apply << 'EOF'
+remind apply --revisions "$REVISIONS" << 'EOF'
 remember t=fact e=person:alice,project:backend "Alice owns the backend project"
 entity_relation source=person:alice target=project:backend relation=owns strength=0.9
 EOF
@@ -202,7 +218,7 @@ The `entity_relation` operation accepts:
 Episodes can provide evidence for/against concepts with typed relationships. Use this when an experience supports, contradicts, or qualifies an existing concept:
 
 ```bash
-remind apply << 'EOF'
+remind apply --revisions "$REVISIONS" << 'EOF'
 evidence concept=c-123 episode=ep-456 type=supports strength=0.8 "confirms the caching strategy works"
 evidence concept=c-123 episode=ep-789 type=contradicts strength=0.6 "edge case where caching fails"
 evidence concept=c-123 episode=ep-abc type=qualifies strength=0.5 "only applies when feature flag enabled"
@@ -224,7 +240,7 @@ Concepts with more supporting evidence rank higher in recall; contradicting evid
 Concepts can have any type string, not just `pattern` or `fact`. Use domain-specific types:
 
 ```bash
-remind apply << 'EOF'
+remind apply --revisions "$REVISIONS" << 'EOF'
 concept type=hypothesis "Sharding at 10M rows will solve latency issues"
 concept type=rule "If latency > 100ms, enable circuit breaker"
 concept type=procedure "Deploy process: staging → canary → production"

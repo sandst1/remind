@@ -53,7 +53,7 @@ def get_consolidation_lock_path(
     remind_dir: Optional[Path] = None,
 ) -> Path:
     """Get lock file path for consolidation worker."""
-    base = remind_dir if remind_dir is not None else REMIND_DIR
+    base = remind_dir if remind_dir is not None else REMIND_DIR / "runtime"
     return base / f".consolidation-{_db_hash(db_url)}.lock"
 
 
@@ -79,7 +79,7 @@ def get_ingest_lock_path(
     remind_dir: Optional[Path] = None,
 ) -> Path:
     """Get lock file path for ingest worker."""
-    base = remind_dir if remind_dir is not None else REMIND_DIR
+    base = remind_dir if remind_dir is not None else REMIND_DIR / "runtime"
     return base / f".ingest-{_db_hash(db_url)}.lock"
 
 
@@ -105,7 +105,7 @@ def get_ingest_queue_dir(
     remind_dir: Optional[Path] = None,
 ) -> Path:
     """Get directory for queued ingest chunks."""
-    base = remind_dir if remind_dir is not None else REMIND_DIR
+    base = remind_dir if remind_dir is not None else REMIND_DIR / "runtime"
     return base / f"ingest-queue-{_db_hash(db_url)}"
 
 
@@ -115,7 +115,7 @@ def get_recall_lock_path(
     remind_dir: Optional[Path] = None,
 ) -> Path:
     """Get lock file path for a recall worker identity."""
-    base = remind_dir if remind_dir is not None else REMIND_DIR
+    base = remind_dir if remind_dir is not None else REMIND_DIR / "runtime"
     return base / f".recall-{_db_hash(db_url)}-{worker_key}.lock"
 
 
@@ -125,7 +125,7 @@ def get_recall_socket_path(
     remind_dir: Optional[Path] = None,
 ) -> Path:
     """Get Unix socket path for a recall worker identity."""
-    base = remind_dir if remind_dir is not None else REMIND_DIR
+    base = remind_dir if remind_dir is not None else REMIND_DIR / "runtime"
     sockets_dir = base / "sockets"
     return sockets_dir / f"recall-{_db_hash(db_url)}-{worker_key}.sock"
 

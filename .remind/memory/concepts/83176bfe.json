@@ -1,0 +1,32 @@
+{
+  "kind": "concepts",
+  "record": {
+    "actionable": true,
+    "concept_type": "fact_cluster",
+    "conditions": null,
+    "confidence": 1.0,
+    "conflicts": [],
+    "created_at": "2026-08-09T01:02:48.462167",
+    "deleted_at": null,
+    "entity_ids": [
+      "project:remind",
+      "file:src/remind/config.py",
+      "concept:retrieval"
+    ],
+    "evidence": [],
+    "exceptions": [],
+    "id": "83176bfe",
+    "instance_count": 1,
+    "labels": {},
+    "lineage_note": null,
+    "parent_id": null,
+    "relations": [],
+    "source_episodes": [],
+    "specifics": "Remind auto-detects its lexical search backend at store init with no configuration: SQLite FTS5 (probed by trying to create a virtual table in an in-memory database, since not every Python SQLite build compiles FTS5 in), PostgreSQL tsvector (a STORED generated column plus a GIN index), or MySQL FULLTEXT. If none is available the lexical arm is simply skipped and recall falls back to pure vector search.\nRemind 0.13.0 retrieval config defaults: lexical_enabled is true, rrf_k is 60, hybrid_keyword_weight is 0.3, and the three recall budget knobs recall_max_chars, recall_min_score and recall_timeout_ms all default to None, meaning disabled unless set per call.",
+    "summary": "",
+    "tags": [],
+    "title": "Facts about remind, src/remind/config.py, retrieval",
+    "updated_at": "2026-08-09T01:02:48.470155"
+  },
+  "version": 4
+}

@@ -138,6 +138,10 @@ def _fts5_match_query(raw_query: str) -> Optional[str]:
     import re
 
     terms = re.findall(r"\w+", raw_query or "", re.UNICODE)
+    stopwords = {"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how",
+                 "i", "in", "is", "it", "of", "on", "or", "that", "the", "their", "this",
+                 "to", "was", "were", "what", "when", "where", "which", "who", "with"}
+    terms = [term for term in terms if term.lower() not in stopwords]
     if not terms:
         return None
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
@@ -565,7 +569,7 @@ class MemoryStore(ABC):
         ...
 
     @abstractmethod
-    def get_deleted_episodes(self, limit: int = 50) -> list[Episode]:
+    def get_deleted_episodes(self, limit: Optional[int] = 50) -> list[Episode]:
         """Get soft-deleted episodes."""
         ...
 
@@ -940,9 +944,11 @@ metadata_obj = MetaData()
 
 concepts_table = Table(
     "concepts", metadata_obj,
-    Column("id", String, primary_key=True),
+    Column("id", String(191), primary_key=True),
     Column("title", Text, nullable=True),
     Column("summary", Text, nullable=True),
+    Column("search_text", Text, nullable=True),
+    Column("deleted_at", DateTime, nullable=True),
     Column("data", JSON, nullable=False),
     Column("embedding", LargeBinary, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
@@ -951,9 +957,11 @@ concepts_table = Table(
 
 episodes_table = Table(
     "episodes", metadata_obj,
-    Column("id", String, primary_key=True),
+    Column("id", String(191), primary_key=True),
     Column("title", Text, nullable=True),
     Column("content", Text, nullable=True),
+    Column("episode_type", String(191), nullable=True),
+    Column("deleted_at", DateTime, nullable=True),
     Column("data", JSON, nullable=False),
     Column("consolidated", Boolean, default=False),
     Column("timestamp", DateTime, server_default=func.now()),
@@ -962,9 +970,9 @@ episodes_table = Table(
 
 relations_table = Table(
     "relations", metadata_obj,
-    Column("source_id", String, ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False),
-    Column("target_id", String, ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False),
-    Column("type", String, nullable=False),
+    Column("source_id", String(191), ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False),
+    Column("target_id", String(191), ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False),
+    Column("type", String(191), nullable=False),
     Column("strength", Float, default=0.5),
     Column("context", Text, nullable=True),
     PrimaryKeyConstraint("source_id", "target_id", "type"),
@@ -972,8 +980,8 @@ relations_table = Table(
 
 entities_table = Table(
     "entities", metadata_obj,
-    Column("id", String, primary_key=True),
-    Column("type", String, nullable=False),
+    Column("id", String(191), primary_key=True),
+    Column("type", String(191), nullable=False),
     Column("display_name", Text, nullable=True),
     Column("data", JSON, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
@@ -982,20 +990,20 @@ entities_table = Table(
 
 mentions_table = Table(
     "mentions", metadata_obj,
-    Column("episode_id", String, ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False),
-    Column("entity_id", String, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("episode_id", String(191), ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False),
+    Column("entity_id", String(191), ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
     Column("created_at", DateTime, server_default=func.now()),
     PrimaryKeyConstraint("episode_id", "entity_id"),
 )
 
 entity_relations_table = Table(
     "entity_relations", metadata_obj,
-    Column("source_id", String, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
-    Column("target_id", String, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
-    Column("relation_type", String, nullable=False),
+    Column("source_id", String(191), ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("target_id", String(191), ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("relation_type", String(191), nullable=False),
     Column("strength", Float, default=0.5),
     Column("context", Text, nullable=True),
-    Column("source_episode_id", String, ForeignKey("episodes.id", ondelete="SET NULL"), nullable=True),
+    Column("source_episode_id", String(191), ForeignKey("episodes.id", ondelete="SET NULL"), nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
     Column("episode_count", Integer, default=1),
     Column("source_episode_ids", Text, default="[]"),
@@ -1004,44 +1012,44 @@ entity_relations_table = Table(
 
 facts_table = Table(
     "facts", metadata_obj,
-    Column("id", String, primary_key=True),
-    Column("cluster_id", String, ForeignKey("concepts.id", ondelete="CASCADE"), nullable=True),
+    Column("id", String(191), primary_key=True),
+    Column("cluster_id", String(191), ForeignKey("concepts.id", ondelete="CASCADE"), nullable=True),
     Column("statement", Text, nullable=False),
     Column("attribute", Text, nullable=True),
     Column("entity_ids", Text, default="[]"),
     Column("valid_from", DateTime, nullable=False),
     Column("valid_to", DateTime, nullable=True),
-    Column("superseded_by", String, nullable=True),
+    Column("superseded_by", String(191), nullable=True),
     Column("asserted_by", Text, nullable=True),
     Column("source_ref", Text, nullable=True),
-    Column("source_episode_id", String, nullable=True),
+    Column("source_episode_id", String(191), nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
     Column("embedding", LargeBinary, nullable=True),
 )
 
 conflicts_table = Table(
     "conflicts", metadata_obj,
-    Column("id", String, primary_key=True),
-    Column("kind", String, nullable=False, server_default="fact"),
-    Column("fact_a_id", String, nullable=True),
-    Column("fact_b_id", String, nullable=True),
+    Column("id", String(191), primary_key=True),
+    Column("kind", String(191), nullable=False, server_default="fact"),
+    Column("fact_a_id", String(191), nullable=True),
+    Column("fact_b_id", String(191), nullable=True),
     Column("concept_ids", Text, default="[]"),
-    Column("description", Text, nullable=False, server_default=""),
-    Column("severity", String, nullable=False, server_default="medium"),
-    Column("status", String, nullable=False, server_default="open"),
+    Column("description", Text, nullable=False, default=""),
+    Column("severity", String(191), nullable=False, server_default="medium"),
+    Column("status", String(191), nullable=False, server_default="open"),
     Column("created_at", DateTime, server_default=func.now()),
     Column("resolved_at", DateTime, nullable=True),
     Column("resolution_note", Text, nullable=True),
     Column("resolved_by", Text, nullable=True),
-    Column("winning_fact_id", String, nullable=True),
+    Column("winning_fact_id", String(191), nullable=True),
 )
 
 evidence_table = Table(
     "evidence", metadata_obj,
-    Column("id", String, primary_key=True),
-    Column("episode_id", String, ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False),
-    Column("concept_id", String, ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False),
-    Column("link_type", String, nullable=False, server_default="supports"),
+    Column("id", String(191), primary_key=True),
+    Column("episode_id", String(191), ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False),
+    Column("concept_id", String(191), ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False),
+    Column("link_type", String(191), nullable=False, server_default="supports"),
     Column("strength", Float, default=0.5),
     Column("note", Text, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
@@ -1052,7 +1060,7 @@ Index("idx_evidence_concept", evidence_table.c.concept_id)
 
 metadata_table = Table(
     "metadata", metadata_obj,
-    Column("key", String, primary_key=True),
+    Column("key", String(191), primary_key=True),
     Column("value", Text, nullable=True),
 )
 
@@ -1062,10 +1070,10 @@ metadata_table = Table(
 # pre-filter into vector search rather than applied as a post-filter.
 labels_table = Table(
     "labels", metadata_obj,
-    Column("subject_type", String, nullable=False),
-    Column("subject_id", String, nullable=False),
-    Column("key", String, nullable=False),
-    Column("value", String, nullable=False),
+    Column("subject_type", String(191), nullable=False),
+    Column("subject_id", String(191), nullable=False),
+    Column("key", String(191), nullable=False),
+    Column("value", String(191), nullable=False),
     PrimaryKeyConstraint("subject_type", "subject_id", "key", "value"),
 )
 Index("idx_labels_kv", labels_table.c.key, labels_table.c.value)
@@ -1077,10 +1085,11 @@ Index("idx_labels_subject", labels_table.c.subject_type, labels_table.c.subject_
 events_table = Table(
     "events", metadata_obj,
     Column("seq", Integer, primary_key=True, autoincrement=True),
+    Column("event_id", String(191), nullable=True),
     Column("ts", DateTime, server_default=func.now()),
-    Column("kind", String, nullable=False),  # remembered | superseded | conflict_opened | conflict_resolved | conflict_dismissed | concept_created | concept_updated | labeled | unlabeled | deleted | restored | processed
-    Column("subject_type", String, nullable=False),  # episode | concept | fact | conflict
-    Column("subject_id", String, nullable=False),
+    Column("kind", String(191), nullable=False),  # remembered | superseded | conflict_opened | conflict_resolved | conflict_dismissed | concept_created | concept_updated | labeled | unlabeled | deleted | restored | processed
+    Column("subject_type", String(191), nullable=False),  # episode | concept | fact | conflict
+    Column("subject_id", String(191), nullable=False),
     Column("payload", JSON, nullable=True),
 )
 Index("idx_events_kind", events_table.c.kind)
@@ -1132,15 +1141,19 @@ def _parse_json(value) -> dict:
         return value
     if isinstance(value, list):
         return value
-    return json.loads(value)
+    decoded = json.loads(value)
+    # Older writes stored a JSON string inside native JSON columns. Raw SQL
+    # (FULLTEXT/tsvector) sees both layers; typed Core reads decode one layer.
+    if isinstance(decoded, str) and decoded.lstrip().startswith(("{", "[")):
+        return json.loads(decoded)
+    return decoded
 
 
-def _dump_json(value) -> str:
-    """Always serialize to a string. SQLAlchemy JSON columns accept both
-    dicts and strings depending on the dialect, but strings work everywhere."""
+def _dump_json(value):
+    """Let SQLAlchemy encode JSON once on every dialect."""
     if isinstance(value, str):
-        return value
-    return json.dumps(value)
+        return json.loads(value)
+    return value
 
 
 class SQLAlchemyMemoryStore(MemoryStore):
@@ -1191,7 +1204,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             self._vec_backend = "sqlite-vec"
             logger.info("Vector backend: sqlite-vec")
 
-        elif not _is_sqlite(self.engine) and _check_pgvector():
+        elif self.engine.dialect.name == "postgresql" and _check_pgvector():
             self._vec_backend = "pgvector"
             logger.info("Vector backend: pgvector")
 
@@ -1250,6 +1263,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
             raise RuntimeError("Nested transactions are not supported")
         
         with self.engine.begin() as conn:
+            if _is_sqlite(self.engine):
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
             self._local.tx_conn = conn
             try:
                 yield
@@ -1515,6 +1530,34 @@ class SQLAlchemyMemoryStore(MemoryStore):
             return col_name in cols
 
         with self.engine.connect() as conn:
+            for name, columns in (("concepts", {"deleted_at": "TIMESTAMP", "search_text": "TEXT"}),
+                                  ("episodes", {"deleted_at": "TIMESTAMP", "episode_type": "VARCHAR(191)"})):
+                changed = False
+                for column, sql_type in columns.items():
+                    if not _has_column(name, column):
+                        conn.execute(text(f"ALTER TABLE {name} ADD COLUMN {column} {sql_type}"))
+                        changed = True
+                if changed:
+                    conn.commit()
+                    table = metadata_obj.tables[name]
+                    for row in conn.execute(select(table.c.id, table.c.data)).fetchall():
+                        data = _parse_json(row.data)
+                        values = {"deleted_at": datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None}
+                        if name == "concepts":
+                            values["search_text"] = " ".join([data.get("title") or "", data.get("summary") or "", *data.get("tags", [])])
+                        else:
+                            values["episode_type"] = data.get("episode_type", "observation")
+                        conn.execute(table.update().where(table.c.id == row.id).values(**values))
+                    conn.commit()
+            if not _has_column("events", "event_id"):
+                conn.execute(text("ALTER TABLE events ADD COLUMN event_id VARCHAR"))
+                conn.commit()
+            rows = conn.execute(text("SELECT seq FROM events WHERE event_id IS NULL")).fetchall()
+            import uuid
+            for row in rows:
+                conn.execute(text("UPDATE events SET event_id=:id WHERE seq=:seq"),
+                             {"id": uuid.uuid4().hex, "seq": row.seq})
+            conn.commit()
             if not _has_column("concepts", "title"):
                 conn.execute(text("ALTER TABLE concepts ADD COLUMN title TEXT"))
                 conn.commit()
@@ -1535,7 +1578,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 conn.commit()
                 logger.info("Migration: Added source_episode_ids column to entity_relations table")
 
-            blob_type = "BLOB" if _is_sqlite(self.engine) else "BYTEA"
+            blob_type = "BYTEA" if self.engine.dialect.name == "postgresql" else "BLOB"
 
             if not _has_column("episodes", "embedding"):
                 conn.execute(text(f"ALTER TABLE episodes ADD COLUMN embedding {blob_type}"))
@@ -1882,14 +1925,19 @@ class SQLAlchemyMemoryStore(MemoryStore):
         allowed_ids = self._resolve_label_ids("concept", labels)
         if allowed_ids is not None and not allowed_ids:
             return []
+        filters = " AND concept_id IN (SELECT id FROM concepts WHERE deleted_at IS NULL)"
+        parameters = {"q": match}
+        for index, (key, value) in enumerate((labels or {}).items()):
+            filters += f" AND concept_id IN (SELECT subject_id FROM labels WHERE subject_type=:concept_type AND key=:lk{index} AND value=:lv{index})"
+            parameters.update({"concept_type": "concept", f"lk{index}": key, f"lv{index}": value})
         with self._connect() as conn:
             results: list[tuple[Concept, float]] = []
             for fetch_k in _label_escalation_steps(k, allowed_ids):
                 try:
                     rows = conn.execute(text(
                         "SELECT concept_id, rank FROM fts_concepts WHERE fts_concepts MATCH :q "
-                        "ORDER BY rank LIMIT :k"
-                    ), {"q": match, "k": fetch_k}).fetchall()
+                        f"{filters} ORDER BY rank LIMIT :k"
+                    ), {**parameters, "k": fetch_k}).fetchall()
                 except Exception:
                     logger.warning("FTS5 concept search failed", exc_info=True)
                     return []
@@ -1988,14 +2036,19 @@ class SQLAlchemyMemoryStore(MemoryStore):
         allowed_ids = self._resolve_label_ids("episode", labels)
         if allowed_ids is not None and not allowed_ids:
             return []
+        filters = " AND episode_id IN (SELECT id FROM episodes WHERE deleted_at IS NULL)"
+        parameters = {"q": match}
+        for index, (key, value) in enumerate((labels or {}).items()):
+            filters += f" AND episode_id IN (SELECT subject_id FROM labels WHERE subject_type=:episode_type AND key=:lk{index} AND value=:lv{index})"
+            parameters.update({"episode_type": "episode", f"lk{index}": key, f"lv{index}": value})
         with self._connect() as conn:
             results: list[tuple[Episode, float]] = []
             for fetch_k in _label_escalation_steps(k, allowed_ids):
                 try:
                     rows = conn.execute(text(
                         "SELECT episode_id, rank FROM fts_episodes WHERE fts_episodes MATCH :q "
-                        "ORDER BY rank LIMIT :k"
-                    ), {"q": match, "k": fetch_k}).fetchall()
+                        f"{filters} ORDER BY rank LIMIT :k"
+                    ), {**parameters, "k": fetch_k}).fetchall()
                 except Exception:
                     logger.warning("FTS5 episode search failed", exc_info=True)
                     return []
@@ -2228,6 +2281,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     id=concept.id,
                     title=concept.title,
                     summary=concept.summary,
+                    search_text=" ".join([concept.title or "", concept.summary, *concept.tags]),
+                    deleted_at=concept.deleted_at,
                     data=_dump_json(data),
                     embedding=_embedding_to_bytes(concept.embedding),
                     created_at=concept.created_at,
@@ -2306,6 +2361,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 .values(
                     title=concept.title,
                     summary=concept.summary,
+                    search_text=" ".join([concept.title or "", concept.summary, *concept.tags]),
+                    deleted_at=concept.deleted_at,
                     data=_dump_json(data),
                     embedding=_embedding_to_bytes(concept.embedding),
                     updated_at=concept.updated_at,
@@ -2330,7 +2387,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             conn.execute(
                 concepts_table.update()
                 .where(concepts_table.c.id == id)
-                .values(data=_dump_json(data))
+                .values(data=_dump_json(data), deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None)
             )
             return True
 
@@ -2348,12 +2405,53 @@ class SQLAlchemyMemoryStore(MemoryStore):
             conn.execute(
                 concepts_table.update()
                 .where(concepts_table.c.id == id)
-                .values(data=_dump_json(data))
+                .values(data=_dump_json(data), deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None)
             )
             return True
 
+    def _purge_references(self, conn, identifier: str, kind: str) -> None:
+        """Remove dependent references explicitly on every supported backend."""
+        condition = facts_table.c.cluster_id == identifier if kind == "concept" else facts_table.c.source_episode_id == identifier
+        fact_ids = list(conn.execute(select(facts_table.c.id).where(condition)).scalars())
+        clusters = set(conn.execute(select(facts_table.c.cluster_id).where(condition)).scalars())
+        for fact_id in fact_ids:
+            self._delete_vec_fact(conn, fact_id)
+        if fact_ids:
+            conn.execute(conflicts_table.delete().where(
+                conflicts_table.c.fact_a_id.in_(fact_ids) | conflicts_table.c.fact_b_id.in_(fact_ids)))
+            conn.execute(facts_table.update().where(facts_table.c.superseded_by.in_(fact_ids)).values(superseded_by=None))
+            conn.execute(labels_table.delete().where((labels_table.c.subject_type == "fact") & labels_table.c.subject_id.in_(fact_ids)))
+            conn.execute(facts_table.delete().where(facts_table.c.id.in_(fact_ids)))
+        if kind == "concept":
+            conn.execute(relations_table.delete().where((relations_table.c.source_id == identifier) | (relations_table.c.target_id == identifier)))
+            conn.execute(evidence_table.delete().where(evidence_table.c.concept_id == identifier))
+            for row in conn.execute(select(conflicts_table)).fetchall():
+                conflict = self._row_to_conflict(row)
+                if identifier in conflict.concept_ids:
+                    conn.execute(conflicts_table.delete().where(conflicts_table.c.id == conflict.id))
+        else:
+            conn.execute(evidence_table.delete().where(evidence_table.c.episode_id == identifier))
+        for row in conn.execute(select(concepts_table.c.id, concepts_table.c.data)).fetchall():
+            data = _parse_json(row.data)
+            changed = False
+            if kind == "concept":
+                kept = [relation for relation in data.get("relations", []) if relation["target_id"] != identifier]
+                changed = kept != data.get("relations", [])
+                data["relations"] = kept
+            else:
+                kept = [source for source in data.get("source_episodes", []) if source != identifier]
+                changed = kept != data.get("source_episodes", [])
+                data["source_episodes"] = kept
+            if row.id in clusters and row.id != identifier:
+                data["specifics"] = list(conn.execute(select(facts_table.c.statement).where(
+                    (facts_table.c.cluster_id == row.id) & facts_table.c.valid_to.is_(None))).scalars())
+                changed = True
+            if changed:
+                conn.execute(concepts_table.update().where(concepts_table.c.id == row.id).values(data=_dump_json(data)))
+
     def purge_concept(self, id: str) -> bool:
         with self._connect() as conn:
+            self._purge_references(conn, id, "concept")
             self._delete_vec_concept(conn, id)
             self._delete_fts_concept(conn, id)
             # SQLite doesn't enforce FK cascades by default; clean up fact rows explicitly
@@ -2440,6 +2538,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
     def find_by_embedding(
         self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
     ) -> list[tuple[Concept, float]]:
+        if labels and self._vec_backend == "sqlite-vec":
+            return self._find_concepts_brute_force(embedding, k, labels)
         if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
             return self._find_concepts_sqlite_vec(embedding, k, labels)
         elif self._vec_backend == "pgvector" and self._vec_dimensions:
@@ -2508,7 +2608,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
         with self._connect() as conn:
             rows = conn.execute(
                 select(concepts_table.c.data, concepts_table.c.embedding)
-                .where(concepts_table.c.embedding.isnot(None))
+                .where(concepts_table.c.embedding.isnot(None), concepts_table.c.deleted_at.is_(None),
+                       concepts_table.c.id.in_(allowed_ids) if allowed_ids is not None else True)
             ).fetchall()
 
             results = []
@@ -2546,6 +2647,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
     def find_episodes_by_embedding(
         self, embedding: list[float], k: int = 5, labels: Optional[dict[str, str]] = None
     ) -> list[tuple[Episode, float]]:
+        if labels and self._vec_backend == "sqlite-vec":
+            return self._find_episodes_brute_force(embedding, k, labels)
         if self._vec_backend == "sqlite-vec" and self._vec_dimensions:
             return self._find_episodes_sqlite_vec(embedding, k, labels)
         elif self._vec_backend == "pgvector" and self._vec_dimensions:
@@ -2615,7 +2718,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
         with self._connect() as conn:
             rows = conn.execute(
                 select(episodes_table.c.data, episodes_table.c.embedding)
-                .where(episodes_table.c.embedding.isnot(None))
+                .where(episodes_table.c.embedding.isnot(None), episodes_table.c.deleted_at.is_(None),
+                       episodes_table.c.id.in_(allowed_ids) if allowed_ids is not None else True)
             ).fetchall()
 
             results = []
@@ -3046,6 +3150,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     id=episode.id,
                     title=episode.title,
                     content=episode.content,
+                    episode_type=episode.episode_type,
+                    deleted_at=episode.deleted_at,
                     data=_dump_json(data),
                     consolidated=episode.consolidated,
                     timestamp=episode.timestamp,
@@ -3069,6 +3175,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
                         id=episode.id,
                         title=episode.title,
                         content=episode.content,
+                    episode_type=episode.episode_type,
+                    deleted_at=episode.deleted_at,
                         data=_dump_json(data),
                         consolidated=episode.consolidated,
                         timestamp=episode.timestamp,
@@ -3126,6 +3234,8 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 .values(
                     title=episode.title,
                     content=episode.content,
+                    episode_type=episode.episode_type,
+                    deleted_at=episode.deleted_at,
                     data=_dump_json(data),
                     consolidated=episode.consolidated,
                     timestamp=episode.timestamp,
@@ -3150,15 +3260,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             conn.execute(
                 episodes_table.update()
                 .where(episodes_table.c.id == id)
-                .values(data=_dump_json(data))
-            )
-            conn.execute(
-                entity_relations_table.delete()
-                .where(entity_relations_table.c.source_episode_id == id)
-            )
-            conn.execute(
-                mentions_table.delete()
-                .where(mentions_table.c.episode_id == id)
+                .values(data=_dump_json(data), deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None)
             )
             return True
 
@@ -3176,12 +3278,13 @@ class SQLAlchemyMemoryStore(MemoryStore):
             conn.execute(
                 episodes_table.update()
                 .where(episodes_table.c.id == id)
-                .values(data=_dump_json(data))
+                .values(data=_dump_json(data), deleted_at=datetime.fromisoformat(data["deleted_at"]) if data.get("deleted_at") else None)
             )
             return True
 
     def purge_episode(self, id: str) -> bool:
         with self._connect() as conn:
+            self._purge_references(conn, id, "episode")
             self._delete_vec_episode(conn, id)
             self._delete_fts_episode(conn, id)
             conn.execute(
@@ -3202,7 +3305,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             )
             return result.rowcount > 0
 
-    def get_deleted_episodes(self, limit: int = 50) -> list[Episode]:
+    def get_deleted_episodes(self, limit: Optional[int] = 50) -> list[Episode]:
         with self._connect() as conn:
             rows = conn.execute(
                 select(episodes_table.c.data)
@@ -3214,7 +3317,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 if not data.get("deleted_at"):
                     continue
                 episodes.append(Episode.from_dict(data))
-                if len(episodes) >= limit:
+                if limit is not None and len(episodes) >= limit:
                     break
             return episodes
 
@@ -4559,6 +4662,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
         with self._connect() as conn:
             conn.execute(
                 events_table.insert().values(
+                    event_id=__import__("uuid").uuid4().hex,
                     kind=kind,
                     subject_type=subject_type,
                     subject_id=subject_id,
@@ -4583,6 +4687,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
                 payload = _parse_json(row.payload) if row.payload else None
                 events.append({
                     "seq": row.seq,
+                    "event_id": row.event_id,
                     "ts": row.ts.isoformat() if row.ts else None,
                     "kind": row.kind,
                     "subject_type": row.subject_type,
@@ -4590,6 +4695,24 @@ class SQLAlchemyMemoryStore(MemoryStore):
                     "payload": payload,
                 })
             return events
+
+    def poll_events(self, cursor: Optional[str] = None, limit: int = 200, kind: Optional[str] = None) -> dict:
+        """Poll with a generation-qualified cursor; stale caches require restart."""
+        import uuid
+        generation = self.get_metadata("event_generation")
+        if generation is None:
+            generation = uuid.uuid4().hex
+            self.set_metadata("event_generation", generation)
+        since = 0
+        if cursor:
+            previous, sequence = cursor.rsplit(".", 1)
+            if previous != generation:
+                return {"events": [], "count": 0, "reset_required": True,
+                        "next_cursor": generation + ".0"}
+            since = int(sequence)
+        events = self.get_events(since_seq=since, limit=limit, kind=kind)
+        return {"events": events, "count": len(events), "reset_required": False,
+                "next_cursor": generation + "." + str(events[-1]["seq"] if events else since)}
 
     # ------------------------------------------------------------------
     # Statistics
@@ -4824,7 +4947,79 @@ class SQLAlchemyMemoryStore(MemoryStore):
             rows = conn.execute(stmt).fetchall()
         return [{"key": r.key, "value": r.value, "count": r.count} for r in rows]
 
-    def export_data(self) -> dict:
+    def page_records(self, kind: str, offset: int = 0, limit: int = 50, search: str = "",
+                     labels: Optional[dict[str, str]] = None, episode_type: Optional[str] = None,
+                     consolidated: Optional[bool] = None, start_date: Optional[str] = None,
+                     end_date: Optional[str] = None) -> tuple[list, int]:
+        """Filter, order, count, and paginate in SQL, without materializing the store."""
+        if kind not in {"concepts", "episodes"} or offset < 0 or not 1 <= limit <= 1000:
+            raise ValueError("Use concepts/episodes, nonnegative offset, and a limit between 1 and 1000")
+        table = metadata_obj.tables[kind]
+        predicates = [table.c.deleted_at.is_(None)]
+        if labels:
+            for key, value in labels.items():
+                ids = select(labels_table.c.subject_id).where(
+                    (labels_table.c.subject_type == kind[:-1]) & (labels_table.c.key == key) & (labels_table.c.value == value))
+                predicates.append(table.c.id.in_(ids))
+        if search:
+            predicates.append(table.c.search_text.icontains(search, autoescape=True) if kind == "concepts"
+                              else table.c.content.icontains(search, autoescape=True))
+        if kind == "episodes":
+            if episode_type:
+                predicates.append(table.c.episode_type == episode_type)
+            if consolidated is not None:
+                predicates.append(table.c.consolidated == consolidated)
+            for boundary, lower in ((start_date, True), (end_date, False)):
+                if boundary:
+                    when = datetime.fromisoformat(boundary)
+                    predicates.append(table.c.timestamp >= when if lower else table.c.timestamp <= when)
+        order = func.lower(func.coalesce(table.c.title, table.c.summary)).asc() if kind == "concepts" else table.c.timestamp.desc()
+        with self._connect() as conn:
+            count = conn.execute(select(func.count()).select_from(table).where(*predicates)).scalar_one()
+            rows = conn.execute(select(table).where(*predicates).order_by(order, table.c.id).offset(offset).limit(limit)).mappings().all()
+        model = Concept if kind == "concepts" else Episode
+        from remind.operations import row_revision
+        result = []
+        for row in rows:
+            item = model.from_dict(_parse_json(row["data"]))
+            item._revision = row_revision(kind, dict(row))
+            result.append(item)
+        return result, count
+
+    def export_data(self, mode: str = "portable") -> dict:
+        from remind.serialization import export_store
+        return export_store(self, mode)
+
+    def import_data(self, data: dict, replace: bool = False) -> dict:
+        from remind.serialization import import_store
+        if data.get("version") == 4:
+            result = import_store(self, data, replace=replace)
+            self.rebuild_indexes()
+            return result
+        # Decode legacy shapes in isolation, then use the same conflict-safe importer.
+        staging = SQLAlchemyMemoryStore("sqlite://")
+        try:
+            with staging.transaction():
+                staging._legacy_import_data(data)
+            upgraded = staging.export_data()
+        finally:
+            staging.engine.dispose()
+        result = import_store(self, upgraded, replace=replace)
+        self.rebuild_indexes()
+        return result
+
+    def rebuild_indexes(self) -> None:
+        """Recreate derived indexes after import or explicit repair."""
+        self._drop_vector_tables()
+        self._vec_dimensions = None
+        self._init_vector_tables()
+        if self._fts_backend == "fts5":
+            with self._connect() as conn:
+                for name in ("concepts", "episodes"):
+                    conn.exec_driver_sql(f"DELETE FROM fts_{name}")
+                    self._backfill_sqlite_fts(conn, name)
+
+    def _legacy_export_data(self) -> dict:
         with self._connect() as conn:
             mention_rows = conn.execute(
                 select(mentions_table.c.episode_id, mentions_table.c.entity_id)
@@ -4859,7 +5054,7 @@ class SQLAlchemyMemoryStore(MemoryStore):
             ],
         }
 
-    def import_data(self, data: dict) -> dict:
+    def _legacy_import_data(self, data: dict) -> dict:
         concepts_imported = 0
         episodes_imported = 0
         entities_imported = 0

@@ -2,6 +2,21 @@
 
 All notable changes to Remind.
 
+## [0.14.0] - 2026-10-20
+
+### Changed
+
+- Default local storage is deterministic model JSON, with a disposable SQLite projection, journal recovery, and automatic migration backups. Explicit SQL URLs retain SQL storage.
+- Python recall returns `RecallResult`; batch capture returns per-item results. Ordinary recall is read-only. Full UUIDs are generated; existing IDs remain valid.
+- Existing-record edits require revisions. Capture/apply support atomic retry receipts. Generation-qualified event polling detects checkout/rebuild resets.
+- Label filters constrain graph traversal and all rendered content. File-source freshness is visible. Ranking explanations distinguish relative scores from raw similarity.
+
+### Added
+
+- Complete portable exports/backups; atomic imports, capture, curation, and events.
+- `doctor`, explicit index repair, shared workflow endpoints, revision-aware UI edits.
+- Versioned eval fixtures, real Python/CLI/MCP/REST operational scenarios, semantic retrieval evals, and a configurable external-agent runner contract. All run locally; no CI added.
+
 ## [0.13.2] - 2026-08-10
 
 ### Fixed

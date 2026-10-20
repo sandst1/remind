@@ -1,0 +1,37 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": false,
+    "content": "Remind 0.13.0 adds an append-only events table as an outbox: store.emit_event() is called inside the same store.transaction() as the write it describes, so an event can never commit without its change and vice versa. Consolidation daemons and sync layers built on top of Remind poll it with a next_since_seq cursor instead of repeatedly re-scanning snapshot pending, which does not tell you what changed, only what is still unprocessed.",
+    "created_at": "2026-08-09T01:02:48.436741",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:change-feed",
+      "file:src/remind/store.py",
+      "project:remind"
+    ],
+    "episode_type": "decision",
+    "id": "15074817",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ],
+      "topic": [
+        "architecture"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.438505",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.438505"
+  },
+  "version": 4
+}

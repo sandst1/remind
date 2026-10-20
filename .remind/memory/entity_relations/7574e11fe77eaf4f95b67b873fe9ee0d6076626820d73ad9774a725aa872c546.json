@@ -1,0 +1,15 @@
+{
+  "kind": "entity_relations",
+  "record": {
+    "context": null,
+    "created_at": "2026-08-09T01:02:48.479605",
+    "episode_count": 1,
+    "relation_type": "part_of",
+    "source_episode_id": null,
+    "source_episode_ids": "[]",
+    "source_id": "concept:change-feed",
+    "strength": 0.8,
+    "target_id": "project:remind"
+  },
+  "version": 4
+}

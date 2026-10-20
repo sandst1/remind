@@ -1,0 +1,37 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": false,
+    "content": "The max_chars recall budget in Remind drops whole low-ranked concepts or episodes, one at a time from the weaker tail, until the rendered output fits — it never truncates mid-item. Rationale: a half-rendered concept is worse than a missing one because the agent cannot tell it is incomplete. Implemented in MemoryInterface._format_with_char_budget, which re-renders after each pop and compares the trailing concept activation against the trailing episode score to decide which list to shorten.",
+    "created_at": "2026-08-09T01:02:48.430546",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:recall-budget",
+      "file:src/remind/interface.py",
+      "project:remind"
+    ],
+    "episode_type": "decision",
+    "id": "d750a5ed",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ],
+      "topic": [
+        "retrieval"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.431874",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.431874"
+  },
+  "version": 4
+}

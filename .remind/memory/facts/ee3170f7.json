@@ -1,0 +1,18 @@
+{
+  "kind": "facts",
+  "record": {
+    "asserted_by": "topi",
+    "attribute": null,
+    "cluster_id": "83176bfe",
+    "created_at": "2026-08-09T01:02:48.462515",
+    "entity_ids": "[\"project:remind\", \"file:src/remind/config.py\", \"concept:retrieval\"]",
+    "id": "ee3170f7",
+    "source_episode_id": "955527f0",
+    "source_ref": null,
+    "statement": "Remind 0.13.0 retrieval config defaults: lexical_enabled is true, rrf_k is 60, hybrid_keyword_weight is 0.3, and the three recall budget knobs recall_max_chars, recall_min_score and recall_timeout_ms all default to None, meaning disabled unless set per call.",
+    "superseded_by": null,
+    "valid_from": "2026-08-09T01:02:48.461104",
+    "valid_to": null
+  },
+  "version": 4
+}

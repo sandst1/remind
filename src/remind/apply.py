@@ -17,7 +17,7 @@ from uuid import uuid4
 from remind.models import (
     Episode, Concept, Evidence, Fact, Conflict, Relation, RelationType,
     EpisodeType, EntityType, Entity, EntityRelation,
-    canonicalize_entity_name, strip_entity_label_prefix,
+    canonicalize_entity_name, strip_entity_label_prefix, normalize_labels,
     EVIDENCE_SUPPORTS,
 )
 from remind.store import MemoryStore
@@ -35,6 +35,9 @@ class OpError:
     op_index: int  # Index in the ops array (0-based)
     op_type: str
     message: str
+    code: Optional[str] = None
+    subject_id: Optional[str] = None
+    current_revision: Optional[str] = None
     
     def to_dict(self) -> dict:
         return {
@@ -42,6 +45,9 @@ class OpError:
             "op_index": self.op_index,
             "op_type": self.op_type,
             "message": self.message,
+            "code": self.code,
+            "subject_id": self.subject_id,
+            "current_revision": self.current_revision,
         }
 
 
@@ -83,6 +89,7 @@ class ApplyResult:
     ops_executed: int = 0
     errors: list[OpError] = field(default_factory=list)
     results: list[OpResult] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     
     def to_dict(self) -> dict:
         return {
@@ -90,6 +97,7 @@ class ApplyResult:
             "ops_executed": self.ops_executed,
             "errors": [e.to_dict() for e in self.errors],
             "results": [r.to_dict() for r in self.results],
+            "warnings": self.warnings,
         }
 
 
@@ -236,12 +244,15 @@ class ApplyEngine:
             if ref_name not in refs:
                 raise ValueError(f"Unknown reference: {value}")
             return refs[ref_name]
-        return value
+        from remind.operations import resolve_id
+        return resolve_id(self.store, value) if isinstance(value, str) else value
     
     async def apply(
         self,
         changeset: Union[str, list[dict]],
         dry_run: bool = False,
+        expected_revisions: Optional[dict[str, str]] = None,
+        idempotency_key: Optional[str] = None,
     ) -> ApplyResult:
         """Apply a changeset transactionally.
         
@@ -263,6 +274,12 @@ class ApplyEngine:
         if not ops:
             return ApplyResult(success=True)
         
+        from remind.operations import receipt, save_receipt, check_revisions, record_revision, RevisionConflict
+        request = {"operation": "apply", "ops": ops, "expected_revisions": expected_revisions}
+        cached = receipt(self.store, idempotency_key, request)
+        if cached is not None:
+            return ApplyResult(success=cached["success"], ops_executed=cached["ops_executed"],
+                               results=[OpResult(**r) for r in cached["results"]], warnings=cached.get("warnings", []))
         # Validate all ops first
         errors = self._validate_ops(ops)
         if errors:
@@ -273,6 +290,7 @@ class ApplyEngine:
         
         # Pre-compute embeddings for ops that need them
         # This must happen before the transaction since embedding is async
+        warnings = []
         embeddings_cache: dict[int, list[float]] = {}
         if self.embedding:
             for i, op in enumerate(ops):
@@ -284,6 +302,7 @@ class ApplyEngine:
                             embeddings_cache[i] = await self.embedding.embed(content)
                         except Exception as e:
                             logger.warning(f"Failed to embed content for op {i}: {e}")
+                            warnings.append(f"Missing embedding for op {i}: {e}")
                 elif op_type == "concept":
                     summary = op.get("summary", "") or op.get("content", "")
                     if summary:
@@ -291,7 +310,17 @@ class ApplyEngine:
                             embeddings_cache[i] = await self.embedding.embed(summary)
                         except Exception as e:
                             logger.warning(f"Failed to embed concept for op {i}: {e}")
+                            warnings.append(f"Missing embedding for op {i}: {e}")
         
+        fingerprint = None
+        if embeddings_cache:
+            dims = len(next(iter(embeddings_cache.values())))
+            fingerprint = json.dumps({"provider": self.embedding.name, "dimensions": dims, "input_version": 1}, sort_keys=True)
+            existing = self.store.get_metadata("embedding_fingerprint")
+            old_dims = self.store.get_metadata("embedding_dimensions")
+            if (existing and existing != fingerprint) or (old_dims and int(old_dims) != dims):
+                warnings.append("Embedding model changed; run re-embed --all. Writes stored without embeddings.")
+                embeddings_cache.clear()
         # Pre-initialize vector dimensions *outside* the transaction.
         # _ensure_vec_dimensions() runs DDL (CREATE VIRTUAL TABLE) via a
         # separate fresh connection.  Calling it inside engine.begin() would
@@ -309,9 +338,33 @@ class ApplyEngine:
         
         try:
             with self.store.transaction():
+                cached = receipt(self.store, idempotency_key, request)
+                if cached is not None:
+                    return ApplyResult(success=cached["success"], ops_executed=cached["ops_executed"],
+                                       results=[OpResult(**r) for r in cached["results"]], warnings=cached.get("warnings", []))
+                if embeddings_cache:
+                    self.store.set_metadata("embedding_fingerprint", fingerprint)
+                check_revisions(self.store, expected_revisions or {})
+                created = set()
                 for i, op in enumerate(ops):
+                    fields = {"update": ["id"], "label": ["id"], "unlabel": ["id"],
+                              "delete": ["id"], "restore": ["id"], "processed": ["ids"],
+                              "supersede": ["old"], "resolve": ["id"], "dismiss": ["id"],
+                              "link": ["from"], "unlink": ["from"], "concept": ["from"],
+                              "reshape": ["id"], "merge": ["from", "into"], "split": ["id"]}.get(op["op"], [])
+                    for field in fields:
+                        values = op.get(field, [])
+                        if isinstance(values, str):
+                            values = values.split(",")
+                        for value in values:
+                            identifier = self._resolve_ref(value, refs)
+                            if identifier not in created and record_revision(self.store, identifier) is not None:
+                                if identifier not in (expected_revisions or {}):
+                                    raise RevisionConflict(identifier, record_revision(self.store, identifier))
                     result = self._execute_op_sync(i, op, refs, embeddings_cache.get(i))
                     results.append(result)
+                    if result.id and result.op_type in {"remember", "concept", "conflict", "evidence"}:
+                        created.add(result.id)
                     
                     # Store ref if declared
                     if result.success and result.ref and result.id:
@@ -319,6 +372,8 @@ class ApplyEngine:
                     
                     if not result.success:
                         raise RuntimeError(f"Op {i} failed: {result.error}")
+                save_receipt(self.store, idempotency_key, request, ApplyResult(
+                    success=True, ops_executed=len(results), results=results, warnings=warnings).to_dict())
         
         except Exception as e:
             # Transaction rolled back. A failing op is appended to results
@@ -336,6 +391,9 @@ class ApplyEngine:
                     op_index=failed_index,
                     op_type=ops[failed_index]["op"] if failed_index < len(ops) else "",
                     message=str(e),
+                    code="revision_conflict" if isinstance(e, RevisionConflict) else "operation_failed",
+                    subject_id=e.subject_id if isinstance(e, RevisionConflict) else None,
+                    current_revision=e.current_revision if isinstance(e, RevisionConflict) else None,
                 )],
             )
         
@@ -343,6 +401,7 @@ class ApplyEngine:
             success=True,
             ops_executed=len(results),
             results=results,
+            warnings=warnings,
         )
     
     def _validate_ops(self, ops: list[dict]) -> list[OpError]:
@@ -558,7 +617,12 @@ class ApplyEngine:
             )
 
         if result.success:
-            self._emit_op_event(op, result)
+            resolved_op = dict(op)
+            if result.op_type == "processed":
+                values = op.get("ids", [])
+                values = values.split(",") if isinstance(values, str) else values
+                resolved_op["ids"] = [self._resolve_ref(value, refs) for value in values]
+            self._emit_op_event(resolved_op, result)
         return result
 
     # Maps op_type -> (event kind, default subject_type). Ops not listed
@@ -584,23 +648,22 @@ class ApplyEngine:
         Best-effort: failures here are logged, not raised, so an events
         backend hiccup never breaks the underlying write it's describing.
         """
-        try:
-            if result.op_type == "processed":
-                ids_raw = op.get("ids", [])
-                if isinstance(ids_raw, str):
-                    ids_raw = [ids_raw]
-                for episode_id in ids_raw:
-                    self.store.emit_event("processed", "episode", episode_id)
-                return
+        if result.op_type == "processed":
+            ids_raw = op.get("ids", [])
+            if isinstance(ids_raw, str):
+                ids_raw = [ids_raw]
+            for episode_id in ids_raw:
+                self.store.emit_event("processed", "episode", episode_id)
+            return
 
-            mapping = self._EVENT_KIND_MAP.get(result.op_type)
-            if not mapping or not result.id:
-                return
-            kind, default_subject_type = mapping
-            subject_type = result.subject_type or default_subject_type
-            self.store.emit_event(kind, subject_type, result.id)
-        except Exception as e:
-            logger.warning(f"Failed to emit change-feed event for op {result.op_type}: {e}")
+        mapping = self._EVENT_KIND_MAP.get(result.op_type)
+        if not mapping or not result.id:
+            from uuid import uuid4
+            self.store.emit_event("updated", "operation", str(uuid4()), payload={"operation": op})
+            return
+        kind, default_subject_type = mapping
+        subject_type = result.subject_type or default_subject_type
+        self.store.emit_event(kind, subject_type, result.id)
     
     def _op_remember(
         self, index: int, op: dict, refs: dict[str, str], ref_name: Optional[str],
@@ -636,9 +699,15 @@ class ApplyEngine:
             source_ref=source_ref,
             entity_ids=entity_ids,
             embedding=embedding,
+            labels=normalize_labels(op.get("labels")),
+            metadata=op.get("metadata") or {},
+            source_type=op.get("source_type"),
+            confidence=max(0., min(1., float(op.get("confidence", 1.)))),
         )
         
         episode_id = self.store.add_episode(episode)
+        if episode_type == "fact":
+            self.store.emit_event("remembered", "episode", episode_id)
         
         # Add entity mentions
         for entity_id in entity_ids:
@@ -748,8 +817,22 @@ class ApplyEngine:
         else:
             concept_ids = []
 
+        kind = op.get("kind", "fact")
+        if kind == "fact":
+            left, right = self.store.get_fact(fact_a), self.store.get_fact(fact_b)
+            if left is None or right is None:
+                raise ValueError("Fact conflicts require two existing fact IDs")
+            concept_ids = sorted(set(concept_ids) | {f.cluster_id for f in (left, right) if f.cluster_id})
+        elif kind == "concept":
+            concept_ids = concept_ids or [fact_a, fact_b]
+            if not concept_ids or any(self.store.get_concept(identifier) is None for identifier in concept_ids):
+                raise ValueError("Concept conflicts require existing concept IDs")
+            fact_a = fact_b = None
+        else:
+            raise ValueError("Conflict kind must be fact or concept")
+
         conflict = Conflict(
-            kind="fact",
+            kind=kind,
             fact_a_id=fact_a,
             fact_b_id=fact_b,
             concept_ids=concept_ids,
@@ -790,6 +873,8 @@ class ApplyEngine:
             )
         
         # Supersede the loser
+        if conflict.kind == "fact" and winner_id not in {conflict.fact_a_id, conflict.fact_b_id}:
+            raise ValueError("Winner must be one of the conflicting facts")
         loser_id = (
             conflict.fact_b_id
             if winner_id == conflict.fact_a_id
@@ -803,7 +888,7 @@ class ApplyEngine:
         conflict.resolved_at = datetime.now()
         conflict.resolved_by = resolved_by
         conflict.resolution_note = note
-        conflict.winning_fact_id = winner_id
+        conflict.winning_fact_id = (winner_id or None) if conflict.kind == "fact" else None
         self.store.update_conflict(conflict)
         
         # Record decision episode
@@ -818,6 +903,13 @@ class ApplyEngine:
             asserted_by=resolved_by,
         )
         self.store.add_episode(decision)
+        self.store.emit_event("remembered", "episode", decision.id)
+        for concept_id in conflict.concept_ids:
+            concept = self.store.get_concept(concept_id)
+            if concept and concept.concept_type in {"fact_cluster", "fact"}:
+                concept.specifics = [f.statement for f in self.store.get_facts(cluster_id=concept_id, active_only=True)]
+                concept.conflicts = []
+                self.store.update_concept(concept)
         
         return OpResult(
             op_index=index,
@@ -882,9 +974,16 @@ class ApplyEngine:
             concept_type="pattern",
             source_episodes=from_episodes,
             embedding=embedding,
+            labels=normalize_labels(op.get("labels")),
+            confidence=float(op.get("confidence", 0.5)),
+            entity_ids=sorted({entity for episode in self.store.get_episodes_batch(from_episodes)
+                               for entity in episode.entity_ids}),
         )
         
         self.store.add_concept(concept)
+        from remind.models import Evidence
+        for episode_id in from_episodes:
+            self.store.add_evidence(Evidence(episode_id=episode_id, concept_id=concept.id))
         
         # Add relations
         for rel in relations_raw:

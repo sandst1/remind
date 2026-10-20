@@ -1,0 +1,34 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": true,
+    "content": "Remind 0.13.0 retrieval config defaults: lexical_enabled is true, rrf_k is 60, hybrid_keyword_weight is 0.3, and the three recall budget knobs recall_max_chars, recall_min_score and recall_timeout_ms all default to None, meaning disabled unless set per call.",
+    "created_at": "2026-08-09T01:02:48.461104",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:retrieval",
+      "file:src/remind/config.py",
+      "project:remind"
+    ],
+    "episode_type": "fact",
+    "id": "955527f0",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.465064",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.465064"
+  },
+  "version": 4
+}

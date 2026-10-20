@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: remind
+      POSTGRES_PASSWORD: remind
+      POSTGRES_DB: remind_eval_admin
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U remind -d remind_eval_admin"]
+      interval: 2s
+      retries: 20
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: remind
+      MYSQL_DATABASE: remind_eval_admin
+    ports:
+      - "127.0.0.1:3307:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-premind"]
+      interval: 2s
+      retries: 30

@@ -13,7 +13,11 @@ Remind is an agent-driven memory layer for LLMs. It provides temporal facts, sem
 ```
 src/remind/
 ├── models.py          # Data models (Concept, Episode, Entity, Relation, Fact, Conflict)
-├── store.py           # SQLAlchemy persistence layer (SQLite, PostgreSQL, MySQL)
+├── store.py           # SQL persistence and disposable query projection
+├── file_store.py      # Default JSON store, write journal, recovery, migration
+├── serialization.py   # Complete portable snapshots and backups
+├── operations.py      # Revision checks and idempotency
+├── evals.py           # Operational, semantic, and external-agent evaluations
 ├── interface.py       # MemoryInterface - main public API
 ├── config.py          # Configuration loading (config file, env vars, defaults)
 ├── facts.py           # Deterministic fact processing (clustering, collision detection)
@@ -85,7 +89,7 @@ class EmbeddingProvider(ABC):
 The main entry point. Key design decisions:
 
 1. **`remember()` returns `RememberResult`** - episode_id + fact info for fact types
-2. **`recall()` uses spreading activation** - with hybrid embedding+keyword scoring
+2. **`recall()` returns `RecallResult` and uses spreading activation** - with hybrid embedding+keyword scoring
 3. **No internal LLM calls** - the calling agent provides all judgment
 
 ```python
@@ -183,7 +187,7 @@ class RemindConfig:
 
 ### Async/Await
 - All embedding operations are async
-- `remember()` is deliberately sync (fast path) though returns an async-safe result
+- `remember()` and `remember_batch()` are async; embeddings happen before the write transaction
 - Use `asyncio.run()` in CLI, native async in MCP server
 
 ### Type Hints
@@ -315,3 +319,9 @@ CREATE TABLE conflicts (
 ```
 
 The store handles JSON serialization/deserialization transparently.
+
+## Durable storage and evaluation development
+
+Default stores use canonical model JSON records under `.remind/memory/`; SQL is a rebuildable query projection. Preserve the journal commit/recovery protocol and never introduce internal LLM calls. New opaque IDs are full UUIDs; old IDs remain valid. All deliberate edits require caller revisions. Capture, apply, events, and retry receipts commit together. Ordinary recall must not mutate knowledge or usage statistics.
+
+Use the fixture dataset in `src/remind/eval_data/dataset.json` for operational, retrieval, and external-agent evals. Run `python -m remind.evals --suite operational`; real MCP/REST transports need loopback ports. Semantic evals use the actual default model. Agent evals require an external command and must report not-run when absent. See `evals/README.md`. Run pytest locally; do not add CI as part of this work.

@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Optional, Union
 from pathlib import Path
 import logging
+from copy import deepcopy
 
 from dataclasses import dataclass, field
 
@@ -23,6 +24,9 @@ from remind.models import (
     strip_entity_label_prefix,
 )
 from remind.store import MemoryStore, SQLAlchemyMemoryStore
+from remind.storage import open_store
+from remind.results import RecallResult, BatchRememberResult, public_model
+from remind.operations import revision_edit
 from remind.providers.base import EmbeddingProvider
 from remind.retrieval import MemoryRetriever, ActivatedConcept
 from remind.config import load_config, DecayConfig, RemindConfig, setup_file_logging, DEFAULT_EPISODE_TYPES
@@ -43,6 +47,27 @@ class RememberResult:
     # Nearest-neighbor episodes and concepts — agent decides if any conflict
     nearby_episodes: list[tuple["Episode", float]] = field(default_factory=list)
     nearby_concepts: list[tuple["Concept", float]] = field(default_factory=list)
+
+    warnings: list[str] = field(default_factory=list)
+    revisions: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {"episode_id": self.episode_id, "fact_id": self.fact_id,
+                "cluster_id": self.cluster_id, "cluster_created": self.cluster_created,
+                "collisions": [public_model(f) for f in self.collisions],
+                "related_facts": [public_model(f) for f in self.related_facts],
+                "entity_resolutions": self.entity_resolutions, "warnings": self.warnings, "revisions": self.revisions,
+                "nearby_episodes": [[public_model(item), score] for item, score in self.nearby_episodes],
+                "nearby_concepts": [[public_model(item), score] for item, score in self.nearby_concepts]}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RememberResult":
+        value = dict(data)
+        for key in ("collisions", "related_facts"):
+            value[key] = [Fact.from_dict(item) for item in value.get(key, [])]
+        for key, model in (("nearby_episodes", Episode), ("nearby_concepts", Concept)):
+            value[key] = [(model.from_dict(item), score) for item, score in value.get(key, [])]
+        return cls(**value)
 
     def has_collisions(self) -> bool:
         return len(self.collisions) > 0
@@ -87,7 +112,7 @@ class MemoryInterface:
         embedding: EmbeddingProvider,
         store: Optional[MemoryStore] = None,
         db_url: Optional[str] = None,
-        db_path: str = "memory.db",
+        db_path: Optional[str] = None,
         # Retrieval settings
         default_recall_k: int = 3,
         default_episode_k: int = 5,
@@ -117,14 +142,17 @@ class MemoryInterface:
         fact_collision_max_results: int = 5,
         # Nearest-neighbor surfacing on remember() — agent decides if conflicts exist
         remember_nearby_k: int = 5,
+        source_root: Optional[Path] = None,
     ):
+        self.source_root = source_root
         self.embedding = embedding
         if store:
             self.store = store
         elif db_url:
-            self.store = SQLAlchemyMemoryStore(db_url)
+            self.store = open_store(db_url)
         else:
-            self.store = SQLAlchemyMemoryStore(db_path)
+            from remind.config import resolve_db_url
+            self.store = open_store(resolve_db_url(db_path, project_aware=db_path is None))
         
         reranker = None
         if reranking_enabled:
@@ -186,203 +214,148 @@ class MemoryInterface:
         return normalized_id
 
     async def remember(
-        self,
-        content: str,
-        metadata: Optional[dict] = None,
-        episode_type: Optional[str] = None,
-        entities: Optional[list[str]] = None,
-        confidence: float = 1.0,
-        embed: bool = True,
+        self, content: str, metadata: Optional[dict] = None,
+        episode_type: Optional[str] = None, entities: Optional[list[str]] = None,
+        confidence: float = 1.0, embed: bool = True,
         labels: Optional[dict[str, str | list[str]]] = None,
-        source_type: Optional[str] = None,
-        asserted_by: Optional[str] = None,
-        source_ref: Optional[str] = None,
+        source_type: Optional[str] = None, asserted_by: Optional[str] = None,
+        source_ref: Optional[str] = None, idempotency_key: Optional[str] = None,
     ) -> RememberResult:
-        """
-        Log an experience/interaction.
+        result = await self.remember_batch([dict(
+            content=content, metadata=metadata, episode_type=episode_type,
+            entities=entities, confidence=confidence, labels=labels,
+            source_type=source_type, asserted_by=asserted_by, source_ref=source_ref,
+        )], embed=embed, idempotency_key=idempotency_key)
+        return result.results[0]
 
-        Embeds the episode content by default for vector search during recall.
-        For fact-type episodes, also creates a Fact row with cluster assignment
-        and reports any potential collisions.
-
-        Args:
-            content: The interaction or experience to remember
-            metadata: Optional metadata about the episode
-            episode_type: Optional explicit type (observation, decision, question, fact, etc.)
-            entities: Optional entity ID hints (e.g., ["file:src/auth.ts", "person:alice"]).
-            confidence: How certain this information is (0.0-1.0, default 1.0).
-            embed: Whether to generate an embedding for the episode (default True).
-            labels: Optional freeform key -> value(s) labels (e.g. {"topic": "architecture"}).
-            source_type: Origin of this episode (e.g. "agent", "slack", "github", "manual").
-            asserted_by: Who asserted this information (e.g. "alice", "agent:cursor").
-            source_ref: Link back to the original artifact (URL/permalink).
-
-        Returns:
-            RememberResult with episode_id and (for facts) collision info
-        """
-        episode = Episode(
-            content=content,
-            metadata=metadata or {},
-            confidence=max(0.0, min(1.0, confidence)),
-            labels=normalize_labels(labels),
-            source_type=source_type.lower().strip() if source_type else None,
-            asserted_by=asserted_by.strip() if asserted_by else None,
-            source_ref=source_ref.strip() if source_ref else None,
-        )
-        
-        if episode_type:
-            episode.episode_type = episode_type.value if isinstance(episode_type, EpisodeType) else str(episode_type)
-        
-        # Embed the episode content
-        embedding = None
-        if embed and self.embedding:
-            try:
-                embedding = await self.embedding.embed(content)
-                episode.embedding = embedding
-            except Exception as e:
-                logger.warning(f"Failed to embed episode: {e}")
-        
-        # Store the episode
-        episode_id = self.store.add_episode(episode)
-        self._episode_buffer.append(episode_id)
-        self.store.emit_event("remembered", "episode", episode_id)
-        
-        # Resolve and store explicitly provided entities
-        entity_resolutions: list[str] = []
-        if entities:
-            resolved_ids = []
-            for raw_id in entities:
-                canonical_id = self._resolve_entity_id(raw_id)
-                # Warn when type prefix changed (entity dedup fired across types)
-                raw_type = raw_id.split(":", 1)[0] if ":" in raw_id else ""
-                canonical_type = canonical_id.split(":", 1)[0] if ":" in canonical_id else ""
-                if raw_type and canonical_type and raw_type != canonical_type:
-                    entity_resolutions.append(f"{raw_id} → {canonical_id}")
-                    logger.debug(f"Entity type coercion: {raw_id} → {canonical_id}")
-                resolved_ids.append(canonical_id)
-                self.store.add_mention(episode_id, canonical_id)
-                # Also embed the entity
-                if embed and self.embedding:
-                    entity = self.store.get_entity(canonical_id)
-                    if entity and not entity.embedding:
-                        try:
-                            entity.embedding = await self.embedding.embed(
-                                f"{entity.type.value}: {entity.display_name}"
-                            )
-                            self.store.update_entity(entity)
-                        except Exception as e:
-                            logger.warning(f"Failed to embed entity: {e}")
-            episode.entity_ids = resolved_ids
-            self.store.update_episode(episode)
-        
-        logger.debug(f"Remembered episode {episode_id}: {content[:50]}...")
-
-        # Surface nearest-neighbor episodes and concepts for agent conflict triage
-        nearby_episodes: list[tuple[Episode, float]] = []
-        nearby_concepts: list[tuple[Concept, float]] = []
-        if embedding and self.remember_nearby_k > 0:
-            raw_eps = self.store.find_episodes_by_embedding(embedding, k=self.remember_nearby_k + 1)
-            nearby_episodes = [(ep, score) for ep, score in raw_eps if ep.id != episode_id][: self.remember_nearby_k]
-            nearby_concepts = self.store.find_by_embedding(embedding, k=self.remember_nearby_k)
-
-        # For fact-type episodes, create Fact row with cluster assignment
-        if episode.episode_type == "fact":
-            fact_result = create_fact_from_episode(
-                self.store,
-                episode,
-                embedding=embedding,
-                jaccard_threshold=self.fact_cluster_jaccard_threshold,
-                related_similarity_threshold=self.fact_related_similarity_threshold,
-                related_max_results=self.fact_related_max_results,
-                collision_max_results=self.fact_collision_max_results,
-            )
-            if fact_result.fact_id:
-                self.store.emit_event("remembered", "fact", fact_result.fact_id)
-            return RememberResult(
-                episode_id=episode_id,
-                fact_id=fact_result.fact_id,
-                cluster_id=fact_result.cluster_id,
-                cluster_created=fact_result.cluster_created,
-                collisions=fact_result.collisions,
-                related_facts=fact_result.related_facts,
-                entity_resolutions=entity_resolutions,
-                nearby_episodes=nearby_episodes,
-                nearby_concepts=nearby_concepts,
-            )
-
-        return RememberResult(
-            episode_id=episode_id,
-            entity_resolutions=entity_resolutions,
-            nearby_episodes=nearby_episodes,
-            nearby_concepts=nearby_concepts,
-        )
-    
     async def remember_batch(
-        self,
-        items: list[dict],
-        embed: bool = True,
-        embed_batch_size: int = 100,
-    ) -> list[str]:
-        """
-        Batch-remember multiple episodes efficiently.
-
-        Creates all episodes, embeds them in batches via the provider's
-        embed_batch() API, and writes them in a single DB transaction.
-        """
-        if not items:
-            return []
-
+        self, items: list[dict], embed: bool = True, embed_batch_size: int = 100,
+        idempotency_key: Optional[str] = None,
+    ) -> BatchRememberResult:
+        """Capture an entire batch atomically, with single-capture semantics."""
+        from remind.results import BatchRememberResult
+        from remind.operations import receipt, save_receipt
+        request = {"operation": "remember_batch", "items": items, "embed": embed}
+        cached = receipt(self.store, idempotency_key, request)
+        if cached is not None:
+            return BatchRememberResult([RememberResult.from_dict(r) for r in cached["results"]])
+        if embed_batch_size < 1:
+            raise ValueError("embed_batch_size must be positive")
         episodes = []
+        warnings = []
         for item in items:
-            source_type = item.get("source_type")
-            asserted_by = item.get("asserted_by")
-            source_ref = item.get("source_ref")
-            episode = Episode(
-                content=item["content"],
-                metadata=item.get("metadata") or {},
-                confidence=max(0.0, min(1.0, item.get("confidence", 1.0))),
-                source_type=source_type.lower().strip() if source_type else None,
-                asserted_by=asserted_by.strip() if asserted_by else None,
-                source_ref=source_ref.strip() if source_ref else None,
-            )
-            if item.get("episode_type"):
-                et = item["episode_type"]
-                episode.episode_type = et.value if isinstance(et, EpisodeType) else str(et)
+            if not isinstance(item.get("content"), str) or not item["content"].strip():
+                raise ValueError("Capture requires nonempty content")
+            episode = Episode(content=item["content"], metadata=deepcopy(item.get("metadata") or {}),
+                              episode_type=item.get("episode_type") or "observation",
+                              labels=normalize_labels(item.get("labels")),
+                              confidence=max(0., min(1., item.get("confidence", 1.))),
+                              source_type=(item.get("source_type") or "").strip().lower() or None,
+                              asserted_by=(item.get("asserted_by") or "").strip() or None,
+                              source_ref=(item.get("source_ref") or "").strip() or None)
+            if self.source_root is not None:
+                from remind.provenance import capture_sources
+                episode.metadata["source_refs"] = capture_sources(self.source_root, item.get("entities") or [])
             episodes.append(episode)
-
         if embed and self.embedding:
-            texts = [ep.content for ep in episodes]
-            all_embeddings: list[list[float] | None] = [None] * len(texts)
-
-            for i in range(0, len(texts), embed_batch_size):
-                batch = texts[i:i + embed_batch_size]
+            for offset in range(0, len(episodes), embed_batch_size):
+                batch = episodes[offset:offset + embed_batch_size]
                 try:
-                    batch_embeddings = await self.embedding.embed_batch(batch)
-                    for j, emb in enumerate(batch_embeddings):
-                        all_embeddings[i + j] = emb
-                except Exception as e:
-                    logger.warning(f"Failed to embed batch {i//embed_batch_size}: {e}")
-
-            for episode, emb in zip(episodes, all_embeddings):
-                if emb is not None:
-                    episode.embedding = emb
-
-        episode_ids = self.store.add_episodes_batch(episodes)
-        self._episode_buffer.extend(episode_ids)
-        for episode_id in episode_ids:
-            self.store.emit_event("remembered", "episode", episode_id)
-
-        for episode, item in zip(episodes, items):
-            entities = item.get("entities")
-            if entities:
-                for raw_id in entities:
-                    canonical_id = self._resolve_entity_id(raw_id)
-                    self.store.add_mention(episode.id, canonical_id)
-
-        logger.debug(f"Batch-remembered {len(episode_ids)} episodes")
-        return episode_ids
+                    vectors = await self.embedding.embed_batch([e.content for e in batch])
+                    if len(vectors) != len(batch):
+                        raise ValueError("Embedding provider returned an incomplete batch")
+                    for episode, vector in zip(batch, vectors):
+                        episode.embedding = vector
+                except Exception as exc:
+                    warnings.append(f"Missing embeddings: {exc}")
+        import json
+        first = next((e.embedding for e in episodes if e.embedding), None)
+        fingerprint = json.dumps({"provider": self.embedding.name, "dimensions": len(first) if first else self.embedding.dimensions,
+                                  "input_version": 1}, sort_keys=True)
+        existing_fingerprint = self.store.get_metadata("embedding_fingerprint")
+        old_dims = self.store.get_metadata("embedding_dimensions")
+        if first is not None and ((existing_fingerprint and existing_fingerprint != fingerprint)
+                                  or (old_dims and int(old_dims) != len(first))):
+            for episode in episodes:
+                episode.embedding = None
+            warnings.append("Embedding model changed; run re-embed --all. Capture stored without embeddings.")
+            first = None
+        if first is not None:
+            self.store._ensure_vec_dimensions(first)
+        results = []
+        with self.store.transaction():
+            cached = receipt(self.store, idempotency_key, request)
+            if cached is not None:
+                return BatchRememberResult([RememberResult.from_dict(r) for r in cached["results"]])
+            if first is not None:
+                self.store.set_metadata("embedding_fingerprint", fingerprint)
+            for episode, item in zip(episodes, items):
+                resolutions = []
+                for raw in item.get("entities") or []:
+                    canonical = self._resolve_entity_id(raw)
+                    episode.entity_ids.append(canonical)
+                    if raw.split(":", 1)[0] != canonical.split(":", 1)[0]:
+                        resolutions.append(f"{raw} → {canonical}")
+                self.store.add_episode(episode)
+                for entity_id in episode.entity_ids:
+                    self.store.add_mention(episode.id, entity_id)
+                self.store.emit_event("remembered", "episode", episode.id)
+                result = RememberResult(episode_id=episode.id, warnings=list(warnings),
+                                        entity_resolutions=resolutions)
+                if episode.episode_type == "fact":
+                    fact = create_fact_from_episode(self.store, episode, embedding=episode.embedding,
+                        jaccard_threshold=self.fact_cluster_jaccard_threshold,
+                        related_similarity_threshold=self.fact_related_similarity_threshold,
+                        related_max_results=self.fact_related_max_results,
+                        collision_max_results=self.fact_collision_max_results)
+                    result.fact_id, result.cluster_id = fact.fact_id, fact.cluster_id
+                    result.cluster_created = fact.cluster_created
+                    result.collisions, result.related_facts = fact.collisions, fact.related_facts
+                    self.store.emit_event("remembered", "fact", fact.fact_id)
+                if episode.embedding and self.remember_nearby_k:
+                    result.nearby_episodes = [(e, score) for e, score in
+                        self.store.find_episodes_by_embedding(episode.embedding, k=self.remember_nearby_k + 1)
+                        if e.id != episode.id][:self.remember_nearby_k]
+                    result.nearby_concepts = self.store.find_by_embedding(episode.embedding, k=self.remember_nearby_k)
+                from remind.operations import record_revision
+                result.revisions = {identifier: record_revision(self.store, identifier) for identifier in
+                                    (result.episode_id, result.fact_id, result.cluster_id) if identifier}
+                results.append(result)
+            response = BatchRememberResult(results)
+            save_receipt(self.store, idempotency_key, request, response.to_dict())
+        self._episode_buffer.extend(e.id for e in episodes)
+        return response
 
     async def recall(
+        self, query: Optional[str] = None, k: Optional[int] = None,
+        context: Optional[str] = None, entity: Optional[str] = None, raw: bool = False,
+        episode_k: Optional[int] = None, labels: Optional[dict[str, str]] = None,
+        as_of: Optional[Union[datetime, str]] = None, max_chars: Optional[int] = None,
+        min_score: Optional[float] = None, timeout_ms: Optional[int] = None,
+        track_usage: bool = False, explain: bool = False,
+    ) -> RecallResult | list[ActivatedConcept] | list[Episode]:
+        """Retrieve consistently; ordinary reads never update usage statistics."""
+        request = dict(query=query, k=k, context=context, entity=entity, raw=raw,
+                       episode_k=episode_k, labels=labels, as_of=as_of, max_chars=max_chars,
+                       min_score=min_score, timeout_ms=timeout_ms, explain=explain)
+        if not hasattr(self.store, "read_snapshot"):
+            return await self._recall(**request, track_usage=track_usage)
+        import copy
+        with self.store.read_snapshot() as snapshot:
+            view = copy.copy(self)
+            view.store = snapshot
+            view.retriever = copy.copy(self.retriever)
+            view.retriever.store = snapshot
+            result = await view._recall(**request)
+        if track_usage:
+            self._increment_recall_count()
+            concepts = result.concepts if isinstance(result, RecallResult) else result
+            if concepts and isinstance(concepts[0], ActivatedConcept) and self.decay_config.enabled:
+                self._maybe_decay(concepts)
+                self.retriever.rejuvenate(concepts)
+        return result
+
+    async def _recall(
         self,
         query: Optional[str] = None,
         k: Optional[int] = None,
@@ -395,7 +368,9 @@ class MemoryInterface:
         max_chars: Optional[int] = None,
         min_score: Optional[float] = None,
         timeout_ms: Optional[int] = None,
-    ) -> str | list[ActivatedConcept] | list[Episode]:
+        track_usage: bool = False,
+        explain: bool = False,
+    ) -> RecallResult | list[ActivatedConcept] | list[Episode]:
         """
         Retrieve relevant memory context for a query.
 
@@ -432,15 +407,31 @@ class MemoryInterface:
             else:
                 as_of_dt = as_of
 
+        import copy
+        retriever = copy.copy(self.retriever)
+        from remind.scope import FilteredStore
+        retriever.store = FilteredStore(self.store, labels or {}, as_of_dt)
         # Entity-based recall mode
         if entity:
-            canonical = self._resolve_entity_id(entity)
-            episodes = self.store.get_episodes_mentioning(canonical, limit=k)
+            existing = self.store.find_entity_by_name(Entity.parse_id(entity)[1])
+            canonical = existing.id if existing else entity
+            episodes = retriever.store.get_episodes_mentioning(canonical, limit=k)
             
             if raw:
                 return episodes
             
-            return self.retriever.format_entity_context(entity, episodes)
+            from remind.provenance import freshness
+            from remind.operations import record_revision
+            warnings = []
+            for episode in episodes:
+                episode._revision = record_revision(self.store, episode.id)
+                warnings.extend(f"Source {s['status']}: {s['path']}" for s in
+                                freshness(self.source_root, episode.metadata.get("source_refs", []))
+                                if s["status"] != "unchanged")
+            text = retriever.format_entity_context(entity, episodes)
+            if warnings:
+                text += "\n" + "\n".join(warnings)
+            return RecallResult(text, episodes=episodes, warnings=warnings)
         
         if not query:
             raise ValueError("Either 'query' or 'entity' must be provided")
@@ -455,14 +446,26 @@ class MemoryInterface:
         if timeout_ms is not None:
             retrieve_kwargs["timeout_ms"] = timeout_ms
 
-        concepts, episodes = await self.retriever.retrieve_all(query, **retrieve_kwargs)
+        concepts, episodes = await retriever.retrieve_all(query, **retrieve_kwargs)
+        fact_sources = {f.source_episode_id: f for f in self.store.get_all_facts()}
+        def temporally_eligible(item):
+            episode = getattr(item, "episode", item)
+            fact = fact_sources.get(episode.id)
+            if fact is None:
+                return True
+            if as_of_dt is None:
+                return fact.is_active
+            when = as_of_dt.replace(tzinfo=None)
+            return fact.valid_from.replace(tzinfo=None) <= when and (fact.valid_to is None or when < fact.valid_to.replace(tzinfo=None))
+        episodes = [e for e in episodes or [] if temporally_eligible(e)]
 
         if min_score is not None and episodes:
             episodes = [e for e in episodes if e.score >= min_score]
 
-        self._increment_recall_count()
+        if track_usage:
+            self._increment_recall_count()
         
-        if self.decay_config.enabled:
+        if track_usage and self.decay_config.enabled:
             self._maybe_decay(concepts)
             # Rejuvenate accessed concepts (update access count/time)
             if hasattr(self.retriever, 'rejuvenate'):
@@ -471,14 +474,43 @@ class MemoryInterface:
         if raw:
             return concepts
         
-        if max_chars is None:
-            return self.retriever.format_for_llm(
-                activated=concepts,
-                direct_episodes=episodes,
-                as_of=as_of_dt,
-            )
-
-        return self._format_with_char_budget(concepts, episodes, as_of_dt, max_chars)
+        from remind.provenance import freshness
+        source_status = []
+        source_episodes = {getattr(e, "episode", e).id: getattr(e, "episode", e) for e in episodes or []}
+        for concept in concepts:
+            identifiers = list(concept.concept.source_episodes)
+            if concept.concept.concept_type in {"fact", "fact_cluster"}:
+                identifiers.extend(f.source_episode_id for f in retriever.store.get_facts(cluster_id=concept.concept.id) if f.source_episode_id)
+            for episode in retriever.store.get_episodes_batch(identifiers):
+                source_episodes[episode.id] = episode
+        for episode in source_episodes.values():
+            source_status.extend(freshness(self.source_root, episode.metadata.get("source_refs", [])))
+        warnings = [f"Source {item['status']}: {item['path']}" for item in source_status
+                    if item["status"] != "unchanged"]
+        if getattr(retriever, "_last_trace", {}).get("lexical_only"):
+            warnings.append("Semantic search unavailable or incompatible; using lexical recall. Run doctor and re-embed --all.")
+        # Render with the same constrained store used for retrieval.
+        rendered_concepts, rendered_episodes = list(concepts), list(episodes or [])
+        text = retriever.format_for_llm(activated=rendered_concepts, direct_episodes=rendered_episodes, as_of=as_of_dt)
+        while max_chars is not None and len(text) > max_chars and (rendered_concepts or rendered_episodes):
+            if rendered_episodes and (not rendered_concepts or rendered_episodes[-1].score <= rendered_concepts[-1].activation):
+                rendered_episodes.pop()
+            else:
+                rendered_concepts.pop()
+            text = retriever.format_for_llm(activated=rendered_concepts, direct_episodes=rendered_episodes, as_of=as_of_dt)
+        if warnings:
+            text += "\n" + "\n".join(warnings)
+        explanation = {**getattr(retriever, "_last_trace", {}), "labels": labels or {}, "sources": source_status,
+                       "ranking": [{"id": c.concept.id, "score": c.activation, "channel": c.source, "hops": c.hops}
+                                   for c in concepts],
+                       "score_semantics": "Relative ranking; not confidence or probability"} if explain else {}
+        from remind.operations import record_revision
+        for item in rendered_concepts:
+            item.concept._revision = record_revision(self.store, item.concept.id)
+        for item in rendered_episodes:
+            episode = getattr(item, "episode", item)
+            episode._revision = record_revision(self.store, episode.id)
+        return RecallResult(text, rendered_concepts, rendered_episodes, warnings, explanation)
 
     def _format_with_char_budget(
         self,
@@ -662,6 +694,9 @@ class MemoryInterface:
                 batch = concepts[i:i + batch_size]
                 summaries = [c.summary for c in batch]
                 embeddings = await self.embedding.embed_batch(summaries)
+                if embeddings:
+                    self.store._ensure_vec_dimensions(embeddings[0])
+                    self.store._init_vector_tables()
                 for concept, embedding in zip(batch, embeddings):
                     concept.embedding = embedding
                     self.store.update_concept(concept)
@@ -673,6 +708,9 @@ class MemoryInterface:
                 batch = episodes[i:i + batch_size]
                 contents = [ep.content for ep in batch]
                 embeddings = await self.embedding.embed_batch(contents)
+                if embeddings:
+                    self.store._ensure_vec_dimensions(embeddings[0])
+                    self.store._init_vector_tables()
                 for episode, embedding in zip(batch, embeddings):
                     episode.embedding = embedding
                     self.store.update_episode(episode)
@@ -684,6 +722,9 @@ class MemoryInterface:
                 batch = entities[i:i + batch_size]
                 texts = [f"{e.type.value}: {e.display_name}" for e in batch]
                 embeddings = await self.embedding.embed_batch(texts)
+                if embeddings:
+                    self.store._ensure_vec_dimensions(embeddings[0])
+                    self.store._init_vector_tables()
                 for entity, embedding in zip(batch, embeddings):
                     entity.embedding = embedding
                     self.store.update_entity(entity)
@@ -695,6 +736,9 @@ class MemoryInterface:
                 batch = facts[i:i + batch_size]
                 statements = [fact.statement for fact in batch]
                 embeddings = await self.embedding.embed_batch(statements)
+                if embeddings:
+                    self.store._ensure_vec_dimensions(embeddings[0])
+                    self.store._init_vector_tables()
                 for fact, embedding in zip(batch, embeddings):
                     fact.embedding = embedding
                     self.store.update_fact(fact)
@@ -710,6 +754,9 @@ class MemoryInterface:
             target_dims,
         )
 
+        import json
+        self.store.set_metadata("embedding_fingerprint", json.dumps({"provider": self.embedding.name,
+            "dimensions": self.embedding.dimensions, "input_version": 1}, sort_keys=True))
         return {
             "concepts_embedded": concepts_embedded,
             "episodes_embedded": episodes_embedded,
@@ -806,72 +853,30 @@ class MemoryInterface:
         return self.store.get_conflict(id)
 
     async def resolve_conflict(
-        self,
-        conflict_id: str,
-        winning_fact_id: str,
-        note: Optional[str] = None,
-        resolved_by: Optional[str] = None,
+        self, conflict_id: str, winning_fact_id: str, note: Optional[str] = None,
+        resolved_by: Optional[str] = None, expected_revision: Optional[str] = None,
     ) -> Optional[Conflict]:
-        """Resolve a fact conflict by picking a winner."""
-        conflict = self.store.get_conflict(conflict_id)
-        if not conflict:
-            return None
-        if conflict.status != "open":
-            return conflict
+        from remind.apply import ApplyEngine
+        from remind.operations import RevisionConflict, record_revision
+        if expected_revision is None:
+            raise RevisionConflict(conflict_id, record_revision(self.store, conflict_id))
+        result = await ApplyEngine(self.store, self.embedding).apply([{
+            "op": "resolve", "id": conflict_id, "winner": winning_fact_id,
+            "note": note, "by": resolved_by,
+        }], expected_revisions={conflict_id: expected_revision})
+        if not result.success:
+            if result.errors[0].code == "revision_conflict":
+                error = result.errors[0]
+                raise RevisionConflict(error.subject_id, error.current_revision)
+            raise ValueError(result.errors[0].message)
+        return self.store.get_conflict(conflict_id)
 
-        # Validate winning_fact_id is one of the facts in the conflict
-        valid_fact_ids = {conflict.fact_a_id, conflict.fact_b_id}
-        if winning_fact_id not in valid_fact_ids:
-            raise ValueError(f"winning_fact_id must be one of {valid_fact_ids}, got '{winning_fact_id}'")
-
-        losing_fact_id = (
-            conflict.fact_b_id
-            if winning_fact_id == conflict.fact_a_id
-            else conflict.fact_a_id
-        )
-
-        if losing_fact_id:
-            self.store.supersede_fact(losing_fact_id, winning_fact_id)
-
-        conflict.status = "resolved"
-        conflict.resolved_at = datetime.now()
-        conflict.resolved_by = resolved_by
-        conflict.resolution_note = note
-        conflict.winning_fact_id = winning_fact_id
-        self.store.update_conflict(conflict)
-
-        # Record decision as an episode
-        winner = self.store.get_fact(winning_fact_id)
-        loser = self.store.get_fact(losing_fact_id) if losing_fact_id else None
-        decision_content = f"Resolved conflict: chose '{winner.statement if winner else winning_fact_id}'"
-        if loser:
-            decision_content += f" over '{loser.statement}'"
-        if note:
-            decision_content += f" ({note})"
-
-        await self.remember(
-            decision_content,
-            episode_type="decision",
-            asserted_by=resolved_by,
-        )
-
-        # Refresh concept specifics if it's a fact cluster
-        for cid in (conflict.concept_ids or []):
-            concept = self.store.get_concept(cid)
-            if concept and concept.concept_type in ("fact_cluster", "fact"):
-                facts = self.store.get_facts(cluster_id=concept.id, active_only=True)
-                concept.specifics = [f.statement for f in facts]
-                concept.conflicts = []  # Clear conflicts from cluster
-                self.store.update_concept(concept)
-
-        return conflict
-
+    @revision_edit("conflict_dismissed")
     def dismiss_conflict(
         self,
         conflict_id: str,
         note: Optional[str] = None,
-        dismissed_by: Optional[str] = None,
-    ) -> Optional[Conflict]:
+        dismissed_by: Optional[str] = None, expected_revision: Optional[str] = None) -> Optional[Conflict]:
         """Dismiss a conflict (both facts stay active)."""
         conflict = self.store.get_conflict(conflict_id)
         if not conflict:
@@ -914,13 +919,15 @@ class MemoryInterface:
     def get_episode(self, id: str) -> Optional[Episode]:
         return self.store.get_episode(id)
 
+    @revision_edit("updated")
     def update_episode(
         self,
         id: str,
         content: Optional[str] = None,
         metadata: Optional[dict] = None,
         labels: Optional[dict[str, str | list[str]]] = None,
-    ) -> Optional[Episode]:
+        episode_type: Optional[str] = None,
+        entities: Optional[list[str]] = None, expected_revision: Optional[str] = None) -> Optional[Episode]:
         episode = self.store.get_episode(id)
         if not episode:
             return None
@@ -935,22 +942,33 @@ class MemoryInterface:
         if labels is not None:
             episode.labels = normalize_labels(labels)
 
+        if episode_type is not None:
+            episode.episode_type = episode_type
+        if entities is not None:
+            episode.entity_ids = [self._resolve_entity_id(i) for i in entities]
+            self.store.delete_mentions_for_episode(episode.id)
+            for entity_id in episode.entity_ids:
+                self.store.add_mention(episode.id, entity_id)
         episode.updated_at = datetime.now()
         self.store.update_episode(episode)
         return episode
 
-    def delete_episode(self, id: str) -> bool:
+    @revision_edit("deleted")
+    def delete_episode(self, id: str, expected_revision: Optional[str] = None) -> bool:
         return self.store.delete_episode(id)
 
-    def restore_episode(self, id: str) -> bool:
+    @revision_edit("restored")
+    def restore_episode(self, id: str, expected_revision: Optional[str] = None) -> bool:
         return self.store.restore_episode(id)
 
-    def purge_episode(self, id: str) -> bool:
+    @revision_edit("deleted")
+    def purge_episode(self, id: str, expected_revision: Optional[str] = None) -> bool:
         return self.store.purge_episode(id)
 
     def get_deleted_episodes(self, limit: int = 100) -> list[Episode]:
         return self.store.get_deleted_episodes(limit=limit)
 
+    @revision_edit("updated")
     def update_concept(
         self,
         id: str,
@@ -960,7 +978,8 @@ class MemoryInterface:
         tags: Optional[list[str]] = None,
         relations: Optional[list[dict]] = None,
         labels: Optional[dict[str, str | list[str]]] = None,
-    ) -> Optional[Concept]:
+        conditions: Optional[str] = None,
+        exceptions: Optional[list[str]] = None, expected_revision: Optional[str] = None) -> Optional[Concept]:
         concept = self.store.get_concept(id)
         if not concept:
             return None
@@ -997,21 +1016,46 @@ class MemoryInterface:
         if labels is not None:
             concept.labels = normalize_labels(labels)
 
+        if conditions is not None:
+            concept.conditions = conditions
+        if exceptions is not None:
+            concept.exceptions = exceptions
         concept.updated_at = datetime.now()
         self.store.update_concept(concept)
         return concept
 
-    def delete_concept(self, id: str) -> bool:
+    @revision_edit("deleted")
+    def delete_concept(self, id: str, expected_revision: Optional[str] = None) -> bool:
         return self.store.delete_concept(id)
 
-    def restore_concept(self, id: str) -> bool:
+    @revision_edit("restored")
+    def restore_concept(self, id: str, expected_revision: Optional[str] = None) -> bool:
         return self.store.restore_concept(id)
 
-    def purge_concept(self, id: str) -> bool:
+    @revision_edit("deleted")
+    def purge_concept(self, id: str, expected_revision: Optional[str] = None) -> bool:
         return self.store.purge_concept(id)
 
     def get_deleted_concepts(self, limit: int = 100) -> list[Concept]:
         return self.store.get_deleted_concepts(limit=limit)
+
+    def purge_deleted(self, expected_revisions: dict[str, str]) -> dict[str, int]:
+        """Purge the complete deleted set atomically against inspected revisions."""
+        from remind.operations import check_revisions, RevisionConflict
+        with self.store.transaction():
+            episodes = self.store.get_deleted_episodes(limit=None)
+            concepts = self.store.get_deleted_concepts(limit=None)
+            for item in [*episodes, *concepts]:
+                if item.id not in expected_revisions:
+                    raise RevisionConflict(item.id, None)
+            check_revisions(self.store, expected_revisions)
+            counts = {"episodes_purged": 0, "concepts_purged": 0}
+            for kind, items in (("episode", episodes), ("concept", concepts)):
+                for item in items:
+                    if getattr(self.store, f"purge_{kind}")(item.id):
+                        counts[f"{kind}s_purged"] += 1
+                        self.store.emit_event("deleted", kind, item.id, {"purged": True})
+            return counts
 
     # Entity operations
 
@@ -1041,8 +1085,8 @@ class MemoryInterface:
         )
         return stats
 
-    def export_memory(self) -> dict:
-        return self.store.export_data()
+    def export_memory(self, mode: str = "portable") -> dict:
+        return self.store.export_data(mode=mode)
 
     def import_memory(self, data: dict) -> dict:
         result = self.store.import_data(data)
@@ -1064,9 +1108,10 @@ class MemoryInterface:
 
 def create_memory(
     embedding_provider: Optional[str] = None,
-    db_path: str = "memory",
+    db_path: Optional[str] = None,
     db_url: Optional[str] = None,
     project_dir: Optional[Path] = None,
+    store_url: Optional[str] = None,
     **kwargs,
 ) -> MemoryInterface:
     """
@@ -1085,16 +1130,21 @@ def create_memory(
     import os
     from remind.config import load_config, resolve_db_url, _is_db_url
 
+    if store_url and (db_url or db_path):
+        raise ValueError("Use store_url or a legacy database selector, not both")
+    db_url = store_url or db_url
     config = load_config(project_dir=project_dir)
 
     # Resolve database URL: explicit arg > config > resolve from db_path
     if not db_url:
         db_url = config.db_url
     if not db_url:
-        if _is_db_url(db_path):
+        if db_path is None:
+            db_url = resolve_db_url(None, project_aware=True)
+        elif _is_db_url(db_path):
             db_url = db_path
         elif os.path.isabs(db_path):
-            db_url = f"sqlite:///{db_path}"
+            db_url = resolve_db_url(db_path)
         else:
             db_url = resolve_db_url(db_path)
 
@@ -1141,7 +1191,10 @@ def create_memory(
         kwargs["remember_nearby_k"] = config.remember_nearby_k
 
     # Create embedding provider with config values
-    if embedding_provider == "local":
+    if embedding_provider == "deterministic":
+        from remind.providers.deterministic import DeterministicEmbedding
+        embedding = DeterministicEmbedding()
+    elif embedding_provider == "local":
         from remind.providers.local import LocalEmbedding
         embedding = LocalEmbedding(
             model=config.local.embedding_model,
@@ -1174,5 +1227,6 @@ def create_memory(
     return MemoryInterface(
         embedding=embedding,
         db_url=db_url,
+        source_root=kwargs.pop("source_root", project_dir),
         **kwargs,
     )

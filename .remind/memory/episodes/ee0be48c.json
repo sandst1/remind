@@ -1,0 +1,34 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": false,
+    "content": "Removing topics from Remind in a single commit worked cleanly even though it touched the entire stack at once — models, store, apply ops, snapshot scopes, CLI, MCP tools, REST endpoints, and the web UI (TopicList.svelte deleted, TopicSelector.svelte rewritten as LabelFilter.svelte). It was tractable because the label primitive is a strict superset of what topics did, so every call site had a mechanical one-to-one replacement rather than needing a design decision. Final diff: 60 files, roughly 3200 insertions and 2050 deletions.",
+    "created_at": "2026-08-09T01:02:48.445973",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:labels",
+      "concept:topics",
+      "project:remind"
+    ],
+    "episode_type": "outcome",
+    "id": "ee0be48c",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.446747",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.446747"
+  },
+  "version": 4
+}

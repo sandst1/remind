@@ -1,0 +1,12 @@
+{
+  "kind": "events",
+  "record": {
+    "event_id": "889dffefa4a5406ba40b0612071abe49",
+    "kind": "labeled",
+    "payload": null,
+    "subject_id": "c8ea6ab3",
+    "subject_type": "episode",
+    "ts": "2026-08-08T22:02:48"
+  },
+  "version": 4
+}

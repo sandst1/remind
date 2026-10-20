@@ -1,0 +1,37 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": false,
+    "content": "Remind 0.13.0 migrates legacy topic data automatically on first store init rather than requiring a manual migration command: each topic_id becomes a label under the topic key (using the topic name, falling back to its id), mirrored into both the labels table and the JSON data blob, after which the topics table and the topic_id columns are dropped. The drop is best-effort and wrapped in try/except — on SQLite older than 3.35 there is no DROP COLUMN, so the column is left as a harmless orphan since it is no longer part of the SQLAlchemy metadata either way. Guarded by the labels_backfill_v1 metadata flag so it runs exactly once per database. Schema inspection is done with raw inspect() calls because the migrated objects are no longer declared in the ORM metadata.",
+    "created_at": "2026-08-09T01:02:48.442198",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:labels",
+      "file:src/remind/store.py",
+      "project:remind"
+    ],
+    "episode_type": "decision",
+    "id": "96f03d35",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ],
+      "topic": [
+        "migration"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.444869",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.444869"
+  },
+  "version": 4
+}

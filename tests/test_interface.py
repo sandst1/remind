@@ -6,6 +6,7 @@ import tempfile
 import os
 
 from remind.interface import MemoryInterface
+from remind.operations import record_revision
 from remind.models import Episode, Concept, Entity, EntityType, EpisodeType, Fact, Conflict
 
 
@@ -60,7 +61,7 @@ class TestMemoryInterface:
         result = await memory.remember("User likes Python")
 
         assert result.episode_id is not None
-        assert len(result.episode_id) == 8
+        assert len(result.episode_id) == 36
 
         # Verify episode was stored
         episode = memory.store.get_episode(result.episode_id)
@@ -104,7 +105,7 @@ class TestMemoryInterface:
     async def test_recall_accepts_as_of_string(self, memory):
         """recall() parses ISO as_of strings and doesn't blow up."""
         result = await memory.recall("anything", as_of="2026-01-15")
-        assert isinstance(result, str)
+        assert isinstance(result, __import__("remind.results", fromlist=["RecallResult"]).RecallResult)
 
     @pytest.mark.asyncio
     async def test_recall_rejects_invalid_as_of(self, memory):
@@ -267,7 +268,7 @@ class TestMemoryInterface:
     async def test_recall_empty_memory(self, memory):
         """Test recall with no concepts."""
         result = await memory.recall("anything")
-        assert "No relevant memories found" in result
+        assert "No relevant memories found" in result.text
 
     @pytest.mark.asyncio
     async def test_recall_returns_formatted_string(
@@ -279,8 +280,8 @@ class TestMemoryInterface:
 
         result = await memory.recall("python")
 
-        assert isinstance(result, str)
-        assert "RELEVANT MEMORY" in result
+        assert isinstance(result, __import__("remind.results", fromlist=["RecallResult"]).RecallResult)
+        assert "RELEVANT MEMORY" in result.text
 
     @pytest.mark.asyncio
     async def test_recall_raw_returns_objects(
@@ -306,7 +307,7 @@ class TestMemoryInterface:
 
         result = await memory.recall("", entity="file:src/auth.ts")
 
-        assert "MEMORY ABOUT" in result
+        assert "MEMORY ABOUT" in result.text
 
     @pytest.mark.asyncio
     async def test_recall_by_entity_raw(self, memory, sample_episode, sample_entity):
@@ -396,7 +397,7 @@ class TestMemoryInterface:
             winning_fact_id=fact_b.id,
             note="600s confirmed in config",
             resolved_by="alice",
-        )
+         expected_revision=record_revision(memory.store, conflict.id))
 
         assert resolved.status == "resolved"
         assert resolved.winning_fact_id == fact_b.id
@@ -419,7 +420,7 @@ class TestMemoryInterface:
 
         # Invalid winner should raise ValueError
         with pytest.raises(ValueError):
-            await memory.resolve_conflict(conflict.id, winning_fact_id="bogus")
+            await memory.resolve_conflict(conflict.id, winning_fact_id="bogus", expected_revision=record_revision(memory.store, conflict.id))
 
         # Still open
         assert memory.store.get_conflict(conflict.id).status == "open"
@@ -430,7 +431,7 @@ class TestMemoryInterface:
 
         dismissed = memory.dismiss_conflict(
             conflict.id, note="different environments", dismissed_by="bob",
-        )
+         expected_revision=record_revision(memory.store, conflict.id))
 
         assert dismissed.status == "dismissed"
         assert memory.store.get_fact(fact_a.id).is_active
@@ -446,7 +447,7 @@ class TestMemoryInterface:
         conflicts = memory.list_conflicts()
         assert len(conflicts) == 1
         
-        await memory.resolve_conflict(conflict.id, winning_fact_id=fact_b.id)
+        await memory.resolve_conflict(conflict.id, winning_fact_id=fact_b.id, expected_revision=record_revision(memory.store, conflict.id))
         
         assert memory.list_conflicts() == []
         assert len(memory.list_conflicts(status="resolved")) == 1
@@ -557,20 +558,20 @@ class TestMemoryInterface:
         memory.store.add_episode(episode)
         memory.store.add_concept(concept)
 
-        assert memory.delete_episode(episode.id)
-        assert memory.delete_concept(concept.id)
+        assert memory.delete_episode(episode.id, expected_revision=record_revision(memory.store, episode.id))
+        assert memory.delete_concept(concept.id, expected_revision=record_revision(memory.store, concept.id))
         assert [item.id for item in memory.get_deleted_episodes()] == [episode.id]
         assert [item.id for item in memory.get_deleted_concepts()] == [concept.id]
 
-        assert memory.restore_episode(episode.id)
-        assert memory.restore_concept(concept.id)
+        assert memory.restore_episode(episode.id, expected_revision=record_revision(memory.store, episode.id))
+        assert memory.restore_concept(concept.id, expected_revision=record_revision(memory.store, concept.id))
         assert memory.get_episode(episode.id) is not None
         assert memory.get_concept(concept.id) is not None
 
-        assert memory.delete_episode(episode.id)
-        assert memory.delete_concept(concept.id)
-        assert memory.purge_episode(episode.id)
-        assert memory.purge_concept(concept.id)
+        assert memory.delete_episode(episode.id, expected_revision=record_revision(memory.store, episode.id))
+        assert memory.delete_concept(concept.id, expected_revision=record_revision(memory.store, concept.id))
+        assert memory.purge_episode(episode.id, expected_revision=record_revision(memory.store, episode.id))
+        assert memory.purge_concept(concept.id, expected_revision=record_revision(memory.store, concept.id))
         assert memory.store.get_episode(episode.id, include_deleted=True) is None
         assert memory.store.get_concept(concept.id, include_deleted=True) is None
 
@@ -685,11 +686,11 @@ class TestMemoryInterface:
         ep = memory.store.get_episode(result.episode_id)
         assert ep.labels == {"topic": ["alpha"]}
 
-        memory.update_episode(result.episode_id, labels={"topic": "beta"})
+        memory.update_episode(result.episode_id, labels={"topic": "beta"}, expected_revision=record_revision(memory.store, result.episode_id))
         ep = memory.store.get_episode(result.episode_id)
         assert ep.labels == {"topic": ["beta"]}
 
-        memory.update_episode(result.episode_id, labels={})
+        memory.update_episode(result.episode_id, labels={}, expected_revision=record_revision(memory.store, result.episode_id))
         ep = memory.store.get_episode(result.episode_id)
         assert ep.labels == {}
 
@@ -697,11 +698,11 @@ class TestMemoryInterface:
         c = Concept(summary="concept body", labels={"topic": ["alpha"]})
         memory.store.add_concept(c)
 
-        updated = memory.update_concept(c.id, labels={"topic": "beta"})
+        updated = memory.update_concept(c.id, labels={"topic": "beta"}, expected_revision=record_revision(memory.store, c.id))
         assert updated is not None
         assert updated.labels == {"topic": ["beta"]}
 
-        updated = memory.update_concept(c.id, labels={})
+        updated = memory.update_concept(c.id, labels={}, expected_revision=record_revision(memory.store, c.id))
         assert updated is not None
         assert updated.labels == {}
 

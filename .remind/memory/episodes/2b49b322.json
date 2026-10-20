@@ -1,0 +1,38 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": false,
+    "content": "Labels in Remind are pushed down as a pre-filter directly into vector search across all three backends (brute-force, pgvector, sqlite-vec), whereas the old topic_id was only ever applied as a post-filter after retrieval. This was the main technical justification for replacing topics with labels rather than just renaming the field: a post-filter can empty out a k-limited result set, a pre-filter cannot.",
+    "created_at": "2026-08-09T01:02:48.423565",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:labels",
+      "concept:retrieval",
+      "file:src/remind/store.py",
+      "project:remind"
+    ],
+    "episode_type": "decision",
+    "id": "2b49b322",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ],
+      "topic": [
+        "retrieval"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.425020",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.425020"
+  },
+  "version": 4
+}

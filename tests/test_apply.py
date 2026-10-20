@@ -14,6 +14,14 @@ from remind.apply import (
 from remind.models import Episode, Concept, Fact, Conflict, Entity, EntityType
 
 
+def current_revisions(store):
+    from remind.operations import record_revision
+    return {row["id"]: record_revision(store, row["id"])
+            for name, rows in store.export_data()["records"].items()
+            if name in {"episodes", "concepts", "facts", "conflicts", "entities", "evidence"}
+            for row in rows}
+
+
 class TestParseCompactLine:
     """Tests for compact line format parsing."""
     
@@ -232,13 +240,13 @@ class TestApplyEngineExecution:
 
         labeled = await engine.apply([
             {"op": "label", "id": episode.id, "key": "topic", "value": "architecture"},
-        ])
+        ], expected_revisions=current_revisions(engine.store))
         assert labeled.success
         assert memory_store.get_labels("episode", episode.id) == {"topic": ["architecture"]}
 
         unlabeled = await engine.apply([
             {"op": "unlabel", "id": episode.id, "key": "topic", "value": "architecture"},
-        ])
+        ], expected_revisions=current_revisions(engine.store))
         assert unlabeled.success
         assert memory_store.get_labels("episode", episode.id) == {}
     
@@ -249,7 +257,7 @@ class TestApplyEngineExecution:
         result = await engine.apply([
             {"op": "remember", "as": "f1", "t": "fact", "content": "Cache TTL is 600s"},
             {"op": "label", "id": "$f1", "key": "release", "value": "0.13.1"},
-        ])
+        ], expected_revisions=current_revisions(engine.store))
 
         assert result.success, result.errors
         fact_id = result.results[0].id
@@ -261,7 +269,7 @@ class TestApplyEngineExecution:
 
         unlabeled = await engine.apply([
             {"op": "unlabel", "id": fact_id, "key": "release"},
-        ])
+        ], expected_revisions=current_revisions(engine.store))
         assert unlabeled.success, unlabeled.errors
         assert memory_store.get_labels("episode", episode_id) == {}
 
@@ -273,7 +281,7 @@ class TestApplyEngineExecution:
             {"op": "remember", "t": "observation", "content": "Fine"},
             {"op": "label", "id": "does-not-exist", "key": "k", "value": "v"},
             {"op": "remember", "t": "observation", "content": "Never runs"},
-        ])
+        ], expected_revisions=current_revisions(engine.store))
 
         assert not result.success
         assert len(result.errors) == 1
@@ -289,7 +297,7 @@ class TestApplyEngineExecution:
         
         result = await engine.apply([
             {"op": "processed", "ids": [ep1.id, ep2.id]},
-        ])
+        ], expected_revisions=current_revisions(engine.store))
         
         assert result.success
         assert memory_store.get_episode(ep1.id).consolidated
@@ -300,11 +308,11 @@ class TestApplyEngineExecution:
         episode = Episode(content="Delete and restore")
         memory_store.add_episode(episode)
 
-        deleted = await engine.apply([{"op": "delete", "id": episode.id}])
+        deleted = await engine.apply([{"op": "delete", "id": episode.id}], expected_revisions=current_revisions(engine.store))
         assert deleted.success
         assert memory_store.get_episode(episode.id) is None
 
-        restored = await engine.apply([{"op": "restore", "id": episode.id}])
+        restored = await engine.apply([{"op": "restore", "id": episode.id}], expected_revisions=current_revisions(engine.store))
         assert restored.success
         assert memory_store.get_episode(episode.id) is not None
     
@@ -313,14 +321,14 @@ class TestApplyEngineExecution:
         result = await engine.apply(
             [{"op": "remember", "content": "Test"}],
             dry_run=True,
-        )
+         expected_revisions=current_revisions(engine.store))
         
         assert result.success
         assert result.ops_executed == 1
 
     @pytest.mark.asyncio
     async def test_remember_emits_change_feed_event(self, engine, memory_store):
-        result = await engine.apply([{"op": "remember", "content": "Test"}])
+        result = await engine.apply([{"op": "remember", "content": "Test"}], expected_revisions=current_revisions(engine.store))
         assert result.success
 
         events = memory_store.get_events()
@@ -331,7 +339,7 @@ class TestApplyEngineExecution:
 
     @pytest.mark.asyncio
     async def test_dry_run_does_not_emit_change_feed_event(self, engine, memory_store):
-        await engine.apply([{"op": "remember", "content": "Test"}], dry_run=True)
+        await engine.apply([{"op": "remember", "content": "Test"}], dry_run=True, expected_revisions=current_revisions(engine.store))
         assert memory_store.get_events() == []
 
     @pytest.mark.asyncio
@@ -341,7 +349,7 @@ class TestApplyEngineExecution:
 
         await engine.apply([
             {"op": "label", "id": episode.id, "key": "topic", "value": "architecture"},
-        ])
+        ], expected_revisions=current_revisions(engine.store))
 
         events = memory_store.get_events(kind="labeled")
         assert len(events) == 1
@@ -400,7 +408,7 @@ class TestApplyEngineConflictOperations:
                 "winner": fact_b.id,
                 "note": "600s is correct",
             },
-        ])
+        ], expected_revisions=current_revisions(engine.store))
         
         assert result.success
         
@@ -422,7 +430,7 @@ class TestApplyEngineConflictOperations:
                 "id": conflict.id,
                 "note": "Different environments",
             },
-        ])
+        ], expected_revisions=current_revisions(engine.store))
         
         assert result.success
         
@@ -440,12 +448,12 @@ class TestApplyEngineConflictOperations:
         # Resolve once
         await engine.apply([
             {"op": "resolve", "id": conflict.id, "winner": fact_b.id},
-        ])
+        ], expected_revisions=current_revisions(engine.store))
         
         # Try to resolve again
         result = await engine.apply([
             {"op": "resolve", "id": conflict.id, "winner": fact_b.id},
-        ])
+        ], expected_revisions=current_revisions(engine.store))
         
         assert not result.success
         assert "not open" in result.errors[0].message.lower() or "not open" in result.results[0].error.lower()
@@ -465,7 +473,7 @@ class TestApplyEngineCompactFormat:
 remember t=observation "First observation"
 remember t=decision "Made a decision"
 '''
-        result = await engine.apply(changeset, dry_run=True)
+        result = await engine.apply(changeset, dry_run=True, expected_revisions=current_revisions(engine.store))
         
         assert result.success
         assert result.ops_executed == 2

@@ -46,7 +46,8 @@ def setup_logging(db_path: str, remind_dir: Path | None = None) -> logging.Logge
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
-    project_dir = remind_dir.parent if remind_dir is not None else None
+    from remind.config import infer_project_dir_from_db_url
+    project_dir = infer_project_dir_from_db_url(args.db)
     config = load_config(project_dir=project_dir)
     if config.logging_enabled:
         setup_file_logging(db_path, project_dir=project_dir)
@@ -185,7 +186,7 @@ def run_recall_worker(args, logger):
                     raw_payload = _serialize_recall_raw_result(result, entity)
                     await _send(writer, {"ok": True, **raw_payload})
                 else:
-                    await _send(writer, {"ok": True, "result_type": "text", "result": result})
+                    await _send(writer, {"ok": True, "result_type": "text", "result": str(result)})
             except Exception as e:
                 logger.exception(f"Recall worker request failed: {e}")
                 await _send(writer, {"ok": False, "error": str(e)})

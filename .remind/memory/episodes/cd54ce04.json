@@ -1,0 +1,33 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": true,
+    "content": "The Remind change feed emits twelve event kinds: remembered, superseded, conflict_opened, conflict_resolved, conflict_dismissed, concept_created, updated, labeled, unlabeled, deleted, restored, and processed. Read them via store.get_events, the events snapshot scope, the events MCP tool, or the remind events CLI command.",
+    "created_at": "2026-08-09T01:02:48.472055",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:change-feed",
+      "project:remind"
+    ],
+    "episode_type": "fact",
+    "id": "cd54ce04",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.475627",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.475627"
+  },
+  "version": 4
+}

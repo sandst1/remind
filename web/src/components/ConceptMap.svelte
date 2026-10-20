@@ -126,12 +126,12 @@
 
     // Create tree layout
     const treeLayout = d3.tree<HierarchyNode>().nodeSize([dx, dy]);
-    treeLayout(root);
+    const positioned = treeLayout(root);
 
     // Compute the extent of the tree
     let x0 = Infinity;
     let x1 = -Infinity;
-    root.each(d => {
+    positioned.each(d => {
       if (d.x > x1) x1 = d.x;
       if (d.x < x0) x0 = d.x;
     });
@@ -164,7 +164,7 @@
       .attr('stroke-opacity', 0.5)
       .attr('stroke-width', 1.5)
       .selectAll('path')
-      .data(root.links())
+      .data(positioned.links())
       .join('path')
       .attr('d', d3.linkHorizontal<d3.HierarchyPointLink<HierarchyNode>, d3.HierarchyPointNode<HierarchyNode>>()
         .x(d => d.y)
@@ -173,7 +173,7 @@
     // Draw nodes
     const node = g.append('g')
       .selectAll<SVGGElement, d3.HierarchyPointNode<HierarchyNode>>('g')
-      .data(root.descendants())
+      .data(positioned.descendants())
       .join('g')
       .attr('transform', d => `translate(${d.y},${d.x})`);
 

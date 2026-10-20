@@ -50,6 +50,7 @@ export interface Fact {
 export type ConflictStatus = 'open' | 'resolved' | 'dismissed';
 
 export interface Conflict {
+  revision?: string;
   id: string;
   kind: 'fact' | 'concept';
   fact_a_id: string | null;
@@ -114,6 +115,7 @@ export interface ConditionRef {
 }
 
 export interface Concept {
+  revision?: string;
   id: string;
   title?: string;
   summary: string;
@@ -144,6 +146,8 @@ export interface Concept {
 }
 
 export interface Episode {
+  source_freshness?: Array<{path: string; status: string}>;
+  revision?: string;
   id: string;
   timestamp: string;
   title?: string;

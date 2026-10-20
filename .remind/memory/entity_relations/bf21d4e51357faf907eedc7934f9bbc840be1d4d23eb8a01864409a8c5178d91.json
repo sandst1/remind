@@ -1,0 +1,15 @@
+{
+  "kind": "entity_relations",
+  "record": {
+    "context": null,
+    "created_at": "2026-08-09T01:02:48.479210",
+    "episode_count": 1,
+    "relation_type": "part_of",
+    "source_episode_id": null,
+    "source_episode_ids": "[]",
+    "source_id": "concept:rrf",
+    "strength": 0.8,
+    "target_id": "concept:retrieval"
+  },
+  "version": 4
+}

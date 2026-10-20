@@ -311,7 +311,7 @@
                     {#if relation.related_entity}
                       <button
                         class="related-item entity-relation-item clickable"
-                        onclick={() => navigateToRelatedEntity(relation.related_entity)}
+                        onclick={() => navigateToRelatedEntity(relation.related_entity!)}
                       >
                         <div class="relation-header">
                           <span class="relation-direction">
@@ -394,10 +394,10 @@
                       </div>
 
                       {#if expandedEpisodes[episode.id]}
-                        <div class="episode-full-content">{expandedEpisodes[episode.id].content}</div>
-                        {#if expandedEpisodes[episode.id].entity_ids && expandedEpisodes[episode.id].entity_ids.length > 0}
+                        <div class="episode-full-content">{expandedEpisodes[episode.id]?.content}</div>
+                        {#if expandedEpisodes[episode.id]?.entity_ids && (expandedEpisodes[episode.id]?.entity_ids.length ?? 0) > 0}
                           <div class="episode-entities">
-                            {#each expandedEpisodes[episode.id].entity_ids as entityId}
+                            {#each expandedEpisodes[episode.id]?.entity_ids as entityId}
                               <span class="entity-tag">{entityId}</span>
                             {/each}
                           </div>

@@ -55,6 +55,7 @@ export default defineConfig({
             { text: 'Facts & Conflicts', link: '/concepts/facts-and-conflicts' },
             { text: 'Entities', link: '/concepts/entities' },
             { text: 'Labels', link: '/concepts/labels' },
+            { text: 'Storage and Migration', link: '/concepts/storage' },
             { text: 'Relations', link: '/concepts/relations' },
             { text: 'Retrieval', link: '/concepts/retrieval' },
             { text: 'Memory Decay', link: '/concepts/memory-decay' },

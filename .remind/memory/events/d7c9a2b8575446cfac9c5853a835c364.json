@@ -1,0 +1,12 @@
+{
+  "kind": "events",
+  "record": {
+    "event_id": "d7c9a2b8575446cfac9c5853a835c364",
+    "kind": "remembered",
+    "payload": null,
+    "subject_id": "dc79ca7a",
+    "subject_type": "fact",
+    "ts": "2026-08-08T22:02:48"
+  },
+  "version": 4
+}

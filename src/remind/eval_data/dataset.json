@@ -1,0 +1,1235 @@
+{
+  "version": 1,
+  "families": [
+    {
+      "id": "architecture",
+      "subject": "Database choice",
+      "old": "The service uses SQLite",
+      "current": "The service uses PostgreSQL",
+      "decision": "Use PostgreSQL for concurrent writers",
+      "outcome": "Database concurrency failures stopped after switching storage",
+      "labels": {
+        "area": "architecture"
+      },
+      "entity": "concept:architecture",
+      "answer_rubric": {
+        "value_patterns": [
+          "postgres(?:ql)?"
+        ],
+        "approach_patterns": [
+          "concurr|writers|writes"
+        ]
+      },
+      "gold": {
+        "current_fact": "current",
+        "historical_fact": "old",
+        "pattern_sources": [
+          "decision",
+          "outcome"
+        ],
+        "required_labels": {
+          "area": "architecture"
+        },
+        "source_ref": "fixture:architecture"
+      }
+    },
+    {
+      "id": "configuration",
+      "subject": "Cache timeout",
+      "old": "Production cache TTL is 300 seconds",
+      "current": "Production cache TTL is 600 seconds",
+      "decision": "Keep production and staging configuration separate",
+      "outcome": "A longer production cache TTL reduced load",
+      "labels": {
+        "area": "configuration"
+      },
+      "entity": "concept:configuration",
+      "answer_rubric": {
+        "value_patterns": [
+          "600"
+        ],
+        "approach_patterns": [
+          "cache|ttl|load"
+        ]
+      },
+      "gold": {
+        "current_fact": "current",
+        "historical_fact": "old",
+        "pattern_sources": [
+          "decision",
+          "outcome"
+        ],
+        "required_labels": {
+          "area": "configuration"
+        },
+        "source_ref": "fixture:configuration"
+      }
+    },
+    {
+      "id": "preferences",
+      "subject": "Personal editor preference",
+      "old": "The user prefers Vim",
+      "current": "The user now prefers Emacs",
+      "decision": "Respect the latest explicit editor preference",
+      "outcome": "Emacs met the user requirements after testing",
+      "labels": {
+        "area": "preferences"
+      },
+      "entity": "concept:preferences",
+      "answer_rubric": {
+        "value_patterns": [
+          "emacs"
+        ],
+        "approach_patterns": [
+          "prefer|editor"
+        ]
+      },
+      "gold": {
+        "current_fact": "current",
+        "historical_fact": "old",
+        "pattern_sources": [
+          "decision",
+          "outcome"
+        ],
+        "required_labels": {
+          "area": "preferences"
+        },
+        "source_ref": "fixture:preferences"
+      }
+    },
+    {
+      "id": "ownership",
+      "subject": "Service owner",
+      "old": "Alice owns the billing service",
+      "current": "Bob owns the billing service",
+      "decision": "Record ownership changes with provenance",
+      "outcome": "Escalating billing incidents to Bob resolved the issue",
+      "labels": {
+        "area": "ownership"
+      },
+      "entity": "concept:ownership",
+      "answer_rubric": {
+        "value_patterns": [
+          "bob"
+        ],
+        "approach_patterns": [
+          "billing|owner|escalat"
+        ]
+      },
+      "gold": {
+        "current_fact": "current",
+        "historical_fact": "old",
+        "pattern_sources": [
+          "decision",
+          "outcome"
+        ],
+        "required_labels": {
+          "area": "ownership"
+        },
+        "source_ref": "fixture:ownership"
+      }
+    },
+    {
+      "id": "documents",
+      "subject": "Deployment procedure",
+      "old": "Deployment requires a manual restart",
+      "current": "Deployment now performs a rolling restart",
+      "decision": "Prefer rolling restarts for uninterrupted service",
+      "outcome": "Rolling restarts eliminated deployment downtime",
+      "labels": {
+        "area": "documents"
+      },
+      "entity": "concept:documents",
+      "answer_rubric": {
+        "value_patterns": [
+          "rolling"
+        ],
+        "approach_patterns": [
+          "restart|downtime|deploy"
+        ]
+      },
+      "gold": {
+        "current_fact": "current",
+        "historical_fact": "old",
+        "pattern_sources": [
+          "decision",
+          "outcome"
+        ],
+        "required_labels": {
+          "area": "documents"
+        },
+        "source_ref": "fixture:documents"
+      }
+    },
+    {
+      "id": "mixed_notes",
+      "subject": "Resilience decision",
+      "old": "The API retries requests immediately",
+      "current": "The API retries with exponential backoff",
+      "decision": "Retry transient failures with exponential backoff",
+      "outcome": "Backoff resolved intermittent API failures",
+      "labels": {
+        "area": "mixed_notes"
+      },
+      "entity": "concept:mixed_notes",
+      "answer_rubric": {
+        "value_patterns": [
+          "backoff"
+        ],
+        "approach_patterns": [
+          "retr(?:y|ies)|transient"
+        ]
+      },
+      "gold": {
+        "current_fact": "current",
+        "historical_fact": "old",
+        "pattern_sources": [
+          "decision",
+          "outcome"
+        ],
+        "required_labels": {
+          "area": "mixed_notes"
+        },
+        "source_ref": "fixture:mixed_notes"
+      }
+    }
+  ],
+  "operational": [
+    {
+      "id": "architecture.lifecycle",
+      "family": "architecture",
+      "variant": "lifecycle",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "architecture.conflicts",
+      "family": "architecture",
+      "variant": "conflicts",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "architecture.restart",
+      "family": "architecture",
+      "variant": "restart",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "architecture.roundtrip",
+      "family": "architecture",
+      "variant": "roundtrip",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "architecture.retry_failure",
+      "family": "architecture",
+      "variant": "retry_failure",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "configuration.lifecycle",
+      "family": "configuration",
+      "variant": "lifecycle",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "configuration.conflicts",
+      "family": "configuration",
+      "variant": "conflicts",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "configuration.restart",
+      "family": "configuration",
+      "variant": "restart",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "configuration.roundtrip",
+      "family": "configuration",
+      "variant": "roundtrip",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "configuration.retry_failure",
+      "family": "configuration",
+      "variant": "retry_failure",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "preferences.lifecycle",
+      "family": "preferences",
+      "variant": "lifecycle",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "preferences.conflicts",
+      "family": "preferences",
+      "variant": "conflicts",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "preferences.restart",
+      "family": "preferences",
+      "variant": "restart",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "preferences.roundtrip",
+      "family": "preferences",
+      "variant": "roundtrip",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "preferences.retry_failure",
+      "family": "preferences",
+      "variant": "retry_failure",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "ownership.lifecycle",
+      "family": "ownership",
+      "variant": "lifecycle",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "ownership.conflicts",
+      "family": "ownership",
+      "variant": "conflicts",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "ownership.restart",
+      "family": "ownership",
+      "variant": "restart",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "ownership.roundtrip",
+      "family": "ownership",
+      "variant": "roundtrip",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "ownership.retry_failure",
+      "family": "ownership",
+      "variant": "retry_failure",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "documents.lifecycle",
+      "family": "documents",
+      "variant": "lifecycle",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "documents.conflicts",
+      "family": "documents",
+      "variant": "conflicts",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "documents.restart",
+      "family": "documents",
+      "variant": "restart",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "documents.roundtrip",
+      "family": "documents",
+      "variant": "roundtrip",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "documents.retry_failure",
+      "family": "documents",
+      "variant": "retry_failure",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "mixed_notes.lifecycle",
+      "family": "mixed_notes",
+      "variant": "lifecycle",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "mixed_notes.conflicts",
+      "family": "mixed_notes",
+      "variant": "conflicts",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "mixed_notes.restart",
+      "family": "mixed_notes",
+      "variant": "restart",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "mixed_notes.roundtrip",
+      "family": "mixed_notes",
+      "variant": "roundtrip",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    },
+    {
+      "id": "mixed_notes.retry_failure",
+      "family": "mixed_notes",
+      "variant": "retry_failure",
+      "expected": {
+        "pending_episodes": 0,
+        "old_fact_active": false,
+        "current_fact_active": true,
+        "evidence_links": 2,
+        "survives_restart": true
+      }
+    }
+  ],
+  "retrieval": [
+    {
+      "id": "architecture.exact_current",
+      "family": "architecture",
+      "category": "exact_current",
+      "query": "The service uses PostgreSQL",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "architecture.exact_decision",
+      "family": "architecture",
+      "category": "exact_decision",
+      "query": "Use PostgreSQL for concurrent writers",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "architecture.paraphrase_current",
+      "family": "architecture",
+      "category": "paraphrase_current",
+      "query": "What is the latest information about database choice?",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "architecture.paraphrase_outcome",
+      "family": "architecture",
+      "category": "paraphrase_outcome",
+      "query": "What worked for database choice?",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "architecture.scoped_current",
+      "family": "architecture",
+      "category": "scoped_current",
+      "query": "The service uses PostgreSQL",
+      "expected": "current",
+      "labels": {
+        "area": "architecture"
+      },
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "architecture.scoped_decision",
+      "family": "architecture",
+      "category": "scoped_decision",
+      "query": "Use PostgreSQL for concurrent writers",
+      "expected": "pattern",
+      "labels": {
+        "area": "architecture"
+      },
+      "forbidden": []
+    },
+    {
+      "id": "architecture.historical",
+      "family": "architecture",
+      "category": "historical",
+      "query": "The service uses SQLite",
+      "expected": "old",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "architecture.conflict",
+      "family": "architecture",
+      "category": "conflict",
+      "query": "Database choice",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "architecture.freshness",
+      "family": "architecture",
+      "category": "freshness",
+      "query": "Database concurrency failures stopped after switching storage",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "architecture.irrelevant",
+      "family": "architecture",
+      "category": "irrelevant",
+      "query": "What is the orbital period of Neptune?",
+      "expected": null,
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "configuration.exact_current",
+      "family": "configuration",
+      "category": "exact_current",
+      "query": "Production cache TTL is 600 seconds",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "configuration.exact_decision",
+      "family": "configuration",
+      "category": "exact_decision",
+      "query": "Keep production and staging configuration separate",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "configuration.paraphrase_current",
+      "family": "configuration",
+      "category": "paraphrase_current",
+      "query": "What is the latest information about cache timeout?",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "configuration.paraphrase_outcome",
+      "family": "configuration",
+      "category": "paraphrase_outcome",
+      "query": "What worked for cache timeout?",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "configuration.scoped_current",
+      "family": "configuration",
+      "category": "scoped_current",
+      "query": "Production cache TTL is 600 seconds",
+      "expected": "current",
+      "labels": {
+        "area": "configuration"
+      },
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "configuration.scoped_decision",
+      "family": "configuration",
+      "category": "scoped_decision",
+      "query": "Keep production and staging configuration separate",
+      "expected": "pattern",
+      "labels": {
+        "area": "configuration"
+      },
+      "forbidden": []
+    },
+    {
+      "id": "configuration.historical",
+      "family": "configuration",
+      "category": "historical",
+      "query": "Production cache TTL is 300 seconds",
+      "expected": "old",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "configuration.conflict",
+      "family": "configuration",
+      "category": "conflict",
+      "query": "Cache timeout",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "configuration.freshness",
+      "family": "configuration",
+      "category": "freshness",
+      "query": "A longer production cache TTL reduced load",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "configuration.irrelevant",
+      "family": "configuration",
+      "category": "irrelevant",
+      "query": "What is the orbital period of Neptune?",
+      "expected": null,
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "preferences.exact_current",
+      "family": "preferences",
+      "category": "exact_current",
+      "query": "The user now prefers Emacs",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "preferences.exact_decision",
+      "family": "preferences",
+      "category": "exact_decision",
+      "query": "Respect the latest explicit editor preference",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "preferences.paraphrase_current",
+      "family": "preferences",
+      "category": "paraphrase_current",
+      "query": "What is the latest information about personal editor preference?",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "preferences.paraphrase_outcome",
+      "family": "preferences",
+      "category": "paraphrase_outcome",
+      "query": "What worked for personal editor preference?",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "preferences.scoped_current",
+      "family": "preferences",
+      "category": "scoped_current",
+      "query": "The user now prefers Emacs",
+      "expected": "current",
+      "labels": {
+        "area": "preferences"
+      },
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "preferences.scoped_decision",
+      "family": "preferences",
+      "category": "scoped_decision",
+      "query": "Respect the latest explicit editor preference",
+      "expected": "pattern",
+      "labels": {
+        "area": "preferences"
+      },
+      "forbidden": []
+    },
+    {
+      "id": "preferences.historical",
+      "family": "preferences",
+      "category": "historical",
+      "query": "The user prefers Vim",
+      "expected": "old",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "preferences.conflict",
+      "family": "preferences",
+      "category": "conflict",
+      "query": "Personal editor preference",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "preferences.freshness",
+      "family": "preferences",
+      "category": "freshness",
+      "query": "Emacs met the user requirements after testing",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "preferences.irrelevant",
+      "family": "preferences",
+      "category": "irrelevant",
+      "query": "What is the orbital period of Neptune?",
+      "expected": null,
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "ownership.exact_current",
+      "family": "ownership",
+      "category": "exact_current",
+      "query": "Bob owns the billing service",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "ownership.exact_decision",
+      "family": "ownership",
+      "category": "exact_decision",
+      "query": "Record ownership changes with provenance",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "ownership.paraphrase_current",
+      "family": "ownership",
+      "category": "paraphrase_current",
+      "query": "What is the latest information about service owner?",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "ownership.paraphrase_outcome",
+      "family": "ownership",
+      "category": "paraphrase_outcome",
+      "query": "What worked for service owner?",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "ownership.scoped_current",
+      "family": "ownership",
+      "category": "scoped_current",
+      "query": "Bob owns the billing service",
+      "expected": "current",
+      "labels": {
+        "area": "ownership"
+      },
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "ownership.scoped_decision",
+      "family": "ownership",
+      "category": "scoped_decision",
+      "query": "Record ownership changes with provenance",
+      "expected": "pattern",
+      "labels": {
+        "area": "ownership"
+      },
+      "forbidden": []
+    },
+    {
+      "id": "ownership.historical",
+      "family": "ownership",
+      "category": "historical",
+      "query": "Alice owns the billing service",
+      "expected": "old",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "ownership.conflict",
+      "family": "ownership",
+      "category": "conflict",
+      "query": "Service owner",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "ownership.freshness",
+      "family": "ownership",
+      "category": "freshness",
+      "query": "Escalating billing incidents to Bob resolved the issue",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "ownership.irrelevant",
+      "family": "ownership",
+      "category": "irrelevant",
+      "query": "What is the orbital period of Neptune?",
+      "expected": null,
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "documents.exact_current",
+      "family": "documents",
+      "category": "exact_current",
+      "query": "Deployment now performs a rolling restart",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "documents.exact_decision",
+      "family": "documents",
+      "category": "exact_decision",
+      "query": "Prefer rolling restarts for uninterrupted service",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "documents.paraphrase_current",
+      "family": "documents",
+      "category": "paraphrase_current",
+      "query": "What is the latest information about deployment procedure?",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "documents.paraphrase_outcome",
+      "family": "documents",
+      "category": "paraphrase_outcome",
+      "query": "What worked for deployment procedure?",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "documents.scoped_current",
+      "family": "documents",
+      "category": "scoped_current",
+      "query": "Deployment now performs a rolling restart",
+      "expected": "current",
+      "labels": {
+        "area": "documents"
+      },
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "documents.scoped_decision",
+      "family": "documents",
+      "category": "scoped_decision",
+      "query": "Prefer rolling restarts for uninterrupted service",
+      "expected": "pattern",
+      "labels": {
+        "area": "documents"
+      },
+      "forbidden": []
+    },
+    {
+      "id": "documents.historical",
+      "family": "documents",
+      "category": "historical",
+      "query": "Deployment requires a manual restart",
+      "expected": "old",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "documents.conflict",
+      "family": "documents",
+      "category": "conflict",
+      "query": "Deployment procedure",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "documents.freshness",
+      "family": "documents",
+      "category": "freshness",
+      "query": "Rolling restarts eliminated deployment downtime",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "documents.irrelevant",
+      "family": "documents",
+      "category": "irrelevant",
+      "query": "What is the orbital period of Neptune?",
+      "expected": null,
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "mixed_notes.exact_current",
+      "family": "mixed_notes",
+      "category": "exact_current",
+      "query": "The API retries with exponential backoff",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "mixed_notes.exact_decision",
+      "family": "mixed_notes",
+      "category": "exact_decision",
+      "query": "Retry transient failures with exponential backoff",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "mixed_notes.paraphrase_current",
+      "family": "mixed_notes",
+      "category": "paraphrase_current",
+      "query": "What is the latest information about resilience decision?",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "mixed_notes.paraphrase_outcome",
+      "family": "mixed_notes",
+      "category": "paraphrase_outcome",
+      "query": "What worked for resilience decision?",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "mixed_notes.scoped_current",
+      "family": "mixed_notes",
+      "category": "scoped_current",
+      "query": "The API retries with exponential backoff",
+      "expected": "current",
+      "labels": {
+        "area": "mixed_notes"
+      },
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "mixed_notes.scoped_decision",
+      "family": "mixed_notes",
+      "category": "scoped_decision",
+      "query": "Retry transient failures with exponential backoff",
+      "expected": "pattern",
+      "labels": {
+        "area": "mixed_notes"
+      },
+      "forbidden": []
+    },
+    {
+      "id": "mixed_notes.historical",
+      "family": "mixed_notes",
+      "category": "historical",
+      "query": "The API retries requests immediately",
+      "expected": "old",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "mixed_notes.conflict",
+      "family": "mixed_notes",
+      "category": "conflict",
+      "query": "Resilience decision",
+      "expected": "current",
+      "labels": {},
+      "forbidden": [
+        "old"
+      ]
+    },
+    {
+      "id": "mixed_notes.freshness",
+      "family": "mixed_notes",
+      "category": "freshness",
+      "query": "Backoff resolved intermittent API failures",
+      "expected": "pattern",
+      "labels": {},
+      "forbidden": []
+    },
+    {
+      "id": "mixed_notes.irrelevant",
+      "family": "mixed_notes",
+      "category": "irrelevant",
+      "query": "What is the orbital period of Neptune?",
+      "expected": null,
+      "labels": {},
+      "forbidden": []
+    }
+  ],
+  "agent": [
+    {
+      "id": "architecture.capture_curate",
+      "family": "architecture",
+      "task": "capture_curate"
+    },
+    {
+      "id": "architecture.correction_recall",
+      "family": "architecture",
+      "task": "correction_recall"
+    },
+    {
+      "id": "configuration.capture_curate",
+      "family": "configuration",
+      "task": "capture_curate"
+    },
+    {
+      "id": "configuration.correction_recall",
+      "family": "configuration",
+      "task": "correction_recall"
+    },
+    {
+      "id": "preferences.capture_curate",
+      "family": "preferences",
+      "task": "capture_curate"
+    },
+    {
+      "id": "preferences.correction_recall",
+      "family": "preferences",
+      "task": "correction_recall"
+    },
+    {
+      "id": "ownership.capture_curate",
+      "family": "ownership",
+      "task": "capture_curate"
+    },
+    {
+      "id": "ownership.correction_recall",
+      "family": "ownership",
+      "task": "correction_recall"
+    },
+    {
+      "id": "documents.capture_curate",
+      "family": "documents",
+      "task": "capture_curate"
+    },
+    {
+      "id": "documents.correction_recall",
+      "family": "documents",
+      "task": "correction_recall"
+    },
+    {
+      "id": "mixed_notes.capture_curate",
+      "family": "mixed_notes",
+      "task": "capture_curate"
+    },
+    {
+      "id": "mixed_notes.correction_recall",
+      "family": "mixed_notes",
+      "task": "correction_recall"
+    }
+  ]
+}

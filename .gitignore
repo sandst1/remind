@@ -1,5 +1,10 @@
 
-!web/src/lib/
+.remind/cache/
+.remind/runtime/
+.remind/*.log
+.remind/*.db
+.remind/*.db-wal
+.remind/*.db-shm
 # Environment
 # IDE
 # Python
@@ -51,3 +56,7 @@ venv/
 web/dist/
 web/node_modules/
 wheels/
+
+# Keep frontend source helpers despite the generic Python lib/ rule.
+!web/src/lib/
+!web/src/lib/**

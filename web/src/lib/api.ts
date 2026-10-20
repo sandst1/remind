@@ -38,21 +38,35 @@ function apiUrl(path: string, params: Record<string, string> = {}): string {
 /**
  * Fetch wrapper with error handling
  */
+const revisions = new Map<string, string>();
+function rememberRevisions(value: any): void {
+  if (!value || typeof value !== 'object') return;
+  if (value.id && value.revision) revisions.set(`${getDbParam()}:${value.id}`, value.revision);
+  Object.values(value).forEach(rememberRevisions);
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const method = options?.method || 'GET';
+  const match = url.match(/\/(?:episodes|concepts|conflicts)\/([^/?]+)/);
+  const revision = match ? revisions.get(`${getDbParam()}:${decodeURIComponent(match[1])}`) : undefined;
   const response = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(method !== 'GET' && revision ? { 'If-Match': revision } : {}),
       ...options?.headers,
     },
   });
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: response.statusText }));
+    if (response.status === 409) throw new Error('Memory changed since it was loaded. Refresh and review before saving.');
     throw new Error(error.error || `HTTP ${response.status}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  rememberRevisions(data);
+  return data;
 }
 
 // Config

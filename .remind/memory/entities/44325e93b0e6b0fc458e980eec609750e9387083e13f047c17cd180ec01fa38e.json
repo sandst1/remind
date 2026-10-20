@@ -1,0 +1,11 @@
+{
+  "kind": "entities",
+  "record": {
+    "created_at": "2026-08-09T01:02:48.423052",
+    "display_name": "retrieval",
+    "id": "concept:retrieval",
+    "metadata": {},
+    "type": "other"
+  },
+  "version": 4
+}

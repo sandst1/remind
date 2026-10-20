@@ -18,7 +18,7 @@ import importlib.resources
 import json
 import sys
 from dataclasses import asdict
-from importlib.metadata import version
+from remind import __version__
 from pathlib import Path
 from typing import Any, Optional
 
@@ -259,13 +259,11 @@ def _run_recall_via_worker(
     config = load_config(project_dir=Path.cwd())
     worker_key = build_recall_worker_key(
         db_url=ctx.obj["db"],
-        llm_provider=ctx.obj["llm"],
         embedding_provider=ctx.obj["embedding"],
         config_fingerprint=_recall_config_fingerprint(config),
     )
     socket_path = ensure_recall_worker(
         db_url=ctx.obj["db"],
-        llm_provider=ctx.obj["llm"],
         embedding_provider=ctx.obj["embedding"],
         worker_key=worker_key,
         idle_seconds=getattr(config, "cli_recall_worker_idle_seconds", DEFAULT_RECALL_WORKER_IDLE_SECONDS),
@@ -300,14 +298,18 @@ def _run_recall_via_worker(
 
 
 @click.group()
-@click.version_option(version=version("remind-mcp"), prog_name="remind")
+@click.version_option(version=__version__, prog_name="remind")
+@click.option("--store", "store_selector", default=None, help="Directory, file URL, or SQL URL")
 @click.option("--db", default=None, help="Database name, path, or URL (e.g. 'myproject', '/path/to/db.db', 'postgresql+psycopg://user:pass@host/db'). Default: <cwd>/.remind/remind.db")
-@click.option("--embedding", default=None, type=click.Choice(["local", "openai", "azure_openai", "ollama"]))
+@click.option("--embedding", default=None, type=click.Choice(["local", "openai", "azure_openai", "ollama", "deterministic"]))
 @click.pass_context
-def main(ctx, db: str, embedding: str):
+def main(ctx, db: str, embedding: str, store_selector: Optional[str]):
     """Remind - Agent-driven memory layer for LLMs."""
     from remind.config import load_config, resolve_db_url, _is_db_url, setup_file_logging
 
+    if db and store_selector and db != store_selector:
+        raise click.UsageError("Conflicting --store and --db selectors")
+    db = store_selector or db
     config = load_config(project_dir=Path.cwd())
 
     embedding = embedding or config.embedding_provider
@@ -326,11 +328,13 @@ def main(ctx, db: str, embedding: str):
     # - Remote DB (postgres, mysql, …): use <cwd>/.remind (project-local)
     # - Anything else: None → falls back to ~/.remind
     project_remind_dir: Optional[Path]
-    if db_url.startswith("sqlite:///"):
+    if db_url.startswith("file://"):
+        project_remind_dir = Path(db_url[7:]).parent / "runtime"
+    elif db_url.startswith("sqlite:///"):
         db_file = Path(db_url[len("sqlite:///"):])
-        project_remind_dir = db_file.parent
+        project_remind_dir = db_file.parent / "runtime"
     elif "://" in db_url:
-        project_remind_dir = Path.cwd() / ".remind"
+        project_remind_dir = Path.cwd() / ".remind" / "runtime"
     else:
         project_remind_dir = None
 
@@ -357,10 +361,12 @@ def main(ctx, db: str, embedding: str):
 @click.option("--asserted-by", help="Who asserted this information (e.g., alice, agent:cursor)")
 @click.option("--source-ref", help="Link to the original artifact (URL/permalink)")
 @click.option("--no-embed", is_flag=True, help="Skip embedding the episode (faster, no API call)")
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--idempotency-key", default=None)
 @click.pass_context
 def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[str], 
              entities: tuple, labels: tuple, source_type: Optional[str],
-             asserted_by: Optional[str], source_ref: Optional[str], no_embed: bool):
+             asserted_by: Optional[str], source_ref: Optional[str], no_embed: bool, as_json: bool, idempotency_key: Optional[str]):
     """Add an episode to memory.
     
     Embeds the episode by default for vector search during recall.
@@ -383,9 +389,13 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
             source_type=source_type,
             asserted_by=asserted_by,
             source_ref=source_ref,
+            idempotency_key=idempotency_key,
         )
 
     result = run_async(_remember())
+    if as_json:
+        _emit_cli_json(result.to_dict())
+        return
     
     console.print(f"[green]✓[/green] Remembered as episode [cyan]{result.episode_id}[/cyan]")
 
@@ -441,8 +451,10 @@ def remember(ctx, content: str, metadata: Optional[str], episode_type: Optional[
               help="Read changeset from file instead of argument")
 @click.option("--dry-run", is_flag=True, help="Validate only, don't execute")
 @click.option("--json", "as_json", is_flag=True, help="Output result as JSON")
+@click.option("--revisions", default="{}", help="JSON map of record IDs to expected revisions")
+@click.option("--idempotency-key", default=None)
 @click.pass_context
-def apply(ctx, changeset: Optional[str], input_file: Optional[str], dry_run: bool, as_json: bool):
+def apply(ctx, changeset: Optional[str], input_file: Optional[str], dry_run: bool, as_json: bool, revisions: str, idempotency_key: Optional[str]):
     """Apply a batch changeset to memory.
     
     Accepts either JSON or compact line format (auto-detected).
@@ -493,12 +505,14 @@ def apply(ctx, changeset: Optional[str], input_file: Optional[str], dry_run: boo
     )
     
     async def _apply():
-        return await engine.apply(changeset, dry_run=dry_run)
+        return await engine.apply(changeset, dry_run=dry_run, expected_revisions=json.loads(revisions), idempotency_key=idempotency_key)
     
     result = run_async(_apply())
     
     if as_json:
         _emit_cli_json(result.to_dict())
+        if not result.success:
+            raise SystemExit(1)
         return
     
     if result.success:
@@ -592,7 +606,7 @@ def snapshot(ctx, scopes: tuple, pretty: bool):
 
 
 @main.command()
-@click.option("--since", "since_seq", type=int, default=0,
+@click.option("--since", "since_seq", type=str, default="0",
               help="Only show events with seq greater than this (default: 0, i.e. from the start)")
 @click.option("--limit", type=int, default=200, help="Maximum number of events to return")
 @click.option("--kind", default=None, help="Filter to a single event kind (e.g. remembered, superseded)")
@@ -612,6 +626,11 @@ def events(ctx, since_seq: int, limit: int, kind: Optional[str], pretty: bool):
         remind events --kind conflict_opened --since 42
     """
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
+    if "." in str(since_seq):
+        result = memory.store.poll_events(cursor=since_seq, limit=limit, kind=kind)
+        print(json.dumps(result, indent=2 if pretty else None))
+        return
+    since_seq = int(since_seq)
     matched_events = memory.store.get_events(since_seq=since_seq, limit=limit, kind=kind)
     result = {
         "since_seq": since_seq,
@@ -620,6 +639,8 @@ def events(ctx, since_seq: int, limit: int, kind: Optional[str], pretty: bool):
         "next_since_seq": matched_events[-1]["seq"] if matched_events else since_seq,
     }
 
+    if hasattr(memory.store, "poll_events"):
+        result["next_cursor"] = memory.store.poll_events(limit=limit, kind=kind)["next_cursor"]
     if pretty:
         print(json.dumps(result, indent=2, default=str))
     else:
@@ -642,12 +663,15 @@ def events(ctx, since_seq: int, limit: int, kind: Optional[str], pretty: bool):
               help="Drop concepts/episodes below this activation score even if k budget remains")
 @click.option("--timeout-ms", "timeout_ms", type=int, default=None,
               help="Soft deadline; returns best-so-far instead of raising if exceeded")
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--explain", is_flag=True)
+@click.option("--track-usage", is_flag=True)
 @click.option("--raw", is_flag=True, help="Show raw concept data")
 @click.pass_context
 def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[str], 
            entity: Optional[str], labels: tuple, as_of: Optional[str],
            max_chars: Optional[int], min_score: Optional[float], timeout_ms: Optional[int],
-           raw: bool):
+           raw: bool, as_json: bool, explain: bool, track_usage: bool):
     """Retrieve relevant concepts for a query.
     
     By default, does semantic search across concepts. 
@@ -686,7 +710,7 @@ def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[
     use_recall_worker = bool(
         config.reranking_enabled
         and getattr(config, "cli_recall_worker_enabled", True)
-        and as_of is None
+        and as_of is None and not (as_json or explain or track_usage)
     )
 
     result = None
@@ -732,10 +756,16 @@ def recall(ctx, query: Optional[str], k: int, episode_k: int, context: Optional[
                 max_chars=max_chars,
                 min_score=min_score,
                 timeout_ms=timeout_ms,
+                explain=explain, track_usage=track_usage,
             )
 
         result = run_async(_recall())
     
+    if as_json:
+        _emit_cli_json(result.to_dict())
+        return
+    if not raw:
+        result = str(result)
     if entity:
         # Entity-based result
         if raw:
@@ -850,6 +880,7 @@ def conflicts_list(ctx, status: str = "open", kind: Optional[str] = None,
         console.print("[dim]Dismiss with: remind conflicts dismiss <id> --note \"both true, different contexts\"[/dim]")
 
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @conflicts.command("resolve")
 @click.argument("conflict_id")
 @click.argument("winning_fact_id", required=False, default=None)
@@ -857,7 +888,7 @@ def conflicts_list(ctx, status: str = "open", kind: Optional[str] = None,
 @click.option("--by", "resolved_by", default=None, help="Who decided (e.g. alice)")
 @click.pass_context
 def conflicts_resolve(ctx, conflict_id: str, winning_fact_id: Optional[str],
-                      note: Optional[str], resolved_by: Optional[str]):
+                      note: Optional[str], resolved_by: Optional[str], expected_revision: str):
     """Resolve a conflict by naming the winning fact.
 
     The losing fact is superseded (kept as history) and the resolution
@@ -868,7 +899,7 @@ def conflicts_resolve(ctx, conflict_id: str, winning_fact_id: Optional[str],
     async def _resolve():
         return await memory.resolve_conflict(
             conflict_id, winning_fact_id=winning_fact_id, note=note, resolved_by=resolved_by,
-        )
+         expected_revision=expected_revision)
 
     try:
         conflict = run_async(_resolve())
@@ -880,17 +911,18 @@ def conflicts_resolve(ctx, conflict_id: str, winning_fact_id: Optional[str],
         console.print(f"  Winner: {winning_fact_id} (loser superseded, kept as history)")
 
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @conflicts.command("dismiss")
 @click.argument("conflict_id")
 @click.option("--note", default=None, help="Why this isn't a real contradiction")
 @click.option("--by", "resolved_by", default=None, help="Who decided")
 @click.pass_context
-def conflicts_dismiss(ctx, conflict_id: str, note: Optional[str], resolved_by: Optional[str]):
+def conflicts_dismiss(ctx, conflict_id: str, note: Optional[str], resolved_by: Optional[str], expected_revision: str):
     """Dismiss a conflict: both claims valid (e.g. different contexts)."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     async def _dismiss():
-        return await memory.dismiss_conflict(conflict_id, note=note, resolved_by=resolved_by)
+        return memory.dismiss_conflict(conflict_id, note=note, dismissed_by=resolved_by, expected_revision=expected_revision)
 
     try:
         conflict = run_async(_dismiss())
@@ -1053,7 +1085,7 @@ def inspect(
     as_compact_json: bool,
 ):
     """Inspect concepts or episodes."""
-    from remind.store import SQLAlchemyMemoryStore
+    from remind.storage import open_store as SQLAlchemyMemoryStore
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
@@ -1518,12 +1550,13 @@ def status(ctx, as_json: bool, as_table: bool, as_compact_json: bool):
 
 @main.command("export")
 @click.argument("file")
+@click.option("--mode", type=click.Choice(["portable", "backup"]), default="portable")
 @click.pass_context
-def export_cmd(ctx, file: str):
+def export_cmd(ctx, file: str, mode: str):
     """Export memory to JSON file."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
-    data = memory.export_memory()
+    data = memory.export_memory() if mode == "portable" else memory.export_memory(mode=mode)
     Path(file).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     console.print(
         f"[green]✓[/green] Exported {len(data['concepts'])} concepts and "
@@ -1533,13 +1566,14 @@ def export_cmd(ctx, file: str):
 
 @main.command("import")
 @click.argument("file")
+@click.option("--replace", is_flag=True, help="Explicitly restore the complete store")
 @click.pass_context
-def import_cmd(ctx, file: str):
+def import_cmd(ctx, file: str, replace: bool):
     """Import memory from JSON file."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     data = json.loads(Path(file).read_text(encoding="utf-8"))
-    result = memory.import_memory(data)
+    result = memory.store.import_data(data, replace=True) if replace else memory.import_memory(data)
     console.print(f"[green]✓[/green] Imported {result['concepts_imported']} concepts, {result['episodes_imported']} episodes from [cyan]{file}[/cyan]")
 
 
@@ -1551,7 +1585,7 @@ def import_cmd(ctx, file: str):
 @click.pass_context
 def search(ctx, query: str, as_json: bool, as_table: bool, as_compact_json: bool):
     """Search concepts by tag or keyword."""
-    from remind.store import SQLAlchemyMemoryStore
+    from remind.storage import open_store as SQLAlchemyMemoryStore
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
@@ -1639,7 +1673,7 @@ def entities(
     as_compact_json: bool,
 ):
     """List entities or show details for a specific entity."""
-    from remind.store import SQLAlchemyMemoryStore
+    from remind.storage import open_store as SQLAlchemyMemoryStore
     from remind.models import EntityType
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
@@ -1768,7 +1802,7 @@ def entities(
 @click.pass_context
 def mentions(ctx, entity_id: str, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show all episodes mentioning an entity."""
-    from remind.store import SQLAlchemyMemoryStore
+    from remind.storage import open_store as SQLAlchemyMemoryStore
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
@@ -1821,7 +1855,7 @@ def mentions(ctx, entity_id: str, as_json: bool, as_table: bool, as_compact_json
 @click.pass_context
 def decisions(ctx, limit: int, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show decision-type episodes."""
-    from remind.store import SQLAlchemyMemoryStore
+    from remind.storage import open_store as SQLAlchemyMemoryStore
     from remind.models import EpisodeType
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
@@ -1871,7 +1905,7 @@ def decisions(ctx, limit: int, as_json: bool, as_table: bool, as_compact_json: b
 @click.pass_context
 def questions(ctx, limit: int, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show question-type episodes (open questions, uncertainties)."""
-    from remind.store import SQLAlchemyMemoryStore
+    from remind.storage import open_store as SQLAlchemyMemoryStore
     from remind.models import EpisodeType
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
@@ -1920,7 +1954,7 @@ def questions(ctx, limit: int, as_json: bool, as_table: bool, as_compact_json: b
 @click.pass_context
 def entity_relations(ctx, entity_id: str, as_json: bool, as_table: bool, as_compact_json: bool):
     """Show relationships for a specific entity."""
-    from remind.store import SQLAlchemyMemoryStore
+    from remind.storage import open_store as SQLAlchemyMemoryStore
     store = SQLAlchemyMemoryStore(ctx.obj["db"])
     out_fmt = _resolve_cli_output_format(ctx, as_table, as_json, as_compact_json)
 
@@ -2095,6 +2129,7 @@ def skill_install(names: tuple):
 # Update/Delete/Restore Commands
 # ============================================================================
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @main.command("update-episode")
 @click.argument("episode_id")
 @click.option("--content", "-c", help="New content text")
@@ -2107,7 +2142,7 @@ def skill_install(names: tuple):
 @click.pass_context
 def update_episode(ctx, episode_id: str, content: Optional[str],
                    episode_type: Optional[str], entities: tuple,
-                   labels: tuple, clear_labels: bool):
+                   labels: tuple, clear_labels: bool, expected_revision: str):
     """Update an existing episode."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
@@ -2130,7 +2165,7 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
         episode_type=ep_type,
         entities=entity_list,
         labels=label_dict,
-    )
+     expected_revision=expected_revision)
 
     if updated:
         console.print(f"[green]✓[/green] Updated episode [cyan]{episode_id}[/cyan]")
@@ -2148,11 +2183,12 @@ def update_episode(ctx, episode_id: str, content: Optional[str],
         console.print(f"[red]Episode {episode_id} not found[/red]")
 
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @main.command("delete-episode")
 @click.argument("episode_id")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @click.pass_context
-def delete_episode(ctx, episode_id: str, yes: bool):
+def delete_episode(ctx, episode_id: str, yes: bool, expected_revision: str):
     """Soft delete an episode from memory."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
@@ -2174,31 +2210,33 @@ def delete_episode(ctx, episode_id: str, yes: bool):
             console.print("[yellow]Cancelled[/yellow]")
             return
 
-    if memory.delete_episode(episode_id):
+    if memory.delete_episode(episode_id, expected_revision=expected_revision):
         console.print(f"[green]✓[/green] Deleted episode [cyan]{episode_id}[/cyan]")
         console.print(f"  [dim]Use 'remind restore-episode {episode_id}' to undelete[/dim]")
     else:
         console.print(f"[red]Failed to delete episode {episode_id}[/red]")
 
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @main.command("restore-episode")
 @click.argument("episode_id")
 @click.pass_context
-def restore_episode(ctx, episode_id: str):
+def restore_episode(ctx, episode_id: str, expected_revision: str):
     """Restore a deleted episode."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
-    if memory.restore_episode(episode_id):
+    if memory.restore_episode(episode_id, expected_revision=expected_revision):
         console.print(f"[green]✓[/green] Restored episode [cyan]{episode_id}[/cyan]")
     else:
         console.print(f"[red]Episode {episode_id} not found or not deleted[/red]")
 
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @main.command("purge-episode")
 @click.argument("episode_id")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @click.pass_context
-def purge_episode(ctx, episode_id: str, yes: bool):
+def purge_episode(ctx, episode_id: str, yes: bool, expected_revision: str):
     """Permanently delete an episode. This cannot be undone."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
@@ -2211,12 +2249,13 @@ def purge_episode(ctx, episode_id: str, yes: bool):
             console.print("[yellow]Cancelled[/yellow]")
             return
 
-    if memory.purge_episode(episode_id):
+    if memory.purge_episode(episode_id, expected_revision=expected_revision):
         console.print(f"[green]✓[/green] Permanently deleted episode [cyan]{episode_id}[/cyan]")
     else:
         console.print(f"[red]Episode {episode_id} not found[/red]")
 
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @main.command("update-concept")
 @click.argument("concept_id")
 @click.option("--title", "-t", help="New title")
@@ -2230,7 +2269,7 @@ def purge_episode(ctx, episode_id: str, yes: bool):
 @click.pass_context
 def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional[str],
                    confidence: Optional[float], tags: tuple, relations: Optional[str],
-                   labels: tuple, clear_labels: bool):
+                   labels: tuple, clear_labels: bool, expected_revision: str):
     """Update an existing concept."""
     import json as _json
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
@@ -2263,7 +2302,7 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
         tags=tag_list,
         relations=relations_list,
         labels=label_dict,
-    )
+     expected_revision=expected_revision)
 
     if updated:
         console.print(f"[green]✓[/green] Updated concept [cyan]{concept_id}[/cyan]")
@@ -2285,11 +2324,12 @@ def update_concept(ctx, concept_id: str, title: Optional[str], summary: Optional
         console.print(f"[red]Concept {concept_id} not found[/red]")
 
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @main.command("delete-concept")
 @click.argument("concept_id")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @click.pass_context
-def delete_concept(ctx, concept_id: str, yes: bool):
+def delete_concept(ctx, concept_id: str, yes: bool, expected_revision: str):
     """Soft delete a concept from memory."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
@@ -2311,31 +2351,33 @@ def delete_concept(ctx, concept_id: str, yes: bool):
             console.print("[yellow]Cancelled[/yellow]")
             return
 
-    if memory.delete_concept(concept_id):
+    if memory.delete_concept(concept_id, expected_revision=expected_revision):
         console.print(f"[green]✓[/green] Deleted concept [cyan]{concept_id}[/cyan]")
         console.print(f"  [dim]Use 'remind restore-concept {concept_id}' to undelete[/dim]")
     else:
         console.print(f"[red]Failed to delete concept {concept_id}[/red]")
 
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @main.command("restore-concept")
 @click.argument("concept_id")
 @click.pass_context
-def restore_concept(ctx, concept_id: str):
+def restore_concept(ctx, concept_id: str, expected_revision: str):
     """Restore a deleted concept."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
-    if memory.restore_concept(concept_id):
+    if memory.restore_concept(concept_id, expected_revision=expected_revision):
         console.print(f"[green]✓[/green] Restored concept [cyan]{concept_id}[/cyan]")
     else:
         console.print(f"[red]Concept {concept_id} not found or not deleted[/red]")
 
 
+@click.option("--expected-revision", required=True, help="Revision from a snapshot")
 @main.command("purge-concept")
 @click.argument("concept_id")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @click.pass_context
-def purge_concept(ctx, concept_id: str, yes: bool):
+def purge_concept(ctx, concept_id: str, yes: bool, expected_revision: str):
     """Permanently delete a concept. This cannot be undone."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
@@ -2348,7 +2390,7 @@ def purge_concept(ctx, concept_id: str, yes: bool):
             console.print("[yellow]Cancelled[/yellow]")
             return
 
-    if memory.purge_concept(concept_id):
+    if memory.purge_concept(concept_id, expected_revision=expected_revision):
         console.print(f"[green]✓[/green] Permanently deleted concept [cyan]{concept_id}[/cyan]")
     else:
         console.print(f"[red]Concept {concept_id} not found[/red]")
@@ -2431,15 +2473,16 @@ def deleted(ctx, item_type: Optional[str], limit: int, as_json: bool, as_table: 
 
 
 @main.command("purge-all")
+@click.option("--revisions", required=True, help="JSON map from snapshot deleted IDs to revisions")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @click.pass_context
-def purge_all(ctx, yes: bool):
+def purge_all(ctx, yes: bool, revisions: str):
     """Permanently delete all soft-deleted items. This cannot be undone."""
     memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
 
     # Count deleted items
-    deleted_episodes = memory.get_deleted_episodes(limit=1000)
-    deleted_concepts = memory.get_deleted_concepts()
+    deleted_episodes = memory.store.get_deleted_episodes(limit=None)
+    deleted_concepts = memory.store.get_deleted_concepts(limit=None)
 
     if not deleted_episodes and not deleted_concepts:
         console.print("[yellow]No deleted items to purge[/yellow]")
@@ -2458,21 +2501,51 @@ def purge_all(ctx, yes: bool):
             console.print("[yellow]Cancelled[/yellow]")
             return
 
-    # Purge all
-    ep_count = 0
-    c_count = 0
+    counts = memory.purge_deleted(json.loads(revisions))
+    console.print(f"[green]✓[/green] Purged {counts['episodes_purged']} episodes and {counts['concepts_purged']} concepts")
 
-    for ep in deleted_episodes:
-        if memory.purge_episode(ep.id):
-            ep_count += 1
 
-    for c in deleted_concepts:
-        if memory.purge_concept(c.id):
-            c_count += 1
 
-    console.print(f"[green]✓[/green] Purged {ep_count} episodes and {c_count} concepts")
+
+
+
+@main.command("doctor")
+@click.option("--repair-indexes", is_flag=True, help="Rebuild disposable indexes")
+@click.pass_context
+def doctor_cmd(ctx, repair_indexes: bool):
+    """Diagnose integrity, embeddings, source freshness, and configuration."""
+    from remind.doctor import diagnose, diagnose_directory
+    selector = ctx.obj["db"]
+    if selector.startswith("file://"):
+        preliminary = diagnose_directory(Path(selector[7:]))
+        if not preliminary["ok"]:
+            _emit_cli_json(preliminary)
+            raise SystemExit(1)
+    memory = get_memory(selector, ctx.obj["embedding"])
+    store = memory.store
+    try:
+        if repair_indexes:
+            store.rebuild_indexes()
+        report = diagnose(store, Path.cwd(), memory.embedding)
+        report["store"] = selector
+        _emit_cli_json(report)
+        if not report["ok"]:
+            raise SystemExit(1)
+    finally:
+        store.engine.dispose()
+
+
+@main.command("remember-batch")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--idempotency-key", default=None)
+@click.pass_context
+def remember_batch_cmd(ctx, file: str, idempotency_key: Optional[str]):
+    """Capture a JSON array of items atomically and return structured results."""
+    memory = get_memory(ctx.obj["db"], ctx.obj["embedding"])
+    items = json.loads(Path(file).read_text())
+    result = run_async(memory.remember_batch(items, idempotency_key=idempotency_key))
+    _emit_cli_json(result.to_dict())
 
 
 if __name__ == "__main__":
     main()
-

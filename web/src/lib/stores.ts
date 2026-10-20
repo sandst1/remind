@@ -7,6 +7,7 @@ import type {
   LabelInfo,
   DatabaseInfo,
   EntityGraphData,
+  GraphData,
 } from './types';
 import { DEFAULT_EPISODE_TYPES_LIST } from './episode-types';
 
@@ -21,6 +22,10 @@ export const databases = writable<DatabaseInfo[]>([]);
 export const stats = writable<Stats | null>(null);
 export const statsLoading = writable(false);
 export const statsError = writable<string | null>(null);
+export const openConflictCount = writable(0);
+export const conceptMapLoading = writable(false);
+export const conceptMapError = writable<string | null>(null);
+export const conceptMapData = writable<GraphData | null>(null);
 
 // Concepts
 export const concepts = writable<Concept[]>([]);

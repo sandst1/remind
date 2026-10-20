@@ -1,0 +1,18 @@
+{
+  "kind": "facts",
+  "record": {
+    "asserted_by": "topi",
+    "attribute": null,
+    "cluster_id": "0711ad61",
+    "created_at": "2026-08-09T01:02:48.452703",
+    "entity_ids": "[\"project:remind\"]",
+    "id": "14dcbaf6",
+    "source_episode_id": "f065e32e",
+    "source_ref": "https://github.com/sandst1/remind/commit/3f29ca8",
+    "statement": "Remind 0.13.0 was released on 2026-08-08 as a single commit, 3f29ca8, titled 'Remind core changes: drop topics, add substrate primitives'.",
+    "superseded_by": null,
+    "valid_from": "2026-08-09T01:02:48.449550",
+    "valid_to": null
+  },
+  "version": 4
+}

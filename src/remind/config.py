@@ -198,6 +198,8 @@ def _apply_file_config(config: RemindConfig, file_config: dict) -> None:
             config.episode_types = [str(t).strip().lower() for t in raw if str(t).strip()]
 
     # Database URL
+    if "store_url" in file_config:
+        config.db_url = str(file_config["store_url"])
     if "db_url" in file_config:
         config.db_url = str(file_config["db_url"])
 
@@ -371,7 +373,7 @@ def _apply_env_vars(config: RemindConfig) -> None:
             config.episode_types = parsed
 
     # Database URL
-    if db_url := os.environ.get("REMIND_DB_URL"):
+    if db_url := os.environ.get("REMIND_STORE") or os.environ.get("REMIND_DB_URL"):
         config.db_url = db_url
 
     # Retrieval tuning
@@ -515,7 +517,7 @@ def resolve_db_path(db_name: Optional[str], project_aware: bool = False) -> str:
         return str(REMIND_DIR / "memory.db")
 
 
-_DB_URL_SCHEMES = ("sqlite://", "postgresql://", "postgresql+", "mysql://", "mysql+")
+_DB_URL_SCHEMES = ("file://", "sqlite://", "postgresql://", "postgresql+", "mysql://", "mysql+")
 
 
 def _is_db_url(value: str) -> bool:
@@ -548,9 +550,21 @@ def resolve_db_url(
     """
     if db_name and _is_db_url(db_name):
         return db_name
+    if db_name is None and project_aware:
+        from remind.storage import default_store_url
+        return default_store_url(Path.cwd())
 
+    if db_name:
+        candidate = Path(db_name).expanduser()
+        if "/" not in db_name and not candidate.is_absolute():
+            candidate = REMIND_DIR / db_name
+        if candidate.suffix == ".db":
+            candidate = candidate.with_suffix(".memory")
+        elif "/" not in db_name:
+            candidate = candidate.with_suffix(".memory")
+        return candidate.resolve().as_uri()
     file_path = resolve_db_path(db_name, project_aware=project_aware)
-    return f"sqlite:///{file_path}"
+    return Path(file_path).with_suffix(".memory").as_uri()
 
 
 def infer_project_dir_from_db_url(db_url: str) -> Optional[Path]:
@@ -563,6 +577,10 @@ def infer_project_dir_from_db_url(db_url: str) -> Optional[Path]:
     Remind wraps absolute paths as ``sqlite:///{path}``, which appears as four slashes
     before the root ``/`` on POSIX (e.g. ``sqlite:////tmp/a.db``).
     """
+    if db_url.startswith("file://"):
+        directory = Path(db_url[7:])
+        return directory.parent.parent if directory.parent.name == ".remind" else directory.parent
+
     if not isinstance(db_url, str) or not db_url.startswith("sqlite:///"):
         return None
     raw = db_url[len("sqlite:///") :].strip()
@@ -599,16 +617,13 @@ def setup_file_logging(db_path_or_url: str, project_dir: Optional[Path] = None) 
     Safe to call multiple times -- duplicate handlers for the same
     directory are skipped.
     """
-    if _is_db_url(db_path_or_url) and not db_path_or_url.startswith("sqlite"):
-        if project_dir is not None:
-            log_dir = str(project_dir / ".remind")
-        else:
-            log_dir = str(REMIND_DIR)
+    if db_path_or_url.startswith("file://"):
+        log_dir = str(Path(db_path_or_url[7:]).parent / "runtime")
+    elif _is_db_url(db_path_or_url) and not db_path_or_url.startswith("sqlite"):
+        log_dir = str((project_dir / ".remind" if project_dir else REMIND_DIR) / "runtime")
     else:
-        path = db_path_or_url
-        if path.startswith("sqlite:///"):
-            path = path[len("sqlite:///"):]
-        log_dir = str(Path(path).parent)
+        path = db_path_or_url.removeprefix("sqlite:///")
+        log_dir = str(Path(path).parent / "runtime")
     if log_dir in _file_logging_configured:
         return
 

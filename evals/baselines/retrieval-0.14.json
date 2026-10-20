@@ -1,0 +1,1839 @@
+{
+  "configuration": {
+    "note": "Measured local default model baseline; vector is diagnostic, graph is the release gate.",
+    "seed": 0,
+    "suite": "retrieval"
+  },
+  "dataset_digest": "d50b59d907a73fd5ed2b62b5d045bc897df8e2387a9431a0cca5547e7767b23d",
+  "dataset_version": 1,
+  "suites": {
+    "retrieval": {
+      "cases": [
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.exact_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.exact_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.exact_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.exact_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.exact_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.exact_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.paraphrase_current",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": false,
+          "recall_at_5": 0
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.paraphrase_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.paraphrase_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.paraphrase_outcome",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": false,
+          "recall_at_5": 0
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.paraphrase_outcome",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.paraphrase_outcome",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.scoped_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.scoped_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.scoped_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.scoped_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.scoped_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.scoped_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.historical",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.historical",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.historical",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.conflict",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": false,
+          "recall_at_5": 0
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.conflict",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.43067655807339306,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.conflict",
+          "mode": "graph",
+          "ndcg_at_5": 0.43067655807339306,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.freshness",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.freshness",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.freshness",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.irrelevant",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.irrelevant",
+          "mode": "hybrid",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "architecture.irrelevant",
+          "mode": "graph",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.exact_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.exact_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.exact_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.exact_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.exact_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.exact_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.paraphrase_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.paraphrase_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.paraphrase_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.paraphrase_outcome",
+          "mode": "vector",
+          "ndcg_at_5": 0.5,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.paraphrase_outcome",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.paraphrase_outcome",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.scoped_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.scoped_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.scoped_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.scoped_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.scoped_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.scoped_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.historical",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.historical",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.historical",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.conflict",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.conflict",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.conflict",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.freshness",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.freshness",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.freshness",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.irrelevant",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.irrelevant",
+          "mode": "hybrid",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "configuration.irrelevant",
+          "mode": "graph",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.exact_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.exact_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.exact_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.exact_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.exact_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.exact_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.paraphrase_current",
+          "mode": "vector",
+          "ndcg_at_5": 0.5,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.paraphrase_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.5,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.paraphrase_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.5,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.paraphrase_outcome",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.paraphrase_outcome",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.paraphrase_outcome",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.scoped_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.scoped_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.scoped_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.scoped_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.scoped_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.scoped_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.historical",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.historical",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.historical",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.conflict",
+          "mode": "vector",
+          "ndcg_at_5": 0.5,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.conflict",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.5,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.conflict",
+          "mode": "graph",
+          "ndcg_at_5": 0.5,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.freshness",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.freshness",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.freshness",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.irrelevant",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.irrelevant",
+          "mode": "hybrid",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "preferences.irrelevant",
+          "mode": "graph",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.exact_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.exact_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.exact_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.exact_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.exact_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.exact_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.paraphrase_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.paraphrase_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.paraphrase_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.paraphrase_outcome",
+          "mode": "vector",
+          "ndcg_at_5": 0.5,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.paraphrase_outcome",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.paraphrase_outcome",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.scoped_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.scoped_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.scoped_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.scoped_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.scoped_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.scoped_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.historical",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.historical",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.historical",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.conflict",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.conflict",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.conflict",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.freshness",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.freshness",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.freshness",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.irrelevant",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.irrelevant",
+          "mode": "hybrid",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "ownership.irrelevant",
+          "mode": "graph",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.exact_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.exact_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.exact_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.exact_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.exact_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.exact_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.paraphrase_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.paraphrase_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.paraphrase_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.paraphrase_outcome",
+          "mode": "vector",
+          "ndcg_at_5": 0.5,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.paraphrase_outcome",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.paraphrase_outcome",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.scoped_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.scoped_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.scoped_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.scoped_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.scoped_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.scoped_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.historical",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.historical",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.historical",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.conflict",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.conflict",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.conflict",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.freshness",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.freshness",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.freshness",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.irrelevant",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.irrelevant",
+          "mode": "hybrid",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "documents.irrelevant",
+          "mode": "graph",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.exact_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.exact_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.exact_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.exact_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.exact_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "exact_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.exact_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.paraphrase_current",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": false,
+          "recall_at_5": 0
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.paraphrase_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.paraphrase_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.paraphrase_outcome",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": false,
+          "recall_at_5": 0
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.paraphrase_outcome",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "paraphrase_outcome",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.paraphrase_outcome",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.scoped_current",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.scoped_current",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_current",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.scoped_current",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.scoped_decision",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.scoped_decision",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "scoped_decision",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.scoped_decision",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.historical",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.historical",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "historical",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.historical",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.conflict",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": false,
+          "recall_at_5": 0
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.conflict",
+          "mode": "hybrid",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "conflict",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.conflict",
+          "mode": "graph",
+          "ndcg_at_5": 0.6309297535714575,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.freshness",
+          "mode": "vector",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.freshness",
+          "mode": "hybrid",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "freshness",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.freshness",
+          "mode": "graph",
+          "ndcg_at_5": 1.0,
+          "passed": true,
+          "recall_at_5": 1
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.irrelevant",
+          "mode": "vector",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.irrelevant",
+          "mode": "hybrid",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        },
+        {
+          "category": "irrelevant",
+          "filter_leakage": false,
+          "historical_leakage": false,
+          "id": "mixed_notes.irrelevant",
+          "mode": "graph",
+          "ndcg_at_5": 0,
+          "passed": true,
+          "recall_at_5": 0
+        }
+      ],
+      "dimensions": 384,
+      "metrics": {
+        "graph": {
+          "empty_result_rate": 1.0,
+          "ndcg_at_5": 0.8274111367235926,
+          "positive_success_rate": 1.0,
+          "recall_at_5": 1.0
+        },
+        "hybrid": {
+          "empty_result_rate": 1.0,
+          "ndcg_at_5": 0.8274111367235926,
+          "positive_success_rate": 1.0,
+          "recall_at_5": 1.0
+        },
+        "vector": {
+          "empty_result_rate": 1.0,
+          "ndcg_at_5": 0.8425925925925926,
+          "positive_success_rate": 0.8888888888888888,
+          "recall_at_5": 0.8888888888888888
+        }
+      },
+      "model": "local/sentence-transformers/all-MiniLM-L6-v2",
+      "status": "passed"
+    }
+  },
+  "version": 1
+}

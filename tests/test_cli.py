@@ -296,7 +296,7 @@ def test_deleted_json_and_purge_episode_use_storage_compatible_api(monkeypatch):
         def get_deleted_concepts(self):
             return []
 
-        def purge_episode(self, episode_id):
+        def purge_episode(self, episode_id, expected_revision):
             self.purged_episode_ids.append(episode_id)
             return True
 
@@ -311,7 +311,7 @@ def test_deleted_json_and_purge_episode_use_storage_compatible_api(monkeypatch):
     )
     purged = runner.invoke(
         main,
-        ["--db", "test", "--embedding", "openai", "purge-episode", "-y", "episode-1"],
+        ["--db", "test", "--embedding", "openai", "purge-episode", "-y", "episode-1", "--expected-revision", "observed-revision"],
     )
 
     assert deleted.exit_code == 0

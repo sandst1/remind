@@ -71,7 +71,7 @@ class TestConcept:
         assert concept.summary == "Test concept"
         assert concept.confidence == 0.5
         assert concept.instance_count == 1
-        assert len(concept.id) == 8
+        assert len(concept.id) == 36
         assert concept.relations == []
         assert concept.tags == []
     
@@ -146,7 +146,7 @@ class TestEpisode:
         episode = Episode(content="Test interaction")
         assert episode.content == "Test interaction"
         assert episode.consolidated == False
-        assert len(episode.id) == 8
+        assert len(episode.id) == 36
         assert episode.concepts_activated == []
     
     def test_serialization_roundtrip(self):

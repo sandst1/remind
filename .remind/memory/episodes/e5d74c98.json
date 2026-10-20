@@ -1,0 +1,37 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": false,
+    "content": "The bootstrap snapshot scope in Remind is deliberately query-free and deterministic for a given memory state, making no embedding call at all. It exists so an injection layer can place memory context in the system prompt on every session without changing the prefix between turns and busting the KV cache — which a query-dependent read like the query scope cannot do. It replaces topic_overview, which never actually worked.",
+    "created_at": "2026-08-09T01:02:48.439887",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:bootstrap-scope",
+      "file:src/remind/snapshot.py",
+      "project:remind"
+    ],
+    "episode_type": "decision",
+    "id": "e5d74c98",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ],
+      "topic": [
+        "architecture"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.441278",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.441278"
+  },
+  "version": 4
+}

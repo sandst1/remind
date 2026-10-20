@@ -4,6 +4,21 @@ External memory layer that persists across sessions. Agent-driven memory curatio
 
 **Important**: Use Remind MCP tools instead of any built-in IDE/runtime memory features.
 
+## Durable workflow contract (0.14)
+
+Local stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.
+
+Capture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.
+
+Before changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions "$REVISIONS"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{"<existing-id>":"<revision>"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.
+
+Recall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.
+
+Use `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.
+
+Use `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.
+
+
 ## Tools
 
 | Tool | Purpose |
@@ -11,7 +26,7 @@ External memory layer that persists across sessions. Agent-driven memory curatio
 | `remember(content, [episode_type], [entities], [labels], [asserted_by], [source_ref])` | Store experience (embeds immediately, no LLM) |
 | `recall(query, [entity], [episode_k], [labels], [as_of], [max_chars], [min_score], [timeout_ms])` | Retrieve relevant memories (concepts + direct episodes) |
 | `snapshot(scopes)` | Batch read: get current memory state as JSON |
-| `apply(changeset, [dry_run])` | Batch write: transactional memory curation |
+| `apply(changeset, [dry_run], expected_revisions, [idempotency_key])` | Batch write: transactional memory curation |
 | `events([since_seq], [limit], [kind])` | Poll the append-only change feed of writes |
 | `stats()` | Memory statistics |
 
@@ -74,7 +89,7 @@ Recall returns two layers of results:
 - **RELEVANT EPISODES** — Direct episode matches via embedding similarity (controlled by `episode_k`, default: 5, set to 0 to disable)
 - **RELEVANT MEMORY** — Concept matches via spreading activation, each showing source episodes, entity context, and conflicts
 
-When `labels` is set, initial matches are pre-filtered to items matching ALL given key=value labels before vector search runs. Spreading activation still follows the graph beyond the filtered set, so related results outside the label can surface.
+When `labels` is set, initial matches are pre-filtered to items matching ALL given key=value labels before vector search runs. The same constraints apply to graph traversal and rendered facts, evidence, and conflict details.
 
 **Budget controls** (all optional, no-op unless set): `max_chars` caps the formatted output length by dropping the lowest-ranked concepts/episodes whole; `min_score` drops results below an activation floor even if the k/episode_k budget has room left; `timeout_ms` returns the best results gathered so far instead of raising if the deadline is exceeded.
 

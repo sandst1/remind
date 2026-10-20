@@ -321,7 +321,7 @@ class Fact:
     "as of" queries and conflict resolution deterministic.
     """
 
-    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # FK to the fact_cluster Concept this fact belongs to
     cluster_id: Optional[str] = None
@@ -404,7 +404,7 @@ class Conflict:
     conflicts reference the contradicting concepts.
     """
 
-    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # "fact" (two fact rows contradict) or "concept" (two concepts contradict)
     kind: str = "fact"
@@ -484,7 +484,7 @@ class Evidence:
     episodes can support, contradict, exemplify, or qualify concepts.
     """
     
-    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
     episode_id: str = ""
     concept_id: str = ""
     link_type: str = EVIDENCE_SUPPORTS  # supports, contradicts, exemplifies, qualifies, supersedes
@@ -525,7 +525,7 @@ class Concept:
     but a generalized understanding derived from multiple experiences.
     """
     
-    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # Short title for the concept (5-10 words)
     title: Optional[str] = None
@@ -676,7 +676,7 @@ class Episode:
     Think of these as "working memory" that gets processed during "sleep".
     """
     
-    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: Optional[datetime] = None
 

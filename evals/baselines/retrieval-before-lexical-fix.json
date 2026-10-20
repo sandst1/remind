@@ -1,0 +1,1455 @@
+{
+  "version": 1,
+  "description": "Measured before the lexical stopword fix; storage/API implementation in progress. Not a release pass.",
+  "suites": {
+    "retrieval": {
+      "cases": [
+        {
+          "category": "exact_current",
+          "context_chars": 1010,
+          "id": "architecture.exact_current",
+          "latency_ms": 180.71320799936075,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1144,
+          "id": "architecture.exact_current",
+          "latency_ms": 315.7594579970464,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1144,
+          "id": "architecture.exact_current",
+          "latency_ms": 333.3379999967292,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1144,
+          "id": "architecture.exact_decision",
+          "latency_ms": 184.20508399867686,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1144,
+          "id": "architecture.exact_decision",
+          "latency_ms": 320.71949999954086,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1144,
+          "id": "architecture.exact_decision",
+          "latency_ms": 329.98762499482837,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 28,
+          "id": "architecture.paraphrase_current",
+          "latency_ms": 141.0776250049821,
+          "mode": "vector",
+          "passed": false
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1144,
+          "id": "architecture.paraphrase_current",
+          "latency_ms": 286.30424999573734,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1144,
+          "id": "architecture.paraphrase_current",
+          "latency_ms": 330.11020900448784,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 28,
+          "id": "architecture.paraphrase_outcome",
+          "latency_ms": 143.71216699510114,
+          "mode": "vector",
+          "passed": false
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1144,
+          "id": "architecture.paraphrase_outcome",
+          "latency_ms": 167.14937499637017,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1144,
+          "id": "architecture.paraphrase_outcome",
+          "latency_ms": 327.9095830002916,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1010,
+          "id": "architecture.scoped_current",
+          "latency_ms": 186.05562500306405,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1144,
+          "id": "architecture.scoped_current",
+          "latency_ms": 224.54091599502135,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1144,
+          "id": "architecture.scoped_current",
+          "latency_ms": 303.88266700174427,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1144,
+          "id": "architecture.scoped_decision",
+          "latency_ms": 173.66641700209584,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1144,
+          "id": "architecture.scoped_decision",
+          "latency_ms": 296.0575000033714,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1144,
+          "id": "architecture.scoped_decision",
+          "latency_ms": 292.5591669991263,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 689,
+          "id": "architecture.historical",
+          "latency_ms": 188.59333400178002,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 934,
+          "id": "architecture.historical",
+          "latency_ms": 319.64754100044956,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 934,
+          "id": "architecture.historical",
+          "latency_ms": 345.9924580020015,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 28,
+          "id": "architecture.conflict",
+          "latency_ms": 146.03337500011548,
+          "mode": "vector",
+          "passed": false
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1144,
+          "id": "architecture.conflict",
+          "latency_ms": 311.14350000279956,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1144,
+          "id": "architecture.conflict",
+          "latency_ms": 318.8853329993435,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 822,
+          "id": "architecture.freshness",
+          "latency_ms": 157.86895800556522,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1144,
+          "id": "architecture.freshness",
+          "latency_ms": 323.59866699698614,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1144,
+          "id": "architecture.freshness",
+          "latency_ms": 313.7337079970166,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 28,
+          "id": "architecture.irrelevant",
+          "latency_ms": 135.5687500035856,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 380,
+          "id": "architecture.irrelevant",
+          "latency_ms": 249.30720800330164,
+          "mode": "hybrid",
+          "passed": false
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 380,
+          "id": "architecture.irrelevant",
+          "latency_ms": 259.09758300258545,
+          "mode": "graph",
+          "passed": false
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1022,
+          "id": "configuration.exact_current",
+          "latency_ms": 175.47650000051362,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1147,
+          "id": "configuration.exact_current",
+          "latency_ms": 309.60249999770895,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1147,
+          "id": "configuration.exact_current",
+          "latency_ms": 333.5309169997345,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1143,
+          "id": "configuration.exact_decision",
+          "latency_ms": 162.88616599922534,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1599,
+          "id": "configuration.exact_decision",
+          "latency_ms": 301.2374579993775,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1599,
+          "id": "configuration.exact_decision",
+          "latency_ms": 327.2108750024927,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 494,
+          "id": "configuration.paraphrase_current",
+          "latency_ms": 173.7677499986603,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1147,
+          "id": "configuration.paraphrase_current",
+          "latency_ms": 303.20750000100816,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1147,
+          "id": "configuration.paraphrase_current",
+          "latency_ms": 296.1568749960861,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1022,
+          "id": "configuration.paraphrase_outcome",
+          "latency_ms": 176.2304160001804,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1147,
+          "id": "configuration.paraphrase_outcome",
+          "latency_ms": 310.25770799897145,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1147,
+          "id": "configuration.paraphrase_outcome",
+          "latency_ms": 319.3212920014048,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1022,
+          "id": "configuration.scoped_current",
+          "latency_ms": 177.43762499594595,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1147,
+          "id": "configuration.scoped_current",
+          "latency_ms": 286.992041998019,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1147,
+          "id": "configuration.scoped_current",
+          "latency_ms": 302.6224579953123,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1143,
+          "id": "configuration.scoped_decision",
+          "latency_ms": 166.01241700118408,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1599,
+          "id": "configuration.scoped_decision",
+          "latency_ms": 320.4011249981704,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1599,
+          "id": "configuration.scoped_decision",
+          "latency_ms": 334.8968749996857,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 868,
+          "id": "configuration.historical",
+          "latency_ms": 175.05166699993424,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 993,
+          "id": "configuration.historical",
+          "latency_ms": 321.65162499586586,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 993,
+          "id": "configuration.historical",
+          "latency_ms": 329.1465000002063,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 494,
+          "id": "configuration.conflict",
+          "latency_ms": 155.86945899849525,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1147,
+          "id": "configuration.conflict",
+          "latency_ms": 321.5856669994537,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1147,
+          "id": "configuration.conflict",
+          "latency_ms": 324.8011250034324,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1022,
+          "id": "configuration.freshness",
+          "latency_ms": 179.01229100243654,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1147,
+          "id": "configuration.freshness",
+          "latency_ms": 317.0540830033133,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1147,
+          "id": "configuration.freshness",
+          "latency_ms": 291.0366670039366,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 28,
+          "id": "configuration.irrelevant",
+          "latency_ms": 131.28295799833722,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 385,
+          "id": "configuration.irrelevant",
+          "latency_ms": 192.1380829953705,
+          "mode": "hybrid",
+          "passed": false
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 385,
+          "id": "configuration.irrelevant",
+          "latency_ms": 266.56912500038743,
+          "mode": "graph",
+          "passed": false
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1122,
+          "id": "preferences.exact_current",
+          "latency_ms": 176.85166700539412,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1122,
+          "id": "preferences.exact_current",
+          "latency_ms": 311.31599999935133,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1122,
+          "id": "preferences.exact_current",
+          "latency_ms": 297.4633330013603,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1436,
+          "id": "preferences.exact_decision",
+          "latency_ms": 183.68537499918602,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1553,
+          "id": "preferences.exact_decision",
+          "latency_ms": 316.37370899989037,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1553,
+          "id": "preferences.exact_decision",
+          "latency_ms": 336.8870420017629,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1005,
+          "id": "preferences.paraphrase_current",
+          "latency_ms": 180.26983299932908,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1122,
+          "id": "preferences.paraphrase_current",
+          "latency_ms": 316.3867080002092,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1122,
+          "id": "preferences.paraphrase_current",
+          "latency_ms": 298.46254199947,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1005,
+          "id": "preferences.paraphrase_outcome",
+          "latency_ms": 182.8184580008383,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1122,
+          "id": "preferences.paraphrase_outcome",
+          "latency_ms": 317.2099170042202,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1122,
+          "id": "preferences.paraphrase_outcome",
+          "latency_ms": 290.4800830001477,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1122,
+          "id": "preferences.scoped_current",
+          "latency_ms": 197.57150000077672,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1122,
+          "id": "preferences.scoped_current",
+          "latency_ms": 291.66195900324965,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1122,
+          "id": "preferences.scoped_current",
+          "latency_ms": 310.2022500024759,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1436,
+          "id": "preferences.scoped_decision",
+          "latency_ms": 204.7982090007281,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1553,
+          "id": "preferences.scoped_decision",
+          "latency_ms": 253.5305419951328,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1553,
+          "id": "preferences.scoped_decision",
+          "latency_ms": 307.2718339972198,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 792,
+          "id": "preferences.historical",
+          "latency_ms": 186.71295899548568,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 909,
+          "id": "preferences.historical",
+          "latency_ms": 338.24845799972536,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 909,
+          "id": "preferences.historical",
+          "latency_ms": 326.4584589996957,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1436,
+          "id": "preferences.conflict",
+          "latency_ms": 183.18749999889405,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1553,
+          "id": "preferences.conflict",
+          "latency_ms": 318.7925830061431,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1553,
+          "id": "preferences.conflict",
+          "latency_ms": 329.87216699984856,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1004,
+          "id": "preferences.freshness",
+          "latency_ms": 183.34975000470877,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1122,
+          "id": "preferences.freshness",
+          "latency_ms": 191.51354100176832,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1122,
+          "id": "preferences.freshness",
+          "latency_ms": 298.75204100244446,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 28,
+          "id": "preferences.irrelevant",
+          "latency_ms": 143.1192909949459,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 1122,
+          "id": "preferences.irrelevant",
+          "latency_ms": 291.93941700214054,
+          "mode": "hybrid",
+          "passed": false
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 1122,
+          "id": "preferences.irrelevant",
+          "latency_ms": 278.7048749960377,
+          "mode": "graph",
+          "passed": false
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1000,
+          "id": "ownership.exact_current",
+          "latency_ms": 167.35362500185147,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1111,
+          "id": "ownership.exact_current",
+          "latency_ms": 281.8111250016955,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1111,
+          "id": "ownership.exact_current",
+          "latency_ms": 297.1419999958016,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1096,
+          "id": "ownership.exact_decision",
+          "latency_ms": 171.43208399647847,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1538,
+          "id": "ownership.exact_decision",
+          "latency_ms": 333.6903750023339,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1538,
+          "id": "ownership.exact_decision",
+          "latency_ms": 298.3100000055856,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 987,
+          "id": "ownership.paraphrase_current",
+          "latency_ms": 184.83820900291903,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1111,
+          "id": "ownership.paraphrase_current",
+          "latency_ms": 322.1225000015693,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1111,
+          "id": "ownership.paraphrase_current",
+          "latency_ms": 293.4280000044964,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1111,
+          "id": "ownership.paraphrase_outcome",
+          "latency_ms": 166.75291700084927,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1111,
+          "id": "ownership.paraphrase_outcome",
+          "latency_ms": 291.37804199854145,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1111,
+          "id": "ownership.paraphrase_outcome",
+          "latency_ms": 296.640041997307,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1000,
+          "id": "ownership.scoped_current",
+          "latency_ms": 194.77529200230492,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1111,
+          "id": "ownership.scoped_current",
+          "latency_ms": 217.88258400192717,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1111,
+          "id": "ownership.scoped_current",
+          "latency_ms": 323.6680830013938,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1096,
+          "id": "ownership.scoped_decision",
+          "latency_ms": 158.18162499635946,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1538,
+          "id": "ownership.scoped_decision",
+          "latency_ms": 301.1412499981816,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1538,
+          "id": "ownership.scoped_decision",
+          "latency_ms": 303.1059999993886,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 828,
+          "id": "ownership.historical",
+          "latency_ms": 172.2518750029849,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 939,
+          "id": "ownership.historical",
+          "latency_ms": 327.5167079991661,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 939,
+          "id": "ownership.historical",
+          "latency_ms": 264.14849999855505,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1414,
+          "id": "ownership.conflict",
+          "latency_ms": 175.5658339970978,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1538,
+          "id": "ownership.conflict",
+          "latency_ms": 318.24979100201745,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1538,
+          "id": "ownership.conflict",
+          "latency_ms": 313.7912919992232,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1000,
+          "id": "ownership.freshness",
+          "latency_ms": 174.86749999807216,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1111,
+          "id": "ownership.freshness",
+          "latency_ms": 306.4430829981575,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1111,
+          "id": "ownership.freshness",
+          "latency_ms": 304.3226669979049,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 28,
+          "id": "ownership.irrelevant",
+          "latency_ms": 143.77491699997336,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 1111,
+          "id": "ownership.irrelevant",
+          "latency_ms": 286.55029099900275,
+          "mode": "hybrid",
+          "passed": false
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 1111,
+          "id": "ownership.irrelevant",
+          "latency_ms": 312.05004199728137,
+          "mode": "graph",
+          "passed": false
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1150,
+          "id": "documents.exact_current",
+          "latency_ms": 166.34545800479827,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1150,
+          "id": "documents.exact_current",
+          "latency_ms": 296.7638749978505,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1150,
+          "id": "documents.exact_current",
+          "latency_ms": 321.97529199765995,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1150,
+          "id": "documents.exact_decision",
+          "latency_ms": 160.96683399518952,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1150,
+          "id": "documents.exact_decision",
+          "latency_ms": 324.58945799589856,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1150,
+          "id": "documents.exact_decision",
+          "latency_ms": 317.1853750027367,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1030,
+          "id": "documents.paraphrase_current",
+          "latency_ms": 173.80562500329688,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1150,
+          "id": "documents.paraphrase_current",
+          "latency_ms": 311.4728330037906,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1150,
+          "id": "documents.paraphrase_current",
+          "latency_ms": 309.00204199861037,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1030,
+          "id": "documents.paraphrase_outcome",
+          "latency_ms": 174.78529200161574,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1150,
+          "id": "documents.paraphrase_outcome",
+          "latency_ms": 286.869083000056,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 1150,
+          "id": "documents.paraphrase_outcome",
+          "latency_ms": 306.9960419961717,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1150,
+          "id": "documents.scoped_current",
+          "latency_ms": 161.23808399424888,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1150,
+          "id": "documents.scoped_current",
+          "latency_ms": 314.2237499996554,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1150,
+          "id": "documents.scoped_current",
+          "latency_ms": 290.5721659990377,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1150,
+          "id": "documents.scoped_decision",
+          "latency_ms": 166.58662499685306,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1150,
+          "id": "documents.scoped_decision",
+          "latency_ms": 280.5779580012313,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1150,
+          "id": "documents.scoped_decision",
+          "latency_ms": 295.85591700015357,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 998,
+          "id": "documents.historical",
+          "latency_ms": 184.8595000046771,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 998,
+          "id": "documents.historical",
+          "latency_ms": 322.2332919976907,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 998,
+          "id": "documents.historical",
+          "latency_ms": 323.48212500073714,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1030,
+          "id": "documents.conflict",
+          "latency_ms": 176.89195799903246,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1150,
+          "id": "documents.conflict",
+          "latency_ms": 298.8706249961979,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 1150,
+          "id": "documents.conflict",
+          "latency_ms": 307.84733300242806,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1150,
+          "id": "documents.freshness",
+          "latency_ms": 171.13837500073714,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1150,
+          "id": "documents.freshness",
+          "latency_ms": 312.52187499922,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1150,
+          "id": "documents.freshness",
+          "latency_ms": 297.4674170036451,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 28,
+          "id": "documents.irrelevant",
+          "latency_ms": 131.28583299840102,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 28,
+          "id": "documents.irrelevant",
+          "latency_ms": 252.75587500073016,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 28,
+          "id": "documents.irrelevant",
+          "latency_ms": 295.5522500051302,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1146,
+          "id": "mixed_notes.exact_current",
+          "latency_ms": 174.99829200096428,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1146,
+          "id": "mixed_notes.exact_current",
+          "latency_ms": 314.6866249953746,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_current",
+          "context_chars": 1146,
+          "id": "mixed_notes.exact_current",
+          "latency_ms": 287.2281249947264,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1146,
+          "id": "mixed_notes.exact_decision",
+          "latency_ms": 177.95895800372818,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1146,
+          "id": "mixed_notes.exact_decision",
+          "latency_ms": 306.25075000716606,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "exact_decision",
+          "context_chars": 1146,
+          "id": "mixed_notes.exact_decision",
+          "latency_ms": 328.49745899875415,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 28,
+          "id": "mixed_notes.paraphrase_current",
+          "latency_ms": 156.60304199991515,
+          "mode": "vector",
+          "passed": false
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1146,
+          "id": "mixed_notes.paraphrase_current",
+          "latency_ms": 285.95245799806435,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_current",
+          "context_chars": 1146,
+          "id": "mixed_notes.paraphrase_current",
+          "latency_ms": 318.59416700172005,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 28,
+          "id": "mixed_notes.paraphrase_outcome",
+          "latency_ms": 147.8659170024912,
+          "mode": "vector",
+          "passed": false
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 780,
+          "id": "mixed_notes.paraphrase_outcome",
+          "latency_ms": 299.04462499689544,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "paraphrase_outcome",
+          "context_chars": 780,
+          "id": "mixed_notes.paraphrase_outcome",
+          "latency_ms": 296.0012080002343,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1146,
+          "id": "mixed_notes.scoped_current",
+          "latency_ms": 173.1232500023907,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1146,
+          "id": "mixed_notes.scoped_current",
+          "latency_ms": 294.13212499639485,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_current",
+          "context_chars": 1146,
+          "id": "mixed_notes.scoped_current",
+          "latency_ms": 312.7276660015923,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1146,
+          "id": "mixed_notes.scoped_decision",
+          "latency_ms": 172.66033399937442,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1146,
+          "id": "mixed_notes.scoped_decision",
+          "latency_ms": 296.45308299950557,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "scoped_decision",
+          "context_chars": 1146,
+          "id": "mixed_notes.scoped_decision",
+          "latency_ms": 297.0789169994532,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 1000,
+          "id": "mixed_notes.historical",
+          "latency_ms": 176.44200000358978,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 1000,
+          "id": "mixed_notes.historical",
+          "latency_ms": 323.71687500562984,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "historical",
+          "context_chars": 1000,
+          "id": "mixed_notes.historical",
+          "latency_ms": 340.24787499947706,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 28,
+          "id": "mixed_notes.conflict",
+          "latency_ms": 146.4726660051383,
+          "mode": "vector",
+          "passed": false
+        },
+        {
+          "category": "conflict",
+          "context_chars": 780,
+          "id": "mixed_notes.conflict",
+          "latency_ms": 305.4960410008789,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "conflict",
+          "context_chars": 780,
+          "id": "mixed_notes.conflict",
+          "latency_ms": 176.61579199921107,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1146,
+          "id": "mixed_notes.freshness",
+          "latency_ms": 175.1880000010715,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1146,
+          "id": "mixed_notes.freshness",
+          "latency_ms": 315.7591670023976,
+          "mode": "hybrid",
+          "passed": true
+        },
+        {
+          "category": "freshness",
+          "context_chars": 1146,
+          "id": "mixed_notes.freshness",
+          "latency_ms": 313.95379100285936,
+          "mode": "graph",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 28,
+          "id": "mixed_notes.irrelevant",
+          "latency_ms": 153.7581250013318,
+          "mode": "vector",
+          "passed": true
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 383,
+          "id": "mixed_notes.irrelevant",
+          "latency_ms": 255.78029100142885,
+          "mode": "hybrid",
+          "passed": false
+        },
+        {
+          "category": "irrelevant",
+          "context_chars": 383,
+          "id": "mixed_notes.irrelevant",
+          "latency_ms": 270.801874998142,
+          "mode": "graph",
+          "passed": false
+        }
+      ],
+      "dimensions": 384,
+      "empty_result_rate": 0.4444444444444444,
+      "model": "local/sentence-transformers/all-MiniLM-L6-v2",
+      "positive_success_rate": 0.9629629629629629,
+      "status": "failed"
+    }
+  }
+}

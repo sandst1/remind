@@ -1,0 +1,618 @@
+{
+  "configuration": {
+    "seed": 0,
+    "suite": "operational",
+    "transports": "python,cli,mcp,rest"
+  },
+  "dataset_digest": "d50b59d907a73fd5ed2b62b5d045bc897df8e2387a9431a0cca5547e7767b23d",
+  "dataset_version": 1,
+  "suites": {
+    "operational": {
+      "cases": [
+        {
+          "id": "architecture.lifecycle",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "architecture.lifecycle",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "architecture.lifecycle",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "architecture.lifecycle",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "architecture.conflicts",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "architecture.conflicts",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "architecture.conflicts",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "architecture.conflicts",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "architecture.restart",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "architecture.restart",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "architecture.restart",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "architecture.restart",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "architecture.roundtrip",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "architecture.roundtrip",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "architecture.roundtrip",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "architecture.roundtrip",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "architecture.retry_failure",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "architecture.retry_failure",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "architecture.retry_failure",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "architecture.retry_failure",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "configuration.lifecycle",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "configuration.lifecycle",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "configuration.lifecycle",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "configuration.lifecycle",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "configuration.conflicts",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "configuration.conflicts",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "configuration.conflicts",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "configuration.conflicts",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "configuration.restart",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "configuration.restart",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "configuration.restart",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "configuration.restart",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "configuration.roundtrip",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "configuration.roundtrip",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "configuration.roundtrip",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "configuration.roundtrip",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "configuration.retry_failure",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "configuration.retry_failure",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "configuration.retry_failure",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "configuration.retry_failure",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "preferences.lifecycle",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "preferences.lifecycle",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "preferences.lifecycle",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "preferences.lifecycle",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "preferences.conflicts",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "preferences.conflicts",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "preferences.conflicts",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "preferences.conflicts",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "preferences.restart",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "preferences.restart",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "preferences.restart",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "preferences.restart",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "preferences.roundtrip",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "preferences.roundtrip",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "preferences.roundtrip",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "preferences.roundtrip",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "preferences.retry_failure",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "preferences.retry_failure",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "preferences.retry_failure",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "preferences.retry_failure",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "ownership.lifecycle",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "ownership.lifecycle",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "ownership.lifecycle",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "ownership.lifecycle",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "ownership.conflicts",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "ownership.conflicts",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "ownership.conflicts",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "ownership.conflicts",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "ownership.restart",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "ownership.restart",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "ownership.restart",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "ownership.restart",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "ownership.roundtrip",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "ownership.roundtrip",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "ownership.roundtrip",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "ownership.roundtrip",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "ownership.retry_failure",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "ownership.retry_failure",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "ownership.retry_failure",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "ownership.retry_failure",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "documents.lifecycle",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "documents.lifecycle",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "documents.lifecycle",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "documents.lifecycle",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "documents.conflicts",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "documents.conflicts",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "documents.conflicts",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "documents.conflicts",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "documents.restart",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "documents.restart",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "documents.restart",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "documents.restart",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "documents.roundtrip",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "documents.roundtrip",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "documents.roundtrip",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "documents.roundtrip",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "documents.retry_failure",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "documents.retry_failure",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "documents.retry_failure",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "documents.retry_failure",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "mixed_notes.lifecycle",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "mixed_notes.lifecycle",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "mixed_notes.lifecycle",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "mixed_notes.lifecycle",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "mixed_notes.conflicts",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "mixed_notes.conflicts",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "mixed_notes.conflicts",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "mixed_notes.conflicts",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "mixed_notes.restart",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "mixed_notes.restart",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "mixed_notes.restart",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "mixed_notes.restart",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "mixed_notes.roundtrip",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "mixed_notes.roundtrip",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "mixed_notes.roundtrip",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "mixed_notes.roundtrip",
+          "passed": true,
+          "transport": "rest"
+        },
+        {
+          "id": "mixed_notes.retry_failure",
+          "passed": true,
+          "transport": "python"
+        },
+        {
+          "id": "mixed_notes.retry_failure",
+          "passed": true,
+          "transport": "cli"
+        },
+        {
+          "id": "mixed_notes.retry_failure",
+          "passed": true,
+          "transport": "mcp"
+        },
+        {
+          "id": "mixed_notes.retry_failure",
+          "passed": true,
+          "transport": "rest"
+        }
+      ],
+      "status": "passed"
+    }
+  },
+  "verification_note": "Final REST retry scenario rerun after updating its adapter to accept structured HTTP 409/422 apply failures.",
+  "version": 1
+}

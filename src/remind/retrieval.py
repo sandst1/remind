@@ -657,24 +657,38 @@ class MemoryRetriever:
         if context:
             embed_text = f"{query}\n\nContext: {context}"
         t_embed_start = time.perf_counter()
-        query_embedding = await self.embedding.embed(embed_text)
+        fallback = False
+        import json
+        expected = json.dumps({"provider": self.embedding.name, "dimensions": self.embedding.dimensions,
+                               "input_version": 1}, sort_keys=True)
+        stored = self.store.get_metadata("embedding_fingerprint")
+        try:
+            query_embedding = await self.embedding.embed(embed_text)
+            expected = json.dumps({"provider": self.embedding.name, "dimensions": len(query_embedding), "input_version": 1}, sort_keys=True)
+            old_dims = self.store.get_metadata("embedding_dimensions")
+            if (stored and stored != expected) or (old_dims and int(old_dims) != len(query_embedding)):
+                raise ValueError("Embedding fingerprint mismatch; re-embed all records")
+        except Exception as exc:
+            logger.warning("Lexical-only recall: %s", exc)
+            query_embedding = [0.0] * int(self.store.get_metadata("embedding_dimensions") or self.embedding.dimensions)
+            fallback = True
         t_embed_ms = (time.perf_counter() - t_embed_start) * 1000.0
 
         # --- parallel vector + lexical search for concepts, episodes, entities --
         t_initial_search_start = time.perf_counter()
-        run_lexical = self.lexical_enabled and self.hybrid_keyword_weight > 0.0
+        run_lexical = self.lexical_enabled and (fallback or self.hybrid_keyword_weight > 0.0)
 
         # Run all searches in parallel using thread pool
         loop = asyncio.get_event_loop()
         with ThreadPoolExecutor(max_workers=5) as pool:
-            concept_future = loop.run_in_executor(
+            concept_future = asyncio.sleep(0, result=[]) if fallback else loop.run_in_executor(
                 pool, self.store.find_by_embedding, query_embedding, self.initial_k * 2, labels
             )
-            episode_future = loop.run_in_executor(
+            episode_future = asyncio.sleep(0, result=[]) if fallback else loop.run_in_executor(
                 pool, self.store.find_episodes_by_embedding, query_embedding,
                 episode_k if episode_k > 0 else 1, labels,
             )
-            entity_future = loop.run_in_executor(
+            entity_future = asyncio.sleep(0, result=[]) if fallback else loop.run_in_executor(
                 pool, self.store.find_entities_by_embedding, query_embedding, self.initial_k
             )
             futures = [concept_future, episode_future, entity_future]
@@ -695,6 +709,12 @@ class MemoryRetriever:
             gathered[3:5] if run_lexical else ([], [])
         )
 
+        self._last_trace = {
+            "vector": [{"id": item.id, "similarity": score} for item, score in initial_matches],
+            "lexical": [{"id": item.id, "score": score} for item, score in lexical_concept_matches],
+            "episode_vector": [{"id": item.id, "similarity": score} for item, score in ep_matches_parallel],
+            "lexical_only": fallback, "graph_edges": [],
+        }
         t_initial_search_ms = (time.perf_counter() - t_initial_search_start) * 1000.0
 
         t_initial_activation_start = time.perf_counter()
@@ -716,7 +736,7 @@ class MemoryRetriever:
 
         fused_concept_matches = _fuse_vector_lexical(
             initial_matches, lexical_concept_matches, lambda c: c.id,
-            self.hybrid_keyword_weight, self.rrf_k,
+            1.0 if fallback else self.hybrid_keyword_weight, self.rrf_k,
         )
         for fused, concept in fused_concept_matches.values():
             weighted_activation = fused * concept.confidence
@@ -776,6 +796,9 @@ class MemoryRetriever:
                             hop + 1,
                         )
                         concept_cache[related_concept.id] = related_concept
+                        self._last_trace["graph_edges"].append({"from": concept_id, "to": related_concept.id,
+                            "relation": relation.type.value, "strength": relation.strength,
+                            "activation": spread_activation, "hop": hop + 1})
 
             for cid, (act, src, hops) in new_activations.items():
                 current = activation_map.get(cid, (0, "", 0))[0]
@@ -813,7 +836,7 @@ class MemoryRetriever:
         if episode_k > 0 and (ep_matches_parallel or lexical_episode_matches):
             fused_episode_matches = _fuse_vector_lexical(
                 ep_matches_parallel, lexical_episode_matches, lambda e: e.id,
-                self.hybrid_keyword_weight, self.rrf_k,
+                1.0 if fallback else self.hybrid_keyword_weight, self.rrf_k,
             )
             episode_results = [
                 ScoredEpisode(episode=episode, score=fused)
@@ -909,6 +932,8 @@ class MemoryRetriever:
             len(results),
             len(episode_results) if episode_results else 0,
         )
+        self._last_trace["timing_ms"] = {"embedding": t_embed_ms, "search": t_initial_search_ms,
+            "spreading": t_spread_ms, "reranking": t_rerank_ms, "total": t_total_ms}
         return results, episode_results
 
     async def retrieve_by_entity(

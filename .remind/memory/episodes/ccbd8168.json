@@ -1,0 +1,37 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": false,
+    "content": "The timeout_ms recall control in Remind is a soft deadline, not a hard abort: once exceeded, retrieval skips the remaining spreading-activation hops and the cross-encoder rerank pass and returns best-so-far rather than raising. Rationale: a partially-spread result is still a valid ranking, and a calling agent needs some context more than it needs perfect context. The deadline is checked before spreading starts, after each hop, and before reranking (the most expensive remaining phase).",
+    "created_at": "2026-08-09T01:02:48.433388",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:recall-budget",
+      "file:src/remind/retrieval.py",
+      "project:remind"
+    ],
+    "episode_type": "decision",
+    "id": "ccbd8168",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ],
+      "topic": [
+        "retrieval"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.434811",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.434811"
+  },
+  "version": 4
+}

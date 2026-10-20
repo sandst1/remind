@@ -9,6 +9,20 @@ Keep the memory layer trustworthy: process pending episodes into concepts, triag
 
 **Curation is where your reasoning turns raw episodes into lasting knowledge.** Remind stores facts deterministically but relies on you to form patterns, identify relationships, and resolve conflicts.
 
+## Durable workflow contract (0.14)
+
+Local stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.
+
+Capture and apply are atomic. Use a stable `idempotency_key` when retrying the same logical request; never reuse it for different input. `remember` returns structured IDs, collisions, warnings, and revisions. `remember_batch` returns ordered `results` with the same fact and label semantics.
+
+Before changing an existing record, read its `revision` through `snapshot`. Pass an `expected_revisions` ID-to-revision map to MCP/Python apply, or `--revisions "$REVISIONS"` to CLI apply. In the examples below, set `REVISIONS` to a JSON map from your latest snapshot, such as `'{"<existing-id>":"<revision>"}'`. Individual edit/delete/restore commands require `--expected-revision`. New records referenced within the same changeset need no prior revision. A revision conflict means re-read and reconsider; do not automatically overwrite.
+
+Recall is read-only by default. Python returns `RecallResult` (`.text`, `.concepts`, `.episodes`, `.warnings`, `.explanation`); MCP returns its JSON representation, and CLI uses human-readable text unless `--json` is supplied. Explicit label filters constrain the complete response, including graph expansion, facts, evidence, and conflict context. Separate stores provide isolation; labels remain descriptive tags.
+
+Use `recall --explain --json` to inspect ranking and `doctor` to diagnose integrity, embedding compatibility, and changed sources. Changed/missing sources are annotated, not silently invalidated. Scores are relative ranking signals, not calibrated probabilities or confidence. An empty recall is a valid result.
+
+Use `poll_events(cursor=...)` for reliable change polling. On `reset_required`, restart from the returned cursor. Legacy numeric sequence cursors are local to one projection and are unsafe across checkout or rebuild.
+
 ## When to curate
 
 - Session end — process what accumulated during the session
@@ -46,18 +60,20 @@ Compare the recall output against the pending episodes. Look for:
 - A pending episode that explicitly supersedes an earlier document's claim
 - Nearby episode IDs that were flagged during ingestion (shown in `remember` output as "Nearby — review for conflicts")
 
+Use fact IDs from snapshot/capture, never episode IDs. For raw observations, curate supported concepts first and use `kind=concept` with concept IDs.
+
 **When you find a contradiction, record it immediately** — do not defer to later:
 
 ```bash
-remind apply << 'EOF'
-conflict a=ep:<older_id> b=ep:<newer_id> note="doc A says timber frame, doc B says steel moment frame — needs triage"
+remind apply --revisions "$REVISIONS" << 'EOF'
+conflict a=<older_fact_id> b=<newer_fact_id> note="doc A says timber frame, doc B says steel moment frame — needs triage"
 EOF
 ```
 
 If you already know which is correct, use `supersede` instead (facts only):
 
 ```bash
-remind apply << 'EOF'
+remind apply --revisions "$REVISIONS" << 'EOF'
 supersede old=<old_fact_id> new=<new_fact_id> by="source doc" note="March 2026 structural report supersedes February overview"
 EOF
 ```
@@ -79,7 +95,7 @@ Emit a single `apply` changeset that:
 - Marks episodes as processed
 
 ```bash
-remind apply << 'EOF'
+remind apply --revisions "$REVISIONS" << 'EOF'
 concept as=c1 from=ep:11,ep:12,ep:13 title="Retry-with-backoff for transient failures" "Exponential backoff resolves flaky deploys, API timeouts, and DB connection issues."
 link from=$c1 to=concept:resilience type=specializes
 resolve id=conflict:7 winner=fact:b3d01 "confirmed by bob"
@@ -155,7 +171,7 @@ Use provenance (who asserted each fact, when, source links) to decide. If the in
 Episodes link to concepts with typed relationships. During curation:
 
 ```bash
-remind apply << 'EOF'
+remind apply --revisions "$REVISIONS" << 'EOF'
 # Add supporting evidence to a concept
 evidence concept=c-123 episode=ep-456 type=supports strength=0.8 "confirms the pattern"
 
@@ -233,7 +249,7 @@ Delete for noise and mistakes. For facts that changed over time, don't delete �
 Labels are freeform `key=value` tags, not a managed entity — there's nothing to create or delete, just apply or remove them on episodes/concepts:
 
 ```bash
-remind apply << 'EOF'
+remind apply --revisions "$REVISIONS" << 'EOF'
 label id=c-123 key=topic value=architecture
 unlabel id=c-123 key=topic value=infra
 EOF

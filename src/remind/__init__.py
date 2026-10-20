@@ -21,10 +21,10 @@ Basic usage:
     context = await memory.recall("What programming languages?")
     
     # Use in LLM prompts
-    response = await llm.complete(f"{context}\\n\\nUser: {message}")
+    response = await llm.complete(f"{context.text}\\n\\nUser: {message}")
 """
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 
 # Core models
 from remind.models import (
@@ -127,3 +127,7 @@ __all__ = [
     "OpenAIEmbedding",
     "OllamaEmbedding",
 ]
+
+from remind.file_store import FileMemoryStore
+from remind.results import RecallResult, BatchRememberResult
+from remind.operations import RevisionConflict

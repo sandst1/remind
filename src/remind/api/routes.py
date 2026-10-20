@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from remind.operations import RevisionConflict, record_revision
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
@@ -71,6 +72,8 @@ async def _get_memory_from_request(request: Request):
         return memory, None
     except ValueError as e:
         return None, JSONResponse({"error": str(e)}, status_code=400)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get memory interface")
         return None, JSONResponse({"error": str(e)}, status_code=500)
@@ -79,6 +82,15 @@ async def _get_memory_from_request(request: Request):
 # =============================================================================
 # Stats
 # =============================================================================
+
+
+def _public_record(memory, record):
+    cached = getattr(record, "_revision", None)
+    result = {**record.to_dict(), "revision": cached or record_revision(memory.store, record.id)}
+    if hasattr(record, "metadata") and record.metadata.get("source_refs"):
+        from remind.provenance import freshness
+        result["source_freshness"] = freshness(memory.source_root, record.metadata["source_refs"])
+    return result
 
 
 async def get_stats(request: Request) -> JSONResponse:
@@ -90,6 +102,8 @@ async def get_stats(request: Request) -> JSONResponse:
     try:
         stats = memory.store.get_stats()
         return JSONResponse(stats)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get stats")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -112,29 +126,15 @@ async def get_concepts(request: Request) -> JSONResponse:
         search = request.query_params.get("search", "")
         label_filter = _parse_label_query_params(request)
 
-        all_concepts = memory.store.get_all_concepts()
-
-        if label_filter:
-            all_concepts = [c for c in all_concepts if _matches_labels(c.labels, label_filter)]
-
-        if search:
-            search_lower = search.lower()
-            all_concepts = [
-                c for c in all_concepts
-                if search_lower in c.summary.lower()
-                or (c.title and search_lower in c.title.lower())
-                or any(search_lower in tag.lower() for tag in c.tags)
-            ]
-
-        all_concepts.sort(key=lambda c: (c.title or c.summary).lower())
-
-        total = len(all_concepts)
-        concepts = all_concepts[offset : offset + limit]
+        concepts, total = memory.store.page_records("concepts", offset=offset, limit=limit,
+                                                     search=search, labels=label_filter)
 
         return JSONResponse({
-            "concepts": [c.to_dict() for c in concepts],
+            "concepts": [_public_record(memory, c) for c in concepts],
             "total": total,
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get concepts")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -153,7 +153,7 @@ async def get_concept_detail(request: Request) -> JSONResponse:
         if not concept:
             return JSONResponse({"error": "Concept not found"}, status_code=404)
 
-        result = concept.to_dict()
+        result = {**concept.to_dict(), "revision": record_revision(memory.store, concept.id)}
 
         # Add source episode data with content summaries
         source_episodes_data = []
@@ -182,7 +182,7 @@ async def get_concept_detail(request: Request) -> JSONResponse:
         # Enrich conditions that reference concept IDs
         # Conditions may contain "c-XXXXXXXX" format but concept IDs are just "XXXXXXXX"
         if concept.conditions:
-            concept_id_pattern = re.compile(r'\b(?:c-)?([a-f0-9]{8})\b')
+            concept_id_pattern = re.compile(r'\b(?:c-)?([a-f0-9]{8}(?:-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?)\b')
             condition_refs = []
             for match in concept_id_pattern.finditer(concept.conditions):
                 # Extract just the hex ID (without c- prefix if present)
@@ -203,6 +203,8 @@ async def get_concept_detail(request: Request) -> JSONResponse:
             result["facts"] = [f.to_dict() for f in facts]
 
         return JSONResponse(result)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get concept")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -240,12 +242,14 @@ async def update_concept(request: Request) -> JSONResponse:
             tags=tags,
             relations=relations,
             labels=labels_arg,
-        )
+         expected_revision=request.headers.get("if-match"))
 
         if not updated:
             return JSONResponse({"error": "Concept not found"}, status_code=404)
 
-        return JSONResponse({"success": True, "concept": updated.to_dict()})
+        return JSONResponse({"success": True, "concept": _public_record(memory, updated)})
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to update concept")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -260,9 +264,11 @@ async def delete_concept(request: Request) -> JSONResponse:
     concept_id = request.path_params.get("id")
 
     try:
-        if memory.delete_concept(concept_id):
+        if memory.delete_concept(concept_id, expected_revision=request.headers.get("if-match")):
             return JSONResponse({"success": True})
         return JSONResponse({"error": "Concept not found"}, status_code=404)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to delete concept")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -277,9 +283,11 @@ async def restore_concept(request: Request) -> JSONResponse:
     concept_id = request.path_params.get("id")
 
     try:
-        if memory.restore_concept(concept_id):
+        if memory.restore_concept(concept_id, expected_revision=request.headers.get("if-match")):
             return JSONResponse({"success": True})
         return JSONResponse({"error": "Concept not found or not deleted"}, status_code=404)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to restore concept")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -294,9 +302,11 @@ async def purge_concept(request: Request) -> JSONResponse:
     concept_id = request.path_params.get("id")
 
     try:
-        if memory.purge_concept(concept_id):
+        if memory.purge_concept(concept_id, expected_revision=request.headers.get("if-match")):
             return JSONResponse({"success": True})
         return JSONResponse({"error": "Concept not found"}, status_code=404)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to purge concept")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -311,9 +321,11 @@ async def get_deleted_concepts(request: Request) -> JSONResponse:
     try:
         deleted = memory.get_deleted_concepts()
         return JSONResponse({
-            "concepts": [c.to_dict() for c in deleted],
+            "concepts": [_public_record(memory, c) for c in deleted],
             "total": len(deleted),
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get deleted concepts")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -326,25 +338,11 @@ async def purge_all_deleted(request: Request) -> JSONResponse:
         return error
 
     try:
-        deleted_episodes = memory.get_deleted_episodes(limit=10000)
-        deleted_concepts = memory.get_deleted_concepts()
-
-        ep_count = 0
-        c_count = 0
-
-        for ep in deleted_episodes:
-            if memory.purge_episode(ep.id):
-                ep_count += 1
-
-        for c in deleted_concepts:
-            if memory.purge_concept(c.id):
-                c_count += 1
-
-        return JSONResponse({
-            "success": True,
-            "episodes_purged": ep_count,
-            "concepts_purged": c_count,
-        })
+        data = await request.json()
+        counts = memory.purge_deleted(data.get("expected_revisions", {}))
+        return JSONResponse({"success": True, **counts})
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to purge all deleted")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -371,38 +369,17 @@ async def get_episodes(request: Request) -> JSONResponse:
         search = request.query_params.get("search", "")
         label_filter = _parse_label_query_params(request)
 
-        if episode_type:
-            all_episodes = memory.store.get_episodes_by_type(episode_type, limit=1000)
-        elif start_date or end_date:
-            all_episodes = memory.store.get_episodes_by_date_range(
-                start_date=start_date,
-                end_date=end_date,
-                limit=1000,
-            )
-        else:
-            all_episodes = memory.store.get_recent_episodes(limit=1000)
-
-        if consolidated is not None:
-            is_consolidated = consolidated.lower() == "true"
-            all_episodes = [e for e in all_episodes if e.consolidated == is_consolidated]
-
-        if label_filter:
-            all_episodes = [e for e in all_episodes if _matches_labels(e.labels, label_filter)]
-
-        if search:
-            search_lower = search.lower()
-            all_episodes = [
-                e for e in all_episodes
-                if search_lower in e.content.lower()
-            ]
-
-        total = len(all_episodes)
-        episodes = all_episodes[offset : offset + limit]
+        episodes, total = memory.store.page_records("episodes", offset=offset, limit=limit,
+            search=search, labels=label_filter, episode_type=episode_type,
+            consolidated=consolidated.lower() == "true" if consolidated is not None else None,
+            start_date=start_date, end_date=end_date)
 
         return JSONResponse({
-            "episodes": [e.to_dict() for e in episodes],
+            "episodes": [_public_record(memory, e) for e in episodes],
             "total": total,
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get episodes")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -421,7 +398,9 @@ async def get_episode_detail(request: Request) -> JSONResponse:
         if not episode:
             return JSONResponse({"error": "Episode not found"}, status_code=404)
 
-        return JSONResponse(episode.to_dict())
+        return JSONResponse(_public_record(memory, episode))
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get episode")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -456,12 +435,14 @@ async def update_episode(request: Request) -> JSONResponse:
             entities=entities,
             metadata=metadata,
             labels=labels_arg,
-        )
+         expected_revision=request.headers.get("if-match"))
 
         if not updated:
             return JSONResponse({"error": "Episode not found"}, status_code=404)
 
-        return JSONResponse({"success": True, "episode": updated.to_dict()})
+        return JSONResponse({"success": True, "episode": _public_record(memory, updated)})
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to update episode")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -476,9 +457,11 @@ async def delete_episode(request: Request) -> JSONResponse:
     episode_id = request.path_params.get("id")
 
     try:
-        if memory.delete_episode(episode_id):
+        if memory.delete_episode(episode_id, expected_revision=request.headers.get("if-match")):
             return JSONResponse({"success": True})
         return JSONResponse({"error": "Episode not found"}, status_code=404)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to delete episode")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -493,9 +476,11 @@ async def restore_episode(request: Request) -> JSONResponse:
     episode_id = request.path_params.get("id")
 
     try:
-        if memory.restore_episode(episode_id):
+        if memory.restore_episode(episode_id, expected_revision=request.headers.get("if-match")):
             return JSONResponse({"success": True})
         return JSONResponse({"error": "Episode not found or not deleted"}, status_code=404)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to restore episode")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -510,9 +495,11 @@ async def purge_episode(request: Request) -> JSONResponse:
     episode_id = request.path_params.get("id")
 
     try:
-        if memory.purge_episode(episode_id):
+        if memory.purge_episode(episode_id, expected_revision=request.headers.get("if-match")):
             return JSONResponse({"success": True})
         return JSONResponse({"error": "Episode not found"}, status_code=404)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to purge episode")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -528,9 +515,11 @@ async def get_deleted_episodes(request: Request) -> JSONResponse:
         limit = int(request.query_params.get("limit", 50))
         deleted = memory.get_deleted_episodes(limit=limit)
         return JSONResponse({
-            "episodes": [e.to_dict() for e in deleted],
+            "episodes": [_public_record(memory, e) for e in deleted],
             "total": len(deleted),
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get deleted episodes")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -561,6 +550,8 @@ async def get_entities(request: Request) -> JSONResponse:
             "entities": entities_data,
             "total": len(entities_data),
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get entities")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -609,6 +600,8 @@ async def get_entity_detail(request: Request) -> JSONResponse:
         data["relations"] = enriched_relations
 
         return JSONResponse(data)
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get entity")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -626,8 +619,10 @@ async def get_entity_episodes(request: Request) -> JSONResponse:
     try:
         episodes = memory.store.get_episodes_mentioning(entity_id, limit=limit)
         return JSONResponse({
-            "episodes": [e.to_dict() for e in episodes],
+            "episodes": [_public_record(memory, e) for e in episodes],
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get entity episodes")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -645,8 +640,10 @@ async def get_entity_concepts(request: Request) -> JSONResponse:
     try:
         concepts = memory.store.get_concepts_for_entity(entity_id, limit=limit)
         return JSONResponse({
-            "concepts": [c.to_dict() for c in concepts],
+            "concepts": [_public_record(memory, c) for c in concepts],
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get entity concepts")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -702,7 +699,7 @@ async def get_graph(request: Request) -> JSONResponse:
             conditions = []
             conditions_refs = []
             if concept.conditions:
-                concept_id_pattern = re.compile(r'\b(?:c-)?([a-f0-9]{8})\b')
+                concept_id_pattern = re.compile(r'\b(?:c-)?([a-f0-9]{8}(?:-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?)\b')
                 # Split by common delimiters
                 if "\n" in concept.conditions:
                     conditions = [c.strip() for c in concept.conditions.split("\n") if c.strip()]
@@ -749,6 +746,8 @@ async def get_graph(request: Request) -> JSONResponse:
             "nodes": nodes,
             "links": links,
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get graph")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -810,6 +809,8 @@ async def get_entity_graph(request: Request) -> JSONResponse:
             "nodes": nodes,
             "links": links,
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get entity graph")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -839,28 +840,11 @@ async def execute_query(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        result = await memory.recall(query=query, k=k, entity=entity, raw=True, labels=labels)
-
-        if entity:
-            return JSONResponse({
-                "episodes": [e.to_dict() for e in result],
-                "formatted": memory.retriever.format_entity_context(entity, result),
-            })
-
-        formatted = memory.retriever.format_for_llm(result)
-
-        return JSONResponse({
-            "concepts": [
-                {
-                    "concept": r.concept.to_dict(),
-                    "activation": r.activation,
-                    "source": r.source,
-                    "hops": r.hops,
-                }
-                for r in result
-            ],
-            "formatted": formatted,
-        })
+        result = await memory.recall(query=query, k=k, entity=entity, labels=labels,
+                                     explain=bool(body.get("explain")))
+        return JSONResponse({**result.to_dict(), "formatted": result.text})
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to execute query")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -885,6 +869,8 @@ async def list_databases(request: Request) -> JSONResponse:
                 })
 
         return JSONResponse({"databases": databases})
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to list databases")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -922,6 +908,8 @@ async def get_config(request: Request) -> JSONResponse:
         return JSONResponse({
             "episode_types": config.episode_types,
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get config")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -941,6 +929,8 @@ async def api_get_labels(request: Request) -> JSONResponse:
         subject_type = request.query_params.get("subject_type")
         labels = memory.list_labels(subject_type)
         return JSONResponse({"labels": labels, "total": len(labels)})
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get labels")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -953,7 +943,7 @@ async def api_get_labels(request: Request) -> JSONResponse:
 
 def _conflict_with_context(memory, conflict) -> dict:
     """Serialize a conflict with its facts and concept titles for display."""
-    data = conflict.to_dict()
+    data = _public_record(memory, conflict)
 
     for key, fact_id in (("fact_a", conflict.fact_a_id), ("fact_b", conflict.fact_b_id)):
         if fact_id:
@@ -993,6 +983,8 @@ async def get_conflicts(request: Request) -> JSONResponse:
             "conflicts": [_conflict_with_context(memory, c) for c in conflicts],
             "open_count": memory.store.count_conflicts(status="open"),
         })
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except Exception as e:
         logger.exception("Failed to get conflicts")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1016,8 +1008,10 @@ async def resolve_conflict_route(request: Request) -> JSONResponse:
             winning_fact_id=body.get("winning_fact_id"),
             note=body.get("note"),
             resolved_by=body.get("resolved_by"),
-        )
+         expected_revision=request.headers.get("if-match"))
         return JSONResponse(_conflict_with_context(memory, conflict))
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
@@ -1038,12 +1032,14 @@ async def dismiss_conflict_route(request: Request) -> JSONResponse:
         body = {}
 
     try:
-        conflict = await memory.dismiss_conflict(
+        conflict = memory.dismiss_conflict(
             conflict_id,
             note=body.get("note"),
-            resolved_by=body.get("resolved_by"),
-        )
+            dismissed_by=body.get("resolved_by"),
+         expected_revision=request.headers.get("if-match"))
         return JSONResponse(_conflict_with_context(memory, conflict))
+    except RevisionConflict as e:
+        return JSONResponse({"error": "revision_conflict", "id": e.subject_id, "revision": e.current_revision}, status_code=409)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
@@ -1056,7 +1052,45 @@ async def dismiss_conflict_route(request: Request) -> JSONResponse:
 # =============================================================================
 
 
+async def workflow(request: Request) -> JSONResponse:
+    """Structured workflow endpoint sharing the public domain service."""
+    memory, error = await _get_memory_from_request(request)
+    if error:
+        return error
+    operation = request.path_params["operation"]
+    body = await request.json() if request.method == "POST" else {}
+    try:
+        if operation == "remember":
+            result = (await memory.remember(**body)).to_dict()
+        elif operation in {"remember-batch", "remember_batch"}:
+            result = (await memory.remember_batch(**body)).to_dict()
+        elif operation == "recall":
+            result = (await memory.recall(**body)).to_dict()
+        elif operation == "apply":
+            from remind.apply import ApplyEngine
+            result = (await ApplyEngine(memory.store, memory.embedding).apply(**body)).to_dict()
+            if not result["success"]:
+                status = 409 if any(e.get("code") == "revision_conflict" for e in result["errors"]) else 422
+                return JSONResponse(result, status_code=status)
+        elif operation == "snapshot":
+            from remind.snapshot import SnapshotEngine
+            result = await SnapshotEngine(memory.store, memory.embedding).snapshot(body["scopes"])
+        elif operation == "events":
+            result = memory.store.poll_events(request.query_params.get("cursor"))
+        elif operation == "doctor":
+            from remind.doctor import diagnose
+            result = diagnose(memory.store, memory.source_root, memory.embedding)
+        else:
+            return JSONResponse({"error": "Unknown workflow"}, status_code=404)
+        return JSONResponse(result)
+    except RevisionConflict as exc:
+        return JSONResponse({"error": "revision_conflict", "id": exc.subject_id, "revision": exc.current_revision}, status_code=409)
+    except (ValueError, TypeError, KeyError) as exc:
+        return JSONResponse({"error": "invalid_request", "message": str(exc)}, status_code=422)
+
+
 api_routes = [
+    Route("/api/v1/workflow/{operation}", workflow, methods=["GET", "POST"]),
     Route("/api/v1/stats", get_stats, methods=["GET"]),
     # Concepts
     Route("/api/v1/concepts", get_concepts, methods=["GET"]),

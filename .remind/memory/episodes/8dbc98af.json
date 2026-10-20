@@ -1,0 +1,38 @@
+{
+  "kind": "episodes",
+  "record": {
+    "asserted_by": "topi",
+    "concepts_activated": [],
+    "confidence": 1.0,
+    "consolidated": false,
+    "content": "Remind 0.13.0 fuses the lexical and vector recall arms with weighted Reciprocal Rank Fusion instead of blending raw scores. Cosine similarity and BM25 rank are not on a comparable scale, so fusing ranks sidesteps score normalisation entirely. The pre-existing hybrid_keyword_weight config was repurposed from a keyword-overlap bonus into the weight of the lexical arm in the fusion, and a new rrf_k constant damps how much rank position matters.",
+    "created_at": "2026-08-09T01:02:48.426468",
+    "deleted_at": null,
+    "entities_extracted": false,
+    "entity_ids": [
+      "concept:retrieval",
+      "concept:rrf",
+      "file:src/remind/retrieval.py",
+      "project:remind"
+    ],
+    "episode_type": "decision",
+    "id": "8dbc98af",
+    "labels": {
+      "release": [
+        "0.13.0"
+      ],
+      "topic": [
+        "retrieval"
+      ]
+    },
+    "metadata": {},
+    "relations_extracted": false,
+    "source_ref": null,
+    "source_type": null,
+    "summary": null,
+    "timestamp": "2026-08-09T01:02:48.429014",
+    "title": null,
+    "updated_at": "2026-08-09T01:02:48.429014"
+  },
+  "version": 4
+}

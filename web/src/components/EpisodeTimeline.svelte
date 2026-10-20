@@ -277,6 +277,9 @@
               </div>
             {/if}
             <div class="episode-footer">
+              {#each episode.source_freshness || [] as source}
+                <span class="episode-provenance" title={source.path}>Source {source.status}: {source.path}</span>
+              {/each}
               <span class="episode-id">ID: {episode.id}</span>
               {#if episode.asserted_by}
                 <span class="episode-provenance" title="Who asserted this">by {episode.asserted_by}</span>

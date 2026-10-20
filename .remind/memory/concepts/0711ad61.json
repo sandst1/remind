@@ -1,0 +1,30 @@
+{
+  "kind": "concepts",
+  "record": {
+    "actionable": true,
+    "concept_type": "fact_cluster",
+    "conditions": null,
+    "confidence": 1.0,
+    "conflicts": [],
+    "created_at": "2026-08-09T01:02:48.451035",
+    "deleted_at": null,
+    "entity_ids": [
+      "project:remind"
+    ],
+    "evidence": [],
+    "exceptions": [],
+    "id": "0711ad61",
+    "instance_count": 1,
+    "labels": {},
+    "lineage_note": null,
+    "parent_id": null,
+    "relations": [],
+    "source_episodes": [],
+    "specifics": "The Remind change feed emits twelve event kinds: remembered, superseded, conflict_opened, conflict_resolved, conflict_dismissed, concept_created, updated, labeled, unlabeled, deleted, restored, and processed. Read them via store.get_events, the events snapshot scope, the events MCP tool, or the remind events CLI command.\nRemind 0.13.0 was released on 2026-08-08 as a single commit, 3f29ca8, titled 'Remind core changes: drop topics, add substrate primitives'.",
+    "summary": "",
+    "tags": [],
+    "title": "Facts about remind",
+    "updated_at": "2026-08-09T01:02:48.474480"
+  },
+  "version": 4
+}
