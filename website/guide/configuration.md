@@ -138,7 +138,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
 | `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `REMIND_FACT_CLUSTER_JACCARD_THRESHOLD` | `fact_cluster_jaccard_threshold` | float | `0.5` |
-| `REMIND_DB_URL` | `db_url` | string | `null` (SQLite default) |
+| `REMIND_DB_URL` | `db_url` | string | `null` (local JSON default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
 | `REMIND_CLI_OUTPUT_MODE` | `cli_output_mode` | string | `table` |
 | `REMIND_EPISODE_TYPES` | `episode_types` | comma-separated list | all built-in types |
@@ -224,15 +224,15 @@ export EMBEDDING_PROVIDER=ollama
 
 ## Database
 
-Remind uses SQLite by default but supports any database backend via SQLAlchemy (PostgreSQL, MySQL, etc.).
+Remind uses a local JSON store by default. Its SQLite projection is disposable. Explicit SQL URLs select SQLite, PostgreSQL, or MySQL stores.
 
-### Database location (SQLite)
+### Store location
 
 | Context | Default path |
 |---------|-------------|
-| CLI (no `--db` flag) | `<cwd>/.remind/remind.db` (project-local) |
-| CLI with `--db name` | `~/.remind/name.db` |
-| MCP Server / Python API | `~/.remind/{name}.db` |
+| CLI (no `--db` or `--store` flag) | Nearest parent `.remind/memory`, or `<cwd>/.remind/memory` |
+| CLI with `--db name` | `~/.remind/name.memory` |
+| Explicit SQL URL | Selected SQL database |
 
 ### Using PostgreSQL or MySQL
 

@@ -127,17 +127,45 @@ def test_invalid_config_file_is_ignored():
     assert config.load_config() == config.RemindConfig()
 
 
-def test_project_discovery_from_nested_directory(tmp_path, monkeypatch):
+def test_default_store_starts_in_workdir_then_follows_project_marker(tmp_path, monkeypatch):
     project = tmp_path / "project with spaces"
     (project / ".git").mkdir(parents=True)
     nested = project / "src/deep"
     nested.mkdir(parents=True)
+    monkeypatch.chdir(project)
+    assert config.resolve_db_url(project_aware=True) == (project / ".remind/memory").as_uri()
     monkeypatch.chdir(nested)
+    # A Git root alone does not redirect the first call from an unmarked subfolder.
+    assert default_store_url(nested) == (nested / ".remind/memory").as_uri()
+    (project / ".remind").mkdir()
     assert default_store_url(nested) == (project / ".remind/memory").as_uri()
     assert config.resolve_db_url(project_aware=True) == default_store_url(nested)
-    # A nearer explicit memory directory selects a nested project.
+    # A nearer store marker takes precedence.
     (nested.parent / ".remind").mkdir()
     assert default_store_url(nested) == (nested.parent / ".remind/memory").as_uri()
+
+
+def test_default_store_non_git_tree_and_unmarked_subfolder(tmp_path, monkeypatch):
+    project = tmp_path / "documents"
+    nested = project / "subfolder"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(project)
+    assert config.resolve_db_url(project_aware=True) == (project / ".remind/memory").as_uri()
+    monkeypatch.chdir(nested)
+    assert config.resolve_db_url(project_aware=True) == (nested / ".remind/memory").as_uri()
+    (project / ".remind").mkdir()
+    assert config.resolve_db_url(project_aware=True) == (project / ".remind/memory").as_uri()
+
+
+def test_global_remind_is_not_an_implicit_parent_store(tmp_path, monkeypatch):
+    home = tmp_path / "global"
+    project = home / "Documents/workdocs/fidelix"
+    project.mkdir(parents=True)
+    config.REMIND_DIR.mkdir(parents=True)
+    monkeypatch.chdir(project)
+    assert config.resolve_db_url(project_aware=True) == (project / ".remind/memory").as_uri()
+    monkeypatch.chdir(home)
+    assert config.resolve_db_url(project_aware=True) == (home / ".remind/memory").as_uri()
 
 
 def test_store_url_and_migration_paths(tmp_path):

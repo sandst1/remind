@@ -95,7 +95,7 @@ processed ids=ep:11,ep:12
 
 ### Skills + CLI (project-local)
 
-Your agent calls the `remind` CLI from skills — markdown files with instructions. The database lives in your project repo at `.remind/remind.db`. Each project has its own isolated memory.
+Your agent calls the `remind` CLI from skills — markdown files with instructions. Durable records live in your project at `.remind/memory`. Run the first CLI command from the workspace root so later calls from subfolders find the same store.
 
 [Learn more about Skills →](/guide/skills)
 

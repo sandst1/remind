@@ -308,7 +308,7 @@ def _run_recall_via_worker(
 @click.group()
 @click.version_option(version=__version__, prog_name="remind")
 @click.option("--store", "store_selector", default=None, help="Directory, file URL, or SQL URL")
-@click.option("--db", default=None, help="Database name, path, or URL (e.g. 'myproject', '/path/to/db.db', 'postgresql+psycopg://user:pass@host/db'). Default: <cwd>/.remind/remind.db")
+@click.option("--db", default=None, help="Store name, path, or URL (e.g. 'myproject', '/path/to/memory', 'postgresql+psycopg://user:pass@host/db'). Default: nearest parent .remind/memory, or <cwd>/.remind/memory")
 @click.option("--embedding", default=None, type=click.Choice(["local", "openai", "azure_openai", "ollama", "deterministic"]))
 @click.pass_context
 def main(ctx, db: str, embedding: str, store_selector: Optional[str]):
@@ -2049,8 +2049,7 @@ def entity_relations(ctx, entity_id: str, as_json: bool, as_table: bool, as_comp
 def ui(ctx, port: int, host: str, no_open: bool):
     """Launch the web UI with the current project's database.
 
-    Opens a browser to the Remind web UI with the project-local database
-    (<cwd>/.remind/remind.db) automatically selected.
+    Opens a browser to the Remind web UI with the selected local store.
 
     The UI provides:
     - Visual memory browser (concepts, episodes, entities)

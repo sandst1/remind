@@ -1,6 +1,6 @@
 # Remind + SQLite
 
-The simplest way to get started with Remind. SQLite is the default backend — no database server required.
+Use an explicit SQLite store when you need a SQL database file. Remind's default durable store is JSON under `.remind/memory`; it needs no database server.
 
 ## Prerequisites
 
@@ -31,7 +31,13 @@ Edit the file and fill in your API keys.
 
 ### 2. Use Remind
 
-By default, Remind stores data in `<current-directory>/.remind/remind.db` (project-aware mode) when you run from a project directory, or `~/.remind/memory.db` for a global shared database.
+Select SQLite explicitly for this example:
+
+```bash
+export REMIND_STORE="sqlite:////absolute/path/to/project/.remind/remind.db"
+```
+
+Without that setting, Remind uses the nearest parent `.remind/memory` store, or creates one in the current directory.
 
 ```bash
 # Store a memory
@@ -62,14 +68,15 @@ SELECT id, title FROM concepts;
 
 ## Choosing a database file
 
-**Default (project-aware)** — stores data alongside your project:
+**Default local store** — stores JSON records alongside your project:
 
 ```bash
+unset REMIND_STORE
 remind remember "something"
-# → .remind/remind.db in current directory
+# → .remind/memory in the current directory on first use
 ```
 
-**Named database** — stores in `~/.remind/<name>.db`:
+**Named store** — stores JSON in `~/.remind/<name>.memory`:
 
 ```bash
 remind --db myproject remember "something"

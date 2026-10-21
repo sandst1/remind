@@ -16,7 +16,7 @@ cd your-project
 remind skill-install
 ```
 
-This creates the `remind-capture`, `remind-context`, and `remind-curate` skills under `.claude/skills/` and sets up the project-local database at `.remind/remind.db`.
+This installs the `remind-capture`, `remind-context`, and `remind-curate` skills under `.agents/skills/`. The first memory command from this directory creates the project-local store at `.remind/memory`.
 
 ## Walkthrough
 

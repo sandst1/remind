@@ -538,8 +538,8 @@ def resolve_db_url(
 
     Args:
         db_name: Database name, absolute file path, or full database URL.
-        project_aware: If True and db_name is None, finds the project root
-            and uses its ``.remind/memory`` directory.
+        project_aware: If True and db_name is None, uses the nearest parent
+            ``.remind`` directory, or the current working directory when none exists.
 
     Returns:
         A file-store or SQLAlchemy URL string.

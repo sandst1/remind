@@ -232,7 +232,7 @@ pip install "remind-mcp[rerank]"   # Cross-encoder reranking
 
 ## Database backends
 
-SQLite is the default. For PostgreSQL or MySQL:
+Local JSON records are the default; SQLite is used for disposable indexes. Explicit SQL URLs select a database backend. For PostgreSQL or MySQL:
 
 ```bash
 pip install "remind-mcp[postgres]"   # PostgreSQL (psycopg v3 + pgvector)

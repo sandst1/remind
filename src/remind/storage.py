@@ -15,10 +15,18 @@ def open_store(selector: str):
 
 
 def default_store_url(start: Path) -> str:
+    from remind.config import REMIND_DIR
+
     start = start.resolve()
     root = start
+    global_remind_dir = REMIND_DIR.resolve()
     for candidate in (start, *start.parents):
-        if (candidate / ".remind").is_dir() or (candidate / ".git").exists():
+        remind_dir = candidate / ".remind"
+        has_project_memory = (
+            remind_dir.is_dir()
+            and (candidate == start or remind_dir.resolve() != global_remind_dir)
+        )
+        if has_project_memory:
             root = candidate
             break
     return (root / ".remind" / "memory").as_uri()

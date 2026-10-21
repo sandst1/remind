@@ -11,6 +11,29 @@ from remind.cli import main
 from remind.config import DEFAULT_EPISODE_TYPES
 
 
+def test_cli_default_store_stays_in_workspace_and_serves_subfolders(tmp_path, monkeypatch):
+    from remind import config
+
+    monkeypatch.setattr(config, "REMIND_DIR", tmp_path / "home/.remind")
+    monkeypatch.setattr(config, "CONFIG_FILE", config.REMIND_DIR / "remind.config.json")
+    config.REMIND_DIR.mkdir(parents=True)
+    workspace = tmp_path / "home/Documents/workspace"
+    nested = workspace / "notes"
+    nested.mkdir(parents=True)
+    runner = CliRunner()
+
+    monkeypatch.chdir(workspace)
+    first = runner.invoke(main, ["--embedding", "deterministic", "snapshot", "stats"])
+    assert first.exit_code == 0, first.output
+    assert (workspace / ".remind/memory/schema.json").is_file()
+    assert not (config.REMIND_DIR / "memory").exists()
+
+    monkeypatch.chdir(nested)
+    second = runner.invoke(main, ["--embedding", "deterministic", "snapshot", "stats"])
+    assert second.exit_code == 0, second.output
+    assert not (nested / ".remind").exists()
+
+
 @pytest.mark.parametrize("agent,relative_dir", [
     (None, ".agents/skills"),
     ("agents", ".agents/skills"),

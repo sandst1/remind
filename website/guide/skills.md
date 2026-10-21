@@ -6,7 +6,7 @@ Skills are the recommended way to integrate Remind into your workflow. A skill i
 
 Skills + CLI give you:
 
-- **Project-local memory** — The database lives at `.remind/remind.db` in your project. Each project has its own isolated memory. You can gitignore it or commit it.
+- **Project-local memory** — Durable JSON records live at `.remind/memory` in your project. Run the first CLI command from the workspace root; later calls from subfolders find that store.
 - **No server needed** — No MCP server to run. The CLI is self-contained.
 - **Composable** — Skills are just markdown. Extend the bundled skills, write your own, or fork them for custom workflows.
 - **Agent-agnostic** — Any agent that can run shell commands can use Remind skills.
@@ -149,7 +149,7 @@ remind remember "Team convention: use Result types for DB operations" \
 
 | | Skills + CLI | MCP Server |
 |---|---|---|
-| Database location | `.remind/remind.db` in project | `~/.remind/{name}.db` centralized |
+| Store location | `.remind/memory` in project | Explicitly selected store |
 | Requires server | No | Yes |
 | Agent requirement | Can run shell commands | MCP client support |
 | Best for | Project-scoped memory, custom workflows | Cross-project memory, IDE integration |

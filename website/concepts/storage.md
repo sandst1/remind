@@ -22,7 +22,7 @@ remind --store sqlite:////absolute/path/to/explicit.db snapshot stats
 remind --store postgresql+psycopg://user:password@localhost/database snapshot stats
 ```
 
-The implicit location uses the nearest Remind directory, otherwise the Git root, otherwise the working directory. Names and legacy local `.db` paths resolve to text stores; explicit SQL URLs retain SQL storage. `--db` remains an alias selector; conflicting `--store` and `--db` values are rejected. Configuration accepts `store_url` or legacy `db_url`; `REMIND_STORE` and `REMIND_DB_URL` are supported. Keep credentials out of committed configuration.
+The implicit CLI location is the nearest parent containing a `.remind` directory. If none exists, Remind uses the current working directory and creates `.remind/memory` there on first use. Start from the intended workspace root, including for a non-Git project; later commands from its subfolders then share that store. A Git repository alone does not select a parent store. The global `~/.remind` directory does not make every folder under your home directory share one store; select it explicitly when you want shared memory. Names and legacy local `.db` paths resolve to text stores; explicit SQL URLs retain SQL storage. `--db` remains an alias selector; conflicting `--store` and `--db` values are rejected. Configuration accepts `store_url` or legacy `db_url`; `REMIND_STORE` and `REMIND_DB_URL` are supported. Keep credentials out of committed configuration.
 
 ## Integrity and recovery
 

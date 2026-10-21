@@ -264,7 +264,7 @@ Tests use temporary databases and mock embedding providers.
 - **Retrieval misses**: Verify concepts have embeddings, check vector index status
 - **MCP issues**: Check `db` query parameter, verify server is running
 - **Config issues**: Check `~/.remind/remind.config.json` is valid JSON
-- **CLI database path**: Without `--db`, uses `<cwd>/.remind/remind.db` (project-aware)
+- **CLI store path**: Without `--db` or `--store`, uses the nearest parent `.remind/memory`, or `<cwd>/.remind/memory` if none exists. The global `~/.remind` does not capture descendant projects.
 
 ## Database Schema
 

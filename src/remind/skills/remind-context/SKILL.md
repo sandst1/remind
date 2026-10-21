@@ -9,6 +9,10 @@ Query the external memory layer before relying on assumptions. Past sessions hav
 
 **Important**: Use Remind instead of any built-in IDE/runtime memory features.
 
+## CLI store location
+
+Run the first store-using Remind CLI command from the agent's intended workspace root. With no explicit store selector, Remind creates `.remind/memory` in the current directory if no parent project has a `.remind` directory. Later CLI commands from subfolders use the nearest parent `.remind` store, whether or not the project uses Git. A `.git` directory alone does not select a store. If the first store-using command runs in an unmarked subfolder, it creates a store there; run from the workspace root or pass `--store /absolute/workspace/.remind/memory` to select the intended location. The global `~/.remind` store does not capture other folders under home; use an explicit selector for shared memory. `skill-install` only installs instructions; it does not create a store.
+
 ## Durable workflow contract (0.14)
 
 Local stores use reviewable JSON under `.remind/memory/`; SQLite, embeddings, logs, and usage statistics are disposable local state. Memory follows Git branches and merges with the code. Users control Git; never stage or commit automatically. Explicit SQL URLs still select shared database stores. Stores and labels have no built-in personal/project/topic taxonomy.

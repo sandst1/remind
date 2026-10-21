@@ -16,7 +16,7 @@ cd ~/sparring/distributed-systems
 remind skill-install
 ```
 
-The database lives at `.remind/remind.db` in this directory — dedicated to this topic.
+The first memory command from this directory creates `.remind/memory`, dedicated to this topic.
 
 ## Walkthrough
 

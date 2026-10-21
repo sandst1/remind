@@ -4,7 +4,7 @@ Real-world usage patterns showing Remind in practice. Each example includes the 
 
 ## [SQLite](./sqlite)
 
-The default backend: project-local or named SQLite files, optional sqlite-vec for vector search, and how to inspect the database. No server required.
+Explicit SQLite storage, optional sqlite-vec for vector search, and how to inspect the database. No server required.
 
 ## [Project Memory](./project-memory)
 
