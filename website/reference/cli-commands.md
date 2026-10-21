@@ -293,11 +293,18 @@ remind ui --no-open          # Start server only
 ## Skills
 
 ```bash
-remind skill-install                 # Install all bundled skills to .claude/skills/
-remind skill-install remind-capture  # Install a specific skill
+remind skill-install                                  # All skills to .agents/skills/
+remind skill-install remind-capture                   # Install a specific skill
+remind skill-install --agent claude                   # Use .claude/skills/
+remind skill-install --agent cursor --dir /my/project # Choose a project folder
+remind skill-install --agent codex --dir ~            # Install to ~/.agents/skills/
+remind skill-install --agent opencode --dir ~         # Install to ~/.config/opencode/skills/
 ```
 
-Installs `remind-capture`, `remind-context`, and `remind-curate`. See [Skills + CLI](/guide/skills).
+Installs `remind-capture`, `remind-context`, and `remind-curate`. `--agent` accepts
+`agents` (default), `claude`, `cursor`, `codex`, and `opencode`. `--dir` (aliases:
+`--directory`, `-d`) selects the base folder and defaults to the current working
+directory. Existing skill files are overwritten. See [Skills + CLI](/guide/skills).
 
 ## Global flags
 

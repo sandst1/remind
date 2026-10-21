@@ -1,11 +1,105 @@
 """CLI command tests."""
 
 import json
+from pathlib import Path
+
+import pytest
 
 from click.testing import CliRunner
 
 from remind.cli import main
 from remind.config import DEFAULT_EPISODE_TYPES
+
+
+@pytest.mark.parametrize("agent,relative_dir", [
+    (None, ".agents/skills"),
+    ("agents", ".agents/skills"),
+    ("claude", ".claude/skills"),
+    ("cursor", ".cursor/skills"),
+    ("codex", ".agents/skills"),
+    ("opencode", ".opencode/skills"),
+])
+def test_skill_install_destinations(tmp_path, monkeypatch, agent, relative_dir):
+    from remind.cli import SKILL_NAMES, _read_skill
+
+    monkeypatch.chdir(tmp_path)
+    args = ["skill-install"]
+    if agent:
+        args += ["--agent", agent]
+    result = CliRunner().invoke(main, args)
+
+    assert result.exit_code == 0, result.output
+    for name in SKILL_NAMES:
+        installed = tmp_path / relative_dir / name / "SKILL.md"
+        assert installed.read_text(encoding="utf-8") == _read_skill(name)
+    assert not (tmp_path / ".remind").exists()
+
+
+@pytest.mark.parametrize("directory", ["another project", "~/another project", "~"])
+def test_skill_install_custom_directory(tmp_path, monkeypatch, directory):
+    monkeypatch.chdir(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    result = CliRunner().invoke(main, [
+        "skill-install", "remind-context", "--agent", "claude", "--dir", directory,
+    ])
+
+    assert result.exit_code == 0, result.output
+    destination = Path(directory).expanduser().resolve() / ".claude/skills"
+    assert (destination / "remind-context/SKILL.md").is_file()
+    assert not (destination / "remind-capture").exists()
+    assert not (tmp_path / ".agents").exists()
+
+
+def test_skill_install_opencode_home(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    result = CliRunner().invoke(main, [
+        "skill-install", "--agent", "opencode", "--dir", "~",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "home/.config/opencode/skills/remind-context/SKILL.md").is_file()
+    assert not (tmp_path / "home/.opencode").exists()
+
+
+def test_skill_install_overwrite_and_scoped_legacy_cleanup(tmp_path, monkeypatch):
+    from remind.cli import _read_skill
+
+    monkeypatch.chdir(tmp_path)
+    for relative in [".agents/skills/remind", ".claude/skills/remind",
+                     ".agents/skills/remind-context", ".agents/skills/custom"]:
+        folder = tmp_path / relative
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text("old", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["skill-install", "remind-context"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / ".agents/skills/remind/SKILL.md").exists()
+    assert (tmp_path / ".agents/skills/remind-context/SKILL.md").read_text() == _read_skill("remind-context")
+
+    result = runner.invoke(main, ["skill-install"])
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path / ".agents/skills/remind").exists()
+    assert (tmp_path / ".claude/skills/remind/SKILL.md").exists()
+    assert (tmp_path / ".agents/skills/custom/SKILL.md").read_text() == "old"
+
+
+@pytest.mark.parametrize("args", [
+    ["--agent", "unknown"],
+    ["remind-context", "unknown"],
+    ["--dir", "existing-file"],
+])
+def test_skill_install_invalid_arguments_do_not_write(tmp_path, monkeypatch, args):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "existing-file").write_text("keep")
+    result = CliRunner().invoke(main, ["skill-install", *args])
+
+    assert result.exit_code != 0
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["existing-file"]
 
 
 class _FakeConfig:

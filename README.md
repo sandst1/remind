@@ -156,7 +156,16 @@ Install skills to teach AI agents how to use Remind:
 
 ```bash
 remind skill-install
+remind skill-install --agent claude       # Use .claude/skills instead
+remind skill-install --dir ~              # Install into ~/.agents/skills
+remind skill-install --agent cursor --dir /path/to/project
 ```
+
+By default, skills go into `.agents/skills` under the current working directory.
+Use `--agent agents|claude|cursor|codex|opencode` to select a layout and `--dir`
+to choose any base folder. Codex uses `.agents/skills`; OpenCode uses
+`.opencode/skills` in projects and `.config/opencode/skills` when targeting home.
+Re-running the command overwrites installed skill files with the bundled versions.
 
 Three skills:
 - **remind-capture** — When and how to write memories (includes decision tree and entity type guide)

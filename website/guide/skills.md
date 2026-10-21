@@ -17,7 +17,29 @@ Skills + CLI give you:
 remind skill-install
 ```
 
-This creates `.claude/skills/<name>/SKILL.md` files in your project. You can also install a subset: `remind skill-install remind-capture`.
+This creates `.agents/skills/<name>/SKILL.md` files under the current working directory. You can also install a subset: `remind skill-install remind-capture`.
+
+Choose an agent layout with `--agent` and a base folder with `--dir` (also `--directory` or `-d`):
+
+```bash
+remind skill-install --agent claude                    # Current project, .claude/skills
+remind skill-install --agent cursor --dir /my/project  # Another project
+remind skill-install --agent codex --dir ~             # Home, .agents/skills
+remind skill-install --agent opencode --dir ~          # Home, .config/opencode/skills
+remind skill-install remind-context --dir ../project   # One skill, relative base folder
+```
+
+| Agent | Directory under the base folder |
+|-------|---------------------------------|
+| `agents` (default) | `.agents/skills` |
+| `claude` | `.claude/skills` |
+| `cursor` | `.cursor/skills` |
+| `codex` | `.agents/skills` |
+| `opencode` | `.opencode/skills` (or `.config/opencode/skills` when the base folder is home) |
+
+The base folder can be an absolute path, a relative path, or `~`; missing directories are created. Existing skill files are overwritten with the installed package's bundled versions. Installing all skills also removes the legacy monolithic `remind` skill from the selected destination; installing a subset leaves it in place.
+
+The agent layouts follow the [Codex](https://developers.openai.com/codex/skills/), [Cursor](https://cursor.com/help/customization/skills), and [OpenCode](https://opencode.ai/docs/skills/) skill directory conventions.
 
 ## The bundled skills
 
@@ -59,7 +81,7 @@ A skill is a markdown file that instructs an agent how to use Remind for a speci
 
 ### Skill structure
 
-A minimal skill file (save as `.claude/skills/<name>/SKILL.md`):
+A minimal skill file (save as `.agents/skills/<name>/SKILL.md`):
 
 ```markdown
 # My Custom Skill

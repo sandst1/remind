@@ -176,6 +176,14 @@ def _compact_relation_in(rel: Any, store: Any) -> dict[str, Any]:
 
 SKILL_NAMES = ["remind-capture", "remind-context", "remind-curate"]
 
+SKILL_DIRECTORIES = {
+    "agents": Path(".agents/skills"),
+    "claude": Path(".claude/skills"),
+    "cursor": Path(".cursor/skills"),
+    "codex": Path(".agents/skills"),
+    "opencode": Path(".opencode/skills"),
+}
+
 # Old monolithic skill, replaced by the three above. Cleaned up on install.
 LEGACY_SKILL_NAMES = ["remind"]
 
@@ -2085,13 +2093,24 @@ def ui(ctx, port: int, host: str, no_open: bool):
 
 @main.command("skill-install")
 @click.argument("names", nargs=-1)
-def skill_install(names: tuple):
-    """Install the Remind skills for Claude Code in the current project.
+@click.option(
+    "--agent", type=click.Choice(list(SKILL_DIRECTORIES), case_sensitive=False),
+    default="agents", show_default=True, help="Agent skill directory layout.",
+)
+@click.option(
+    "--dir", "--directory", "-d", "directory",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Base folder to install into (default: current directory). Use ~ for home.",
+)
+def skill_install(names: tuple[str, ...], agent: str, directory: Optional[Path]):
+    """Install bundled Remind skills into .agents/skills in the current folder.
 
-    Installs .claude/skills/<name>/SKILL.md from the bundled package data,
-    keeping them in sync with the installed version. Without arguments,
-    installs all skills (capture, context, curate) and removes the legacy
-    monolithic 'remind' skill if present.
+    Use --agent to select another layout and --dir to select a base folder.
+    Codex uses .agents/skills. OpenCode uses .opencode/skills, or
+    .config/opencode/skills when the base folder is your home directory.
+    Existing skill files are overwritten with the installed package version.
+    Without names, installs all skills and removes the legacy 'remind' skill
+    from the selected destination.
     """
     to_install = list(names) if names else SKILL_NAMES
 
@@ -2101,24 +2120,30 @@ def skill_install(names: tuple):
         console.print(f"Available: {', '.join(SKILL_NAMES)}")
         raise SystemExit(1)
 
+    base_dir = (directory.expanduser() if directory is not None else Path.cwd()).resolve()
+    relative_dir = SKILL_DIRECTORIES[agent]
+    if agent == "opencode" and base_dir == Path.home().resolve():
+        relative_dir = Path(".config/opencode/skills")
+    destination = base_dir / relative_dir
+
     for name in to_install:
-        skills_dir = Path.cwd() / ".claude" / "skills" / name
+        skills_dir = destination / name
         skills_dir.mkdir(parents=True, exist_ok=True)
 
         skill_file = skills_dir / "SKILL.md"
-        skill_file.write_text(_read_skill(name))
+        skill_file.write_text(_read_skill(name), encoding="utf-8")
 
         console.print(f"[green]✓[/green] Installed [cyan]{name}[/cyan] → {skill_file}")
 
     if not names:
         import shutil
         for legacy in LEGACY_SKILL_NAMES:
-            legacy_dir = Path.cwd() / ".claude" / "skills" / legacy
+            legacy_dir = destination / legacy
             if (legacy_dir / "SKILL.md").exists():
                 shutil.rmtree(legacy_dir)
                 console.print(f"[dim]Removed legacy skill: {legacy}[/dim]")
 
-    console.print("\nClaude Code will now use Remind skills in this project.")
+    console.print(f"\nRemind skills installed in {destination}")
 
 
 # ============================================================================
