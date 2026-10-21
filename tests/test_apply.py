@@ -106,6 +106,36 @@ class TestParseCompactLine:
         
         assert err is None
         assert op["content"] == "Line 1\nLine 2"
+
+    @pytest.mark.parametrize("content", [
+        "x <= 450 here",
+        "<=450 is the limit",
+        "limit is <= 450 mm",
+        "x >= 450 here",
+        "x=5",
+        "a < b",
+        "a > b",
+    ])
+    def test_quoted_content_with_operators(self, content):
+        op, err = parse_compact_line(f'remember t=fact e=concept:x "{content}"', 1)
+
+        assert err is None
+        assert op["content"] == content
+        assert op["t"] == "fact"
+        assert op["e"] == "concept:x"
+
+    def test_quoted_field_value_with_equals(self):
+        op, err = parse_compact_line('remember t=fact by="a=b" "x <= 450"', 1)
+
+        assert err is None
+        assert op["by"] == "a=b"
+        assert op["content"] == "x <= 450"
+
+    def test_quoted_content_with_escaped_quote_and_equals(self):
+        op, err = parse_compact_line('remember t=fact "say \\"x=5\\" here"', 1)
+
+        assert err is None
+        assert op["content"] == 'say "x=5" here'
     
     def test_parse_error_returns_op_error(self):
         # Unterminated quote
@@ -477,3 +507,17 @@ remember t=decision "Made a decision"
         
         assert result.success
         assert result.ops_executed == 2
+
+    @pytest.mark.asyncio
+    async def test_quoted_operator_content_commits_batch(self, engine, memory_store):
+        changeset = '''
+remember t=observation "First observation"
+remember t=observation "cabinet step from <=450mm to >=460mm"
+'''
+        result = await engine.apply(changeset, expected_revisions={})
+
+        assert result.success
+        assert result.ops_executed == 2
+        assert [memory_store.get_episode(item.id).content for item in result.results] == [
+            "First observation", "cabinet step from <=450mm to >=460mm",
+        ]

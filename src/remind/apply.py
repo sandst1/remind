@@ -116,7 +116,33 @@ def parse_compact_line(line: str, line_num: int) -> tuple[Optional[dict], Option
         return None, None
     
     try:
-        tokens = shlex.split(line)
+        # Keep the original token boundaries so a quoted trailing value containing
+        # '=' is not mistaken for a key=value field after shlex removes quotes.
+        raw_tokens = []
+        start = None
+        quote = None
+        escaped = False
+        for index, char in enumerate(line):
+            if start is None:
+                if char.isspace():
+                    continue
+                start = index
+            if escaped:
+                escaped = False
+            elif char == "\\" and quote != "'":
+                escaped = True
+            elif quote:
+                if char == quote:
+                    quote = None
+            elif char in ("'", '"'):
+                quote = char
+            elif char.isspace():
+                raw_tokens.append(line[start:index])
+                start = None
+        if start is not None:
+            raw_tokens.append(line[start:])
+        tokens = [(shlex.split(raw)[0], raw.startswith(("'", '"')))
+                  for raw in raw_tokens]
     except ValueError as e:
         return None, OpError(
             line=line_num,
@@ -128,14 +154,14 @@ def parse_compact_line(line: str, line_num: int) -> tuple[Optional[dict], Option
     if not tokens:
         return None, None
     
-    op_type = tokens[0].lower()
+    op_type = tokens[0][0].lower()
     op: dict[str, Any] = {"op": op_type}
     
     # Track trailing quoted string (content/note)
     trailing_string = None
     
-    for token in tokens[1:]:
-        if "=" in token:
+    for token, quoted in tokens[1:]:
+        if "=" in token and not quoted:
             key, _, value = token.partition("=")
             key = key.lower()
             
