@@ -2,7 +2,7 @@
 
 All notable changes to Remind.
 
-## [0.14.0] - 2026-10-20
+## [0.14.0] - 2026-10-23
 
 ### Changed
 
@@ -10,6 +10,7 @@ All notable changes to Remind.
 - Python recall returns `RecallResult`; batch capture returns per-item results. Ordinary recall is read-only. Full UUIDs are generated; existing IDs remain valid.
 - Existing-record edits require revisions. Capture/apply support atomic retry receipts. Generation-qualified event polling detects checkout/rebuild resets.
 - Label filters constrain graph traversal and all rendered content. File-source freshness is visible. Ranking explanations distinguish relative scores from raw similarity.
+- Skill installation supports Agents, Claude, Cursor, Codex, and OpenCode destinations plus an explicit target directory.
 
 ### Added
 
@@ -26,6 +27,8 @@ All notable changes to Remind.
 - Background recall worker startup and file-store logging/configuration paths work with encoded spaces in file URLs.
 - Agent tool descriptions distinguish factual corrections, typed capture, source references, and verified supersession. Batch capture exposes item fields in its MCP schema while preserving raw request/retry semantics.
 - External-agent grading checks actual evidence coverage and supersession chains, separates incidental historical mentions from active obsolete facts, and normalizes limited grammatical variants. Local model/interface comparison scripts and an audited pilot report are included.
+- Implicit local stores remain anchored to the intended project working directory.
+- Compact `apply` parsing preserves quoted content containing `=`, `<=`, or `>=`.
 
 ## [0.13.2] - 2026-08-10
 

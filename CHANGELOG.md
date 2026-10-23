@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-23
+
+### Changed
+
+- Default local storage is deterministic model JSON, with a disposable SQLite projection, journal recovery, and automatic migration backups. Explicit SQL URLs retain SQL storage.
+- Python recall returns `RecallResult`; batch capture returns per-item results. Ordinary recall is read-only. Full UUIDs are generated; existing IDs remain valid.
+- Existing-record edits require revisions. Capture/apply support atomic retry receipts. Generation-qualified event polling detects checkout/rebuild resets.
+- Label filters constrain graph traversal and all rendered content. File-source freshness is visible. Ranking explanations distinguish relative scores from raw similarity.
+- Skill installation supports Agents, Claude, Cursor, Codex, and OpenCode destinations plus an explicit target directory.
+
+### Added
+
+- Complete portable exports/backups; atomic imports, capture, curation, and events.
+- `doctor`, explicit index repair, shared workflow endpoints, revision-aware UI edits.
+- Versioned eval fixtures, real Python/CLI/MCP/REST operational scenarios, semantic retrieval evals, and a configurable external-agent runner contract. All run locally; no CI added.
+
+### Fixed
+
+- Apply label edits through fact aliases check the source episode's revision. Rejected edits preserve event cursors and sequence numbers.
+- Historical recall filters episode and concept candidates before filling the result budget; entity expansion respects label and history constraints. Scoped pattern examples and historical fact specifics are preserved.
+- Snapshot imports reject duplicate identities and validate against the locked write state.
+- Clearing cached embeddings removes stale native vector entries. The first embedded SQLite write can initialize indexes inside its transaction and recover cleanly after rollback.
+- Background recall worker startup and file-store logging/configuration paths work with encoded spaces in file URLs.
+- Agent tool descriptions distinguish factual corrections, typed capture, source references, and verified supersession. Batch capture exposes item fields in its MCP schema while preserving raw request/retry semantics.
+- External-agent grading checks actual evidence coverage and supersession chains, separates incidental historical mentions from active obsolete facts, and normalizes limited grammatical variants. Local model/interface comparison scripts and an audited pilot report are included.
+- Implicit local stores remain anchored to the intended project working directory.
+- Compact `apply` parsing preserves quoted content containing `=`, `<=`, or `>=`.
+
 ## [0.13.2] - 2026-08-10
 
 ### Fixed
