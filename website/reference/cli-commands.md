@@ -8,7 +8,7 @@ Reads return full opaque IDs and revision tokens. Existing-record writes require
 
 Recall is read-only by default. Explicit label filters constrain candidates, graph traversal, facts, and rendered context. Labels are generic tags; separate stores provide isolation. Structured recall includes `text`, `concepts`, `episodes`, `warnings`, and optional `explanation`. Source freshness warnings annotate changed/missing files without changing the remembered claim.
 
-New workflow tools include `remember_batch`, generation-aware `poll_events`, and `doctor`. CLI equivalents are `remember-batch`, `events --cursor`, and `doctor`. REST exposes `POST /api/v1/workflow/{operation}` for `remember`, `remember_batch`, `recall`, `apply`, `snapshot`, `events`, and `doctor`. Use idempotency keys for capture/apply retries. Portable export includes facts, conflicts, evidence, labels, events, and retry receipts; `--mode backup` also includes derived vectors.
+New workflow tools include `remember_batch`, generation-aware `poll_events`, and `doctor`. CLI equivalents are `remember-batch`, `events --since <generation.cursor>`, and `doctor`. REST exposes `POST /api/v1/workflow/{operation}` for `remember`, `remember-batch`, `recall`, `apply`, `snapshot`, `events`, and `doctor`. Use idempotency keys for capture/apply retries. Portable export includes facts, conflicts, evidence, labels, events, and retry receipts; `--mode backup` also includes derived vectors.
 
 
 The `remind` CLI discovers the nearest project memory directory by default.
@@ -38,6 +38,17 @@ remind remember "Cache TTL is 300s" -t fact -e tool:redis --asserted-by alice
 | `--no-embed` | Skip embedding (faster). Useful for bulk imports. |
 
 For `fact` episodes, the output includes collision information if there are existing facts with overlapping entities.
+
+### remember-batch
+
+Capture a JSON array atomically. The output contains one ordered result per input item.
+
+```bash
+remind remember-batch captures.json
+remind remember-batch captures.json --idempotency-key import-2026-10-23
+```
+
+Each item accepts the same capture fields as the Python `remember_batch()` API, including `content`, `episode_type`, `entities`, `labels`, `asserted_by`, and `source_ref`.
 
 ### recall
 
@@ -82,7 +93,7 @@ remind snapshot concept:abc123           # Concept detail
 remind snapshot recent:20                # Recent episodes
 remind snapshot stats                    # Statistics
 remind snapshot query:cache              # Semantic search
-remind snapshot events:42                # Change-feed events after seq 42
+remind snapshot events:<generation.cursor> # Generation-aware change-feed poll
 remind snapshot bootstrap                # Query-free stable context
 ```
 
@@ -99,7 +110,7 @@ remind snapshot bootstrap                # Query-free stable context
 | `recent:<n>` | N most recent episodes |
 | `stats` | Memory statistics |
 | `query:<text>` | Semantic search for concepts |
-| `events[:<since_seq>]` | Change-feed events with `seq > since_seq` (default 0). Prefer `remind events`. |
+| `events[:<cursor>]` | Change-feed poll. Prefer a generation-qualified cursor; numeric values retain the legacy projection-local behavior. |
 | `bootstrap[:<n>]` | Query-free stable context: top-n actionable concepts by confidence + open conflicts + stats (default 10) |
 
 ### events
@@ -107,20 +118,22 @@ remind snapshot bootstrap                # Query-free stable context
 Poll the append-only change feed of writes. Use this instead of re-scanning `snapshot pending` to detect new activity.
 
 ```bash
-remind events                                  # All events from the start
-remind events --since 42                       # Only events after seq 42
-remind events --kind conflict_opened --since 42 # Filter to one kind
+remind events                                      # Initial poll; returns next_cursor
+remind events --since <generation.cursor>          # Resume generation-aware polling
+remind events --kind conflict_opened --since <generation.cursor>
 remind events --limit 50 --pretty
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--since` | Only return events with `seq` greater than this (default: 0) |
+| `--since` | Generation-qualified cursor from the previous response. A numeric sequence is also accepted for legacy projection-local polling. |
 | `--limit` | Maximum number of events to return (default: 200) |
 | `--kind` | Filter to a single event kind, e.g. `remembered`, `conflict_opened` |
 | `-p, --pretty` | Pretty-print JSON output |
 
-Returns `{since_seq, count, events, next_since_seq}`. `kind` is one of `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, `processed`. Save `next_since_seq` and pass it as `--since` on the next poll.
+Generation-aware polling returns `{count, events, next_cursor, reset_required}`. Save `next_cursor` and pass it to the next `--since`. If `reset_required` is `true`, discard projection-local state and restart from the returned cursor after a checkout, merge, or cache rebuild.
+
+For compatibility, a numeric `--since 42` returns the legacy `{since_seq, count, events, next_since_seq, next_cursor}` shape. Numeric sequences are local to one disposable projection and should not be persisted across rebuilds. Event `kind` values include `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, and `processed`.
 
 ### apply
 
@@ -177,6 +190,17 @@ Show processing status and worker states.
 ```bash
 remind status
 ```
+
+### doctor
+
+Diagnose canonical record integrity, embedding compatibility, source freshness, and configuration:
+
+```bash
+remind doctor
+remind doctor --repair-indexes
+```
+
+`--repair-indexes` rebuilds disposable indexes; it does not alter semantic records or resolve conflicts.
 
 ### search
 
@@ -310,6 +334,7 @@ directory. Existing skill files are overwritten. See [Skills + CLI](/guide/skill
 
 | Flag | Description |
 |------|-------------|
-| `--db NAME` | Use `~/.remind/NAME.db` instead of project-local |
+| `--store SELECTOR` | Use a directory, `file://` URL, or explicit SQL URL |
+| `--db NAME` | Use the named Git-friendly store `~/.remind/NAME.memory`; also accepts paths and explicit SQL URLs |
 | `--embedding PROVIDER` | Override embedding provider |
 | `--version` | Show version |

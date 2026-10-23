@@ -3,8 +3,8 @@
 Labels are freeform `key=value` tags on episodes and concepts. They replace the old rigid "topic" concept with a general-purpose primitive: there's no label registry to manage, no CRUD, no default label to fall back to — you just apply the key/value pairs that make sense for your use case, and a subject can carry more than one value per key.
 
 ```python
-memory.remember("Use event sourcing for audit trail", labels={"topic": "architecture"})
-memory.remember("Retry-with-backoff fixed flaky deploys", labels={"topic": ["infra", "reliability"]})
+await memory.remember("Use event sourcing for audit trail", labels={"topic": "architecture"})
+await memory.remember("Retry-with-backoff fixed flaky deploys", labels={"topic": ["infra", "reliability"]})
 ```
 
 ## Why labels instead of topics
@@ -46,8 +46,9 @@ EOF
 ```
 
 ```python [Python]
-memory.remember("Use event sourcing", labels={"topic": "architecture"})
-memory.recall("database design", labels={"topic": "architecture"})
+await memory.remember("Use event sourcing", labels={"topic": "architecture"})
+result = await memory.recall("database design", labels={"topic": "architecture"})
+print(result.text)
 memory.add_label("concept", "c-123", "topic", "architecture")
 memory.remove_label("concept", "c-123", "topic", "infra")
 ```

@@ -95,12 +95,12 @@ processed ids=ep:11,ep:12
 
 ### Skills + CLI (project-local)
 
-Your agent calls the `remind` CLI from skills — markdown files with instructions. Durable records live in your project at `.remind/memory`. Run the first CLI command from the workspace root so later calls from subfolders find the same store.
+Your agent calls the `remind` CLI from skills — markdown files with instructions. Durable, Git-friendly JSON records live in your project at `.remind/memory/`; SQLite indexes are disposable ignored caches. Run the first CLI command from the workspace root so later calls from subfolders find the same store.
 
 [Learn more about Skills →](/guide/skills)
 
 ### MCP Server (centralized)
 
-Remind runs as an MCP server. Agents connect to it over HTTP. The database is centralized at `~/.remind/`. Good for cross-project memory and shared knowledge bases.
+Remind runs as an MCP server. Agents connect to it over HTTP. A name such as `my-project` selects `~/.remind/my-project.memory`, while explicit SQL URLs remain supported. Good for cross-project memory and shared knowledge bases.
 
 [Learn more about MCP →](/guide/mcp)

@@ -1,6 +1,6 @@
 # Web UI
 
-Remind includes a web interface for exploring and managing your memory database.
+Remind includes a web interface for exploring and managing a memory store.
 
 ## Quick start
 
@@ -8,7 +8,7 @@ Remind includes a web interface for exploring and managing your memory database.
 remind ui
 ```
 
-This starts the server and opens your browser with the project-local database selected. For a specific port:
+This starts the server and opens your browser with the nearest project-local `.remind/memory/` file store selected. For a specific port:
 
 ```bash
 remind ui --port 9000
@@ -20,6 +20,8 @@ You can also access the UI when the MCP server is running:
 ```
 http://localhost:8765/ui/?db=my-project
 ```
+
+Here `my-project` resolves to `~/.remind/my-project.memory`. An explicit SQL URL can still select SQLite, PostgreSQL, or MySQL storage.
 
 ## Views
 
@@ -72,6 +74,6 @@ Memory health dashboard showing decay statistics, consolidation state, and datab
 
 ## Features
 
-- **Database selector** — Switch between multiple databases from the sidebar
+- **Store selector** — Switch between configured memory stores from the sidebar
 - **Dark mode** — Toggle between light, dark, and system theme
 - **Collapsible sidebar** — More space when you need it

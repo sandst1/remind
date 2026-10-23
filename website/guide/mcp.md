@@ -7,7 +7,7 @@ Remind can run as an [MCP (Model Context Protocol)](https://modelcontextprotocol
 MCP is a good fit when:
 
 - Your IDE/agent supports MCP natively (Cursor, Claude Desktop, etc.)
-- You want **centralized** memory across projects (databases at `~/.remind/`)
+- You want **centralized** memory across projects (named stores at `~/.remind/<name>.memory`)
 - You want the agent to use Remind tools directly without shell access
 
 For **project-scoped** memory with composable workflows, see [Skills + CLI](/guide/skills) instead.
@@ -39,7 +39,7 @@ Add to your project's `.cursor/mcp.json`:
 }
 ```
 
-The `db` parameter is a simple name that resolves to `~/.remind/{name}.db`. Each project can have its own database.
+The `db` parameter is a simple name that resolves to the Git-friendly file store `~/.remind/{name}.memory`. Each project can have its own store. Explicit SQL URLs, including `sqlite:////absolute/path/to/remind.db`, continue to select SQL storage.
 
 ## Available tools
 
@@ -50,10 +50,13 @@ Summary:
 | Tool | Purpose |
 |------|---------|
 | `remember` | Store an episode (returns collision info for facts) |
+| `remember_batch` | Atomically capture multiple separate assertions |
 | `recall` | Spreading activation (+ optional `entity`, `labels`, `as_of`) |
 | `snapshot` | Batch read (pending episodes, conflicts, entities, labels, concepts) |
 | `apply` | Batch write (create concepts, supersede facts, resolve conflicts, label/unlabel) |
-| `events` | Poll the append-only change feed of writes since a given `seq` |
+| `poll_events` | Poll durable changes with a generation-qualified cursor |
+| `events` | Legacy numeric-sequence change feed for one projection |
+| `doctor` | Diagnose integrity, embedding compatibility, and source freshness |
 | `stats` | Memory statistics |
 | `list_conflicts` / `resolve_conflict` / `dismiss_conflict` | Manage detected conflicts |
 | `inspect` | Concept detail with facts and supersession history |

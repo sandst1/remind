@@ -19,19 +19,19 @@ async def main():
     memory = create_memory()
 
     # Log experiences — fast, no external calls
-    memory.remember("User mentioned they prefer Python for backend work")
-    memory.remember("User is building a distributed system")
-    memory.remember("User values type safety")
+    await memory.remember("User mentioned they prefer Python for backend work")
+    await memory.remember("User is building a distributed system")
+    await memory.remember("User values type safety")
 
     # Typed episodes
-    memory.remember("Chose PostgreSQL over MySQL for persistence", episode_type=EpisodeType.DECISION)
-    memory.remember("User prefers dark mode in the IDE", episode_type=EpisodeType.PREFERENCE)
+    await memory.remember("Chose PostgreSQL over MySQL for persistence", episode_type=EpisodeType.DECISION)
+    await memory.remember("User prefers dark mode in the IDE", episode_type=EpisodeType.PREFERENCE)
 
     # Label-scoped episodes
-    memory.remember("Use event sourcing for audit trail", labels={"topic": "architecture"})
+    await memory.remember("Use event sourcing for audit trail", labels={"topic": "architecture"})
 
     # Fact episodes — clustered automatically, collisions detected
-    result = memory.remember(
+    result = await memory.remember(
         "Redis TTL is 300s for auth tokens",
         episode_type=EpisodeType.FACT,
         entities=["tool:redis"],
@@ -42,10 +42,11 @@ async def main():
 
     # Retrieve relevant concepts
     context = await memory.recall("What programming preferences?")
-    print(context)
+    print(context.text)
 
     # Label-scoped retrieval
     context = await memory.recall("database design", labels={"topic": "architecture"})
+    print(context.text)
 
     # Time-travel: facts valid at a past point in time
     context = await memory.recall("cache configuration", as_of="2024-06-01")
@@ -62,7 +63,7 @@ Facts are handled deterministically:
 
 ```python
 # Store a fact
-result = memory.remember(
+result = await memory.remember(
     "Redis TTL is 600s",
     episode_type=EpisodeType.FACT,
     entities=["tool:redis"],
@@ -77,11 +78,26 @@ print(f"New cluster: {result.cluster_created}")
 print(f"Collisions: {result.collisions}")
 ```
 
-When a fact collides with existing facts (same entities, different statements), the collision is reported but NOT auto-resolved. Handle it via `apply()`:
+## Atomic batch capture
+
+`remember_batch()` embeds and commits all items atomically. Its ordered `results` correspond to the input items:
 
 ```python
+batch = await memory.remember_batch([
+    {"content": "Retries are limited to 4", "episode_type": "fact"},
+    {"content": "Use exponential backoff", "episode_type": "decision"},
+])
+for capture in batch.results:
+    print(capture.episode_id, capture.fact_id)
+```
+
+When a fact collides with existing facts (same entities, different statements), the collision is reported but NOT auto-resolved. Inspect it before handling it via `apply()`:
+
+```python
+from remind.snapshot import SnapshotEngine
+
 # Get collisions that need resolution
-snapshot = await memory.snapshot(["conflicts"])
+snapshot = await SnapshotEngine(memory.store, memory.embedding).snapshot(["conflicts"])
 for conflict in snapshot["conflicts"]:
     print(f"Conflict: {conflict['description']}")
     print(f"Facts: {conflict['fact_ids']}")
@@ -92,8 +108,12 @@ for conflict in snapshot["conflicts"]:
 Use `apply()` for transactional curation:
 
 ```python
+from remind.apply import ApplyEngine
+
+engine = ApplyEngine(memory.store, memory.embedding)
+
 # Compact format
-result = await memory.apply("""
+result = await engine.apply("""
 remember as=f1 t=fact e=tool:redis "Cache TTL is 600s"
 supersede old=fact:abc123 new=$f1
 concept from=ep:11,ep:12 title="Redis config" "TTL-based caching"
@@ -101,7 +121,7 @@ processed ids=ep:11,ep:12
 """)
 
 # JSON format
-result = await memory.apply([
+result = await engine.apply([
     {"op": "remember", "as": "f1", "t": "fact", "content": "Cache TTL is 600s", "e": ["tool:redis"]},
     {"op": "supersede", "old": "fact:abc123", "new": "$f1"},
 ])
@@ -116,17 +136,21 @@ for op_result in result.results:
 Use `snapshot()` to read current memory state:
 
 ```python
+from remind.snapshot import SnapshotEngine
+
+engine = SnapshotEngine(memory.store, memory.embedding)
+
 # See what needs review
-snapshot = await memory.snapshot(["pending", "conflicts"])
+snapshot = await engine.snapshot(["pending", "conflicts"])
 print(f"Pending episodes: {len(snapshot['pending'])}")
 print(f"Open conflicts: {len(snapshot['conflicts'])}")
 
 # Entity detail
-snapshot = await memory.snapshot(["entity:tool:redis"])
+snapshot = await engine.snapshot(["entity:tool:redis"])
 print(f"Facts about Redis: {snapshot['entity']}")
 
 # Semantic search
-snapshot = await memory.snapshot(["query:cache configuration"])
+snapshot = await engine.snapshot(["query:cache configuration"])
 print(f"Matching concepts: {snapshot['query_results']}")
 ```
 
@@ -145,7 +169,7 @@ await memory.resolve_conflict(
 )
 
 # Dismiss: both valid in different contexts
-await memory.dismiss_conflict(
+memory.dismiss_conflict(
     conflict_id,
     note="both true: staging vs prod",
 )
@@ -153,7 +177,7 @@ await memory.dismiss_conflict(
 
 ## Key design decisions
 
-- **`remember()` is synchronous and fast** — No external calls (local embeddings), just stores the episode. For facts, returns collision info.
+- **`remember()` and `remember_batch()` are async** — Embedding happens before the atomic write. Local embeddings require no remote API call.
 - **`snapshot()` is async** — Batch read for current memory state.
 - **`apply()` is async** — Transactional batch writes.
 - **`recall()` is async** — Uses embeddings and spreading activation.
@@ -163,13 +187,17 @@ await memory.dismiss_conflict(
 ```python
 from pathlib import Path
 
-# Default db_path "memory" → ~/.remind/memory.db
+# Default → nearest parent .remind/memory, or <cwd>/.remind/memory
 memory = create_memory()
 
-# Named SQLite under ~/.remind/
+# Named Git-friendly file store under ~/.remind/
+# Resolves to ~/.remind/my-project.memory
 memory = create_memory(db_path="my-project")
 
-# Any SQLAlchemy URL (PostgreSQL, MySQL, etc.)
+# Explicit SQLite remains available through a SQLAlchemy URL
+memory = create_memory(store_url="sqlite:////absolute/path/to/remind.db")
+
+# Other SQLAlchemy URLs (PostgreSQL, MySQL, etc.)
 memory = create_memory(db_url="postgresql+psycopg://user:pass@localhost:5432/remind")
 
 # Load <project>/.remind/remind.config.json

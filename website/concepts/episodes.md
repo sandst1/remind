@@ -58,10 +58,10 @@ remind remember "Use event sourcing for audit trail" -l topic=architecture
 ```
 
 ```python [Python]
-memory.remember("User likes Python and Rust")
-memory.remember("Chose PostgreSQL", episode_type=EpisodeType.DECISION)
-memory.remember("All API routes need auth", episode_type=EpisodeType.FACT, entities=["module:auth"])
-memory.remember("Use event sourcing", labels={"topic": "architecture"})
+await memory.remember("User likes Python and Rust")
+await memory.remember("Chose PostgreSQL", episode_type=EpisodeType.DECISION)
+await memory.remember("All API routes need auth", episode_type=EpisodeType.FACT, entities=["module:auth"])
+await memory.remember("Use event sourcing", labels={"topic": "architecture"})
 ```
 
 ```text [MCP]
@@ -71,6 +71,8 @@ remember(content="Use event sourcing", labels="topic=architecture")
 ```
 
 :::
+
+For atomic bulk capture, pass a list of item dictionaries to `await memory.remember_batch(items)`. The returned `BatchRememberResult.results` list preserves input order.
 
 ## Entities
 

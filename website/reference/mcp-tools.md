@@ -8,7 +8,7 @@ Reads return full opaque IDs and revision tokens. Existing-record writes require
 
 Recall is read-only by default. Explicit label filters constrain candidates, graph traversal, facts, and rendered context. Labels are generic tags; separate stores provide isolation. Structured recall includes `text`, `concepts`, `episodes`, `warnings`, and optional `explanation`. Source freshness warnings annotate changed/missing files without changing the remembered claim.
 
-New workflow tools include `remember_batch`, generation-aware `poll_events`, and `doctor`. CLI equivalents are `remember-batch`, `events --cursor`, and `doctor`. REST exposes `POST /api/v1/workflow/{operation}` for `remember`, `remember_batch`, `recall`, `apply`, `snapshot`, `events`, and `doctor`. Use idempotency keys for capture/apply retries. Portable export includes facts, conflicts, evidence, labels, events, and retry receipts; `--mode backup` also includes derived vectors.
+New workflow tools include `remember_batch`, generation-aware `poll_events`, and `doctor`. CLI equivalents are `remember-batch`, `events --since <generation.cursor>`, and `doctor`. REST exposes `POST /api/v1/workflow/{operation}` for `remember`, `remember-batch`, `recall`, `apply`, `snapshot`, `events`, and `doctor`. Use idempotency keys for capture/apply retries. Portable export includes facts, conflicts, evidence, labels, events, and retry receipts; `--mode backup` also includes derived vectors.
 
 
 Tools available when connecting to Remind via MCP.
@@ -48,6 +48,25 @@ The response includes:
 - `collisions` — existing active facts with entity overlap
 
 Handle collisions via `apply` with `supersede` or `conflict` ops.
+
+## remember_batch
+
+Atomically capture multiple separate assertions. Keep facts, decisions with rationale, and observed outcomes as distinct items even when they came from one message.
+
+```text
+remember_batch(items=[
+  {"content": "Retries are limited to 4", "episode_type": "fact"},
+  {"content": "Use backoff to avoid overload", "episode_type": "decision"},
+  {"content": "Backoff reduced errors", "episode_type": "outcome"}
+], idempotency_key="capture-123")
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `items` | array | Yes | Capture objects using `remember` fields; results preserve input order |
+| `idempotency_key` | string | No | Stable key for safely retrying the same batch |
+
+Returns `{"results": [...]}` with the full `remember` result for every item.
 
 ## recall
 
@@ -170,12 +189,29 @@ snapshot(scopes="query:cache config")         # Semantic search (concepts only)
 - `recent:<n>` — N most recent episodes
 - `stats` — Memory statistics
 - `query:<text>` — Semantic search for concepts
-- `events[:<since_seq>]` — Change-feed events with `seq > since_seq` (default 0). Prefer the `events` tool below.
+- `events[:<cursor>]` — Change-feed poll. Generation-qualified cursors use the durable contract; numeric values retain legacy projection-local behavior. Prefer `poll_events`.
 - `bootstrap[:<n>]` — Query-free stable context: top-n actionable concepts by confidence and instance count, plus open conflict count and stats (default 10). Needs no embedding call and is deterministic for a given memory state — cheap enough to call every session, or to place in a system prompt via an injection layer.
 
-## events
+## poll_events
 
-Read the append-only change feed of writes. Poll with `since_seq` instead of re-scanning `snapshot(scopes="pending")` to detect new activity — useful for consolidation daemons and sync layers built on top of Remind.
+Poll durable changes using a generation-qualified cursor:
+
+```text
+poll_events()                                  # Initial poll
+poll_events(cursor="<generation.cursor>")      # Resume from next_cursor
+poll_events(cursor="<generation.cursor>", limit=50)
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `cursor` | string | No | `next_cursor` from the previous response |
+| `limit` | integer | No | Maximum number of events (default: 200) |
+
+Returns `{count, events, next_cursor, reset_required}`. Persist `next_cursor`. If `reset_required` is `true`, discard projection-local state and restart from the returned cursor; this can occur after checkout, merge, or a cache rebuild.
+
+## events (legacy numeric polling)
+
+`events` remains available for compatibility with consumers that use a numeric sequence from one projection. New integrations should use `poll_events`.
 
 ```
 events()                                       # All events from the start
@@ -189,7 +225,7 @@ events(since_seq=42, kind="conflict_opened")   # Filter to one kind
 | `limit` | integer | No | Maximum number of events to return (default: 200) |
 | `kind` | string | No | Filter to a single event kind |
 
-Returns `{since_seq, count, events, next_since_seq}`. Every successful `remember` and every successful `apply` op appends one row, atomically with the write it describes. `kind` is one of `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, `processed`. Each event has `seq`, `ts`, `kind`, `subject_type`, `subject_id`, and an optional `payload`. Save `next_since_seq` and pass it back as `since_seq` on the next poll.
+Returns `{since_seq, count, events, next_since_seq}`. Numeric sequences are local to one disposable projection and are not stable across rebuilds. Every successful `remember` and every successful `apply` op appends one row, atomically with the write it describes. `kind` is one of `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, `processed`. Each event has `seq`, `ts`, `kind`, `subject_type`, `subject_id`, and an optional `payload`.
 
 ## list_conflicts
 
@@ -260,6 +296,19 @@ Memory statistics: concept/episode counts, consolidation status, relation type d
 ```
 stats()
 ```
+
+## doctor
+
+Diagnose canonical record integrity, embedding compatibility, and source freshness.
+
+```text
+doctor()
+doctor(repair_indexes=True)
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `repair_indexes` | boolean | No | Rebuild disposable indexes before diagnosing (default: `false`) |
 
 ## episode_types
 

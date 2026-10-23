@@ -25,7 +25,7 @@ features:
   - icon:
       src: /icons/folder-tree.svg
     title: Project-scoped or centralized
-    details: Skills use project-local databases (.remind/ in your repo). MCP uses a centralized server. Pick what fits.
+    details: Skills use Git-friendly .remind/memory records in your repo. MCP can use named ~/.remind/<name>.memory stores. Pick what fits.
   - icon:
       src: /icons/network.svg
     title: Spreading activation retrieval

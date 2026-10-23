@@ -8,14 +8,28 @@ Reads return full opaque IDs and revision tokens. Existing-record writes require
 
 Recall is read-only by default. Explicit label filters constrain candidates, graph traversal, facts, and rendered context. Labels are generic tags; separate stores provide isolation. Structured recall includes `text`, `concepts`, `episodes`, `warnings`, and optional `explanation`. Source freshness warnings annotate changed/missing files without changing the remembered claim.
 
-New workflow tools include `remember_batch`, generation-aware `poll_events`, and `doctor`. CLI equivalents are `remember-batch`, `events --cursor`, and `doctor`. REST exposes `POST /api/v1/workflow/{operation}` for `remember`, `remember_batch`, `recall`, `apply`, `snapshot`, `events`, and `doctor`. Use idempotency keys for capture/apply retries. Portable export includes facts, conflicts, evidence, labels, events, and retry receipts; `--mode backup` also includes derived vectors.
+New workflow tools include `remember_batch`, generation-aware `poll_events`, and `doctor`. CLI equivalents are `remember-batch`, `events --since <generation.cursor>`, and `doctor`. REST exposes `/api/v1/workflow/{operation}` for `remember`, `remember-batch` (also `remember_batch`), `recall`, `apply`, `snapshot`, `events`, and `doctor`. Use idempotency keys for capture/apply retries. Portable export includes facts, conflicts, evidence, labels, events, and retry receipts; `--mode backup` also includes derived vectors.
 
 
 The MCP server exposes a REST API under `/api/v1/`. Used by the Web UI and available for custom integrations.
 
 Base URL: `http://localhost:8765/api/v1`
 
-All endpoints accept a `db` query parameter to select the database.
+All endpoints accept a `db` query parameter to select the store. A simple name such as `my-project` resolves to `~/.remind/my-project.memory`; explicit SQL URLs remain supported.
+
+## Workflow operations
+
+**`POST /workflow/remember-batch`** — Atomically capture an array of items and return ordered per-item results.
+
+```bash
+curl -X POST "http://localhost:8765/api/v1/workflow/remember-batch?db=my-project" \
+  -H "Content-Type: application/json" \
+  -d '{"items":[{"content":"Retries are limited to 4","episode_type":"fact"},{"content":"Use backoff","episode_type":"decision"}],"idempotency_key":"capture-123"}'
+```
+
+**`GET /workflow/events?cursor=<generation.cursor>`** — Poll durable changes. The response contains `events`, `count`, `next_cursor`, and `reset_required`. Persist `next_cursor`; if `reset_required` is true, restart from the returned cursor after rebuilding projection-local state. Legacy numeric polling remains available through the MCP `events` tool and CLI `remind events --since <seq>`.
+
+**`GET /workflow/doctor`** — Diagnose record integrity, embedding compatibility, and source freshness.
 
 ## Stats
 
@@ -107,6 +121,8 @@ curl -X POST http://localhost:8765/api/v1/query?db=my-project \
   -d '{"query": "authentication approach", "labels": {"topic": "architecture"}}'
 ```
 
+The response includes `text` for direct prompt injection, plus structured `concepts`, `episodes`, `warnings`, and optional `explanation`. The legacy `formatted` field mirrors `text`.
+
 ## Databases
 
-**`GET /databases`** — List available databases in `~/.remind/`.
+**`GET /databases`** — List legacy SQLite databases discoverable in `~/.remind/`. Named file stores are selected directly with the `db` query parameter.

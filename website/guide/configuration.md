@@ -89,7 +89,7 @@ You can place a `remind.config.json` inside a project's `.remind/` directory to 
 myproject/
 ├── .remind/
 │   ├── remind.config.json   ← project-local config
-│   └── remind.db            ← project-local database
+│   └── memory/              ← Git-friendly JSON records
 └── ...
 ```
 
@@ -107,7 +107,7 @@ A typical use case is selecting a different embedding provider for a specific pr
 The CLI automatically reads `<cwd>/.remind/remind.config.json`. When using the Python API, pass `project_dir` to `create_memory()` to enable project-local config loading.
 
 ::: warning Do not commit secrets
-If your project-local config contains API keys or other secrets, make sure `.remind/` is in your `.gitignore`. Better yet, keep secrets in the global config (`~/.remind/remind.config.json`) or in environment variables, and use the project-local file only for non-sensitive settings like provider choice and model selection.
+The default `.remind/memory/` records are designed to be committed. If the project-local config contains secrets, ignore `.remind/remind.config.json` specifically. Better yet, keep secrets in the global config (`~/.remind/remind.config.json`) or in environment variables.
 :::
 
 ### CLI output mode
@@ -138,6 +138,7 @@ Every config-file setting has a corresponding environment variable. Environment 
 | `REMIND_RERANKING_ENABLED` | `reranking_enabled` | bool | `false` |
 | `REMIND_RERANKING_MODEL` | `reranking_model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `REMIND_FACT_CLUSTER_JACCARD_THRESHOLD` | `fact_cluster_jaccard_threshold` | float | `0.5` |
+| `REMIND_STORE` | `store_url` | string | `null` (local JSON default) |
 | `REMIND_DB_URL` | `db_url` | string | `null` (local JSON default) |
 | `REMIND_LOGGING_ENABLED` | `logging_enabled` | bool | `false` |
 | `REMIND_CLI_OUTPUT_MODE` | `cli_output_mode` | string | `table` |
@@ -347,7 +348,7 @@ Enable via config:
 
 ## Logging
 
-When enabled, Remind writes debug logs to `remind.log` in the same directory as the database.
+When enabled, Remind writes debug logs under the store's ignored `runtime/` directory (or the corresponding runtime directory for SQL storage).
 
 | Option | Default | Description |
 |--------|---------|-------------|

@@ -123,24 +123,25 @@ This shows what facts were valid at that point in time, not the current values. 
 
 `snapshot(scopes="pending")` is a good fit for an interactive agent curating at session boundaries, but it's the wrong tool for a background process that needs to react to writes continuously — re-scanning the full pending set on every tick doesn't scale and can't tell "processed episode" apart from "new episode since I last looked".
 
-The **events** table is an append-only outbox for exactly that case. Every successful `remember` and every successful `apply` op writes one row, in the same transaction as the change it describes:
+The durable change feed is an append-only outbox for exactly that case. Every successful `remember` and every successful `apply` op writes one event, in the same transaction as the change it describes. Poll it with a generation-qualified cursor:
 
 ```
-events()                                       # All events from the start
-events(since_seq=42)                           # Only events after seq 42
-events(since_seq=42, kind="conflict_opened")   # Filter to one kind
+poll_events()                                  # Initial poll
+poll_events(cursor="<generation.cursor>")      # Resume from next_cursor
 ```
 
 ```json
 {
-  "since_seq": 42,
   "count": 2,
   "events": [
     {"seq": 43, "ts": "2026-01-01T12:00:00", "kind": "remembered", "subject_type": "episode", "subject_id": "ep_abc", "payload": null},
     {"seq": 44, "ts": "2026-01-01T12:00:05", "kind": "conflict_opened", "subject_type": "conflict", "subject_id": "conflict_xyz", "payload": null}
   ],
-  "next_since_seq": 44
+  "next_cursor": "generation.44",
+  "reset_required": false
 }
 ```
 
-`kind` is one of `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, `processed`. Persist `next_since_seq` and pass it back as `since_seq` on the next poll — a consolidation daemon, a sync layer replicating into another system, or a notification hook can all be built on this without touching Remind's internals. Also available as `remind events --since <seq>` on the CLI and `snapshot(scopes="events:<since_seq>")`.
+Persist `next_cursor` and pass it back on the next poll. If `reset_required` is true after a checkout, merge, or projection rebuild, discard projection-local state and restart from the returned cursor. `kind` is one of `remembered`, `superseded`, `conflict_opened`, `conflict_resolved`, `conflict_dismissed`, `concept_created`, `updated`, `labeled`, `unlabeled`, `deleted`, `restored`, `processed`.
+
+The same contract is available as `remind events --since <generation.cursor>`, `snapshot(scopes="events:<generation.cursor>")`, and `GET /api/v1/workflow/events?cursor=<generation.cursor>`. The legacy MCP `events(since_seq=42)` call and numeric CLI/snapshot cursors remain supported, but their `next_since_seq` values are local to one disposable projection and are not stable across rebuilds.
